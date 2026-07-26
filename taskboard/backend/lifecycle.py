@@ -62,10 +62,26 @@ def restart_server(port: int, tasks_dir: str | None) -> None:
     _delayed_exit(EXIT_RESTART)
 
 
+def _console_less_python() -> str:
+    """Интерпретатор без консоли для detached-запуска.
+
+    На Windows python.exe в venv (3.12+) — лаунчер-редиректор: он порождает
+    настоящий интерпретатор дочерним процессом, и у безконсольного родителя
+    Windows выделяет ребёнку новую ВИДИМУЮ консоль. pythonw.exe (GUI-
+    подсистема) консоль не создаёт никогда.
+    """
+    exe = Path(sys.executable)
+    if sys.platform == "win32":
+        w = exe.with_name("pythonw.exe")
+        if w.is_file():
+            return str(w)
+    return sys.executable
+
+
 def _spawn_detached(port: int, tasks_dir: str | None) -> None:
     """Запустить отсоединённый процесс лаунчера, переживающий текущий."""
     cmd = [
-        sys.executable, str(LAUNCHER),
+        _console_less_python(), str(LAUNCHER),
         "--port", str(port), "--no-browser", "--respawn",
     ]
     if tasks_dir:
