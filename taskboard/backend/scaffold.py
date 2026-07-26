@@ -180,12 +180,15 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             script_path.write_text(template_text, encoding="utf-8")
             replaced.append(script_name)
 
-    for part, name in (("epics", "epics.md"), ("gitignore", ".gitignore")):
+    # (часть, файл-шаблон, имя в проекте): шаблон gitignore хранится без точки —
+    # иначе он сам срабатывает как ignore-правило в репозитории инструмента
+    for part, src_name, dst_name in (("epics", "epics.md", "epics.md"),
+                                     ("gitignore", "gitignore_template", ".gitignore")):
         if part in want:
-            if _copy_file(TASKS_TEMPLATES / name, tasks_dir / name):
-                created.append(name)
+            if _copy_file(TASKS_TEMPLATES / src_name, tasks_dir / dst_name):
+                created.append(dst_name)
             else:
-                skipped.append(name)
+                skipped.append(dst_name)
 
     if "logs" in want:
         logs_name = cfg.get("logs_dir", "logs")
