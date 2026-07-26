@@ -8,3 +8,7 @@ __pycache__/
 # Временное/staging
 tmp/
 taskboard/tmp/
+
+# Настройки IDE
+.idea/
+.vscode/
