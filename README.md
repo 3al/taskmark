@@ -70,4 +70,7 @@ taskboard/
 py taskboard.py --dev          # авто-перезагрузка backend при правках
 cd taskboard/frontend
 npm install && npm run build   # пересборка фронтенда (dist коммитится)
+
+# тесты (stdlib unittest, из корня репозитория)
+taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v
 ```
