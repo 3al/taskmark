@@ -9,6 +9,8 @@ from pathlib import Path
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 TASKS_TEMPLATES = TEMPLATES_DIR / "tasks"
 AGENTIC_TEMPLATES = TEMPLATES_DIR / "agentic"
+SKILLS_TEMPLATES = AGENTIC_TEMPLATES / ".claude" / "skills"
+COMMANDS_TEMPLATES = AGENTIC_TEMPLATES / ".opencode" / "commands"
 
 # Маркеры волт-блоков в шаблонах скиллов: при vault=False вырезаются целиком
 VAULT_START = "<!-- vault -->"
@@ -72,16 +74,12 @@ def _decrement_step_ref(m: re.Match, removed: int) -> str:
     return head
 
 
-def _copy_file(src: Path, dst: Path, strip_vault: bool = False) -> bool:
+def _copy_file(src: Path, dst: Path) -> bool:
     """Скопировать файл, если dst не существует. Вернуть True, если создан."""
     if dst.exists():
         return False
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if strip_vault:
-        text = _strip_vault_blocks(src.read_text(encoding="utf-8"))
-        dst.write_text(text, encoding="utf-8")
-    else:
-        shutil.copyfile(src, dst)
+    shutil.copyfile(src, dst)
     return True
 
 
@@ -133,8 +131,13 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
       rules_agents — секция правил TASK MANAGEMENT в AGENTS.md
       rules_claude — секция правил TASK MANAGEMENT в CLAUDE.md
       vault        — оставить волт-блоки в скиллах (иначе вырезаются)
+      parts        — точечное восстановление перечисленных частей
+                     (board | create_script | epics | gitignore | logs |
+                     skills | commands); остальное не трогается
 
     Существующие артефакты не перезаписываются (попадают в skipped).
+    Исключение — инструменты, а не данные: create_task.py, скиллы и
+    команды обновляются до шаблонной версии (попадают в replaced).
     """
     options = options or {}
     opt_skills = options.get("skills", True)
@@ -199,38 +202,37 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             logs_path.mkdir()
             created.append(f"{logs_name}/")
 
-    # Точечное восстановление — агентское окружение не трогаем
+    project_root = tasks_dir.parent
+
+    # Точечное восстановление: только запрошенные части, правила не трогаем
     if parts:
+        for part in ("skills", "commands"):
+            if part in want:
+                c, r, s = refresh_agentic(project_root, part)
+                created += c
+                replaced += r
+                skipped += s
         return {"created": created, "skipped": skipped, "replaced": replaced,
                 "rules": {"appended": [], "already_present": []}}
 
     # --- Агентское окружение (в корне проекта) ---
-    project_root = tasks_dir.parent
 
     if opt_skills:
-        skills_src = AGENTIC_TEMPLATES / ".claude" / "skills"
-        for skill_dir in sorted(skills_src.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            rel = f".claude/skills/{skill_dir.name}/SKILL.md"
-            if _copy_file(skill_dir / "SKILL.md", project_root / rel,
-                          strip_vault=not opt_vault):
-                created.append(rel)
-            else:
-                skipped.append(rel)
+        # Режим волта здесь задаёт пользователь чекбоксом, а не текущее состояние проекта
+        c, r, s = refresh_agentic(project_root, "skills", vault=opt_vault)
+        created += c
+        replaced += r
+        skipped += s
         if _write_if_absent(project_root / ".claude" / ".gitignore", AGENTIC_GITIGNORE):
             created.append(".claude/.gitignore")
         else:
             skipped.append(".claude/.gitignore")
 
     if opt_commands:
-        commands_src = AGENTIC_TEMPLATES / ".opencode" / "commands"
-        for cmd_file in sorted(commands_src.glob("*.md")):
-            rel = f".opencode/commands/{cmd_file.name}"
-            if _copy_file(cmd_file, project_root / rel):
-                created.append(rel)
-            else:
-                skipped.append(rel)
+        c, r, s = refresh_agentic(project_root, "commands")
+        created += c
+        replaced += r
+        skipped += s
         if _write_if_absent(project_root / ".opencode" / ".gitignore", AGENTIC_GITIGNORE):
             created.append(".opencode/.gitignore")
         else:
@@ -267,3 +269,121 @@ def _write_if_absent(dst: Path, text: str) -> bool:
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(text, encoding="utf-8")
     return True
+
+
+# --- Актуальность развёрнутого агентского окружения ---
+
+def _deployed_skills(project_root: Path) -> Path:
+    return project_root / ".claude" / "skills"
+
+
+def _deployed_commands(project_root: Path) -> Path:
+    return project_root / ".opencode" / "commands"
+
+
+def _read(path: Path) -> str | None:
+    """Прочитать файл (BOM не должен считаться расхождением). None — нет файла."""
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except Exception:
+        return None
+
+
+def _skill_targets(project_root: Path, vault: bool | None = None) -> list[tuple[str, Path, str]]:
+    """(имя, путь развёрнутого файла, эталонный текст) для каждого скилла шаблона.
+
+    Эталон выбирается по режиму волта: явный (выбор пользователя при
+    развёртывании) или, если не задан, определённый по самому проекту.
+    """
+    if vault is None:
+        vault = uses_vault(project_root)
+    out: list[tuple[str, Path, str]] = []
+    for skill_dir in sorted(SKILLS_TEMPLATES.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        text = raw if vault else _strip_vault_blocks(raw)
+        out.append((skill_dir.name,
+                    _deployed_skills(project_root) / skill_dir.name / "SKILL.md",
+                    text))
+    return out
+
+
+def _command_targets(project_root: Path) -> list[tuple[str, Path, str]]:
+    """(имя, путь развёрнутого файла, эталонный текст) для команд opencode."""
+    return [
+        (f.stem, _deployed_commands(project_root) / f.name, f.read_text(encoding="utf-8"))
+        for f in sorted(COMMANDS_TEMPLATES.glob("*.md"))
+    ]
+
+
+def agentic_paths(project_root: Path) -> list[Path]:
+    """Развёрнутые папки агентского окружения (для наблюдения за изменениями).
+
+    Точечно скиллы и команды, а не корень и не `.claude` целиком: рядом
+    лежат часто меняющиеся настройки самих агентов — это был бы шум.
+    """
+    return [p for p in (_deployed_skills(project_root), _deployed_commands(project_root))
+            if p.is_dir()]
+
+
+def uses_vault(project_root: Path) -> bool:
+    """Развёрнуты ли скиллы с блоками волта знаний.
+
+    Определяем по самим файлам: при vault=False блоки вырезаны вместе с
+    маркерами, значит их наличие = проект развёрнут с поддержкой волта.
+    """
+    for skill in _deployed_skills(project_root).glob("*/SKILL.md"):
+        if VAULT_START in (_read(skill) or ""):
+            return True
+    return False
+
+
+def agentic_stale(project_root: Path) -> dict[str, list[str]]:
+    """Устаревшие/недостающие части агентского окружения.
+
+    Возвращает {"skills": [имена], "commands": [имена]}. Часть, которую в
+    проекте вообще не разворачивали, не проверяется (пустой список): не
+    все проекты хотят скиллы, требовать их обновления — шум.
+    """
+    result: dict[str, list[str]] = {"skills": [], "commands": []}
+
+    if any(_deployed_skills(project_root).glob("*/SKILL.md")):
+        result["skills"] = [
+            name for name, path, expected in _skill_targets(project_root)
+            if _read(path) != expected
+        ]
+    if any(_deployed_commands(project_root).glob("*.md")):
+        result["commands"] = [
+            name for name, path, expected in _command_targets(project_root)
+            if _read(path) != expected
+        ]
+    return result
+
+
+def refresh_agentic(project_root: Path, part: str,
+                    vault: bool | None = None) -> tuple[list[str], list[str], list[str]]:
+    """Развернуть/обновить скиллы или команды до шаблонной версии.
+
+    Как и create_task.py, это инструмент, а не данные пользователя:
+    расходящийся файл перезаписывается. vault=None — сохранить режим волта,
+    уже сложившийся в проекте (точечное обновление из UI).
+    Возвращает (created, replaced, skipped) — относительные пути.
+    """
+    targets = (_skill_targets(project_root, vault) if part == "skills"
+               else _command_targets(project_root))
+    prefix = ".claude/skills" if part == "skills" else ".opencode/commands"
+
+    created: list[str] = []
+    replaced: list[str] = []
+    skipped: list[str] = []
+    for name, path, expected in targets:
+        rel = f"{prefix}/{name}/SKILL.md" if part == "skills" else f"{prefix}/{name}.md"
+        current = _read(path)
+        if current == expected:
+            skipped.append(rel)
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(expected, encoding="utf-8")
+        (created if current is None else replaced).append(rel)
+    return created, replaced, skipped

@@ -164,8 +164,9 @@ export default function ScaffoldModal({ tasksDir, onClose, onDone }) {
               </div>
 
               <div className="text-[11px] text-zinc-600">
-                Существующие файлы не перезаписываются. Исключение — create_task.py:
-                устаревшая версия обновляется до актуальной шаблонной.
+                Существующие файлы не перезаписываются. Исключение — инструменты
+                (create_task.py, скиллы, команды): устаревшая версия обновляется
+                до актуальной шаблонной.
               </div>
 
               {error && <div className="text-sm text-rose-400">{error}</div>}

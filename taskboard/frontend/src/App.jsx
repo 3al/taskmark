@@ -252,6 +252,8 @@ export default function App() {
     no_create_script: { part: 'create_script', label: 'Создать' },
     no_logs: { part: 'logs', label: 'Создать' },
     outdated_script: { part: 'create_script', label: 'Обновить' },
+    outdated_skills: { part: 'skills', label: 'Обновить' },
+    outdated_commands: { part: 'commands', label: 'Обновить' },
   }
   const fixDegraded = async (code) => {
     const fix = DEGRADED_FIX[code]

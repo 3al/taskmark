@@ -10,6 +10,8 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from backend.scaffold import agentic_paths
+
 
 class TasksWatcher:
     """Watchdog-наблюдатель с дебаунсом и подписчиками (SSE)."""
@@ -57,14 +59,26 @@ class TasksWatcher:
             self._watching = False
             self._stop_observer()
 
+    def _observed_paths(self) -> list[Path]:
+        """Папки под наблюдением: tasks/ проекта + агентское окружение в его корне.
+
+        Скиллы и команды живут вне tasks/, но их устаревание тоже показывается
+        на доске — без наблюдения за ними алерт обновлялся бы только по F5.
+        """
+        if not self._watched or not self._watched.is_dir():
+            return []
+        return [self._watched, *agentic_paths(self._watched.parent)]
+
     def _start_observer(self) -> None:
         """(Пересоздать наблюдателя на self._watched. Под _watch_lock."""
         self._stop_observer()
-        if not self._watched or not self._watched.is_dir():
+        paths = self._observed_paths()
+        if not paths:
             return
         handler = _Handler(self._on_change)
         self._observer = Observer()
-        self._observer.schedule(handler, str(self._watched), recursive=True)
+        for path in paths:
+            self._observer.schedule(handler, str(path), recursive=True)
         self._observer.daemon = True
         self._observer.start()
 

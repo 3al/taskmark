@@ -69,6 +69,40 @@ class TasksWatcherRecoveryTest(unittest.TestCase):
             finally:
                 w.shutdown()
 
+    def test_watches_agentic_env_outside_tasks_dir(self) -> None:
+        """Скиллы и команды лежат в корне проекта, а не в tasks/.
+
+        Без наблюдения за ними алерт об устаревших скиллах появляется только
+        после ручной перезагрузки страницы — в отличие от create_task.py,
+        который лежит внутри tasks/ и обновляется живьём.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_dir = root / "tasks"
+            tasks_dir.mkdir()
+            skill = root / ".claude" / "skills" / "start-task" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("исходный", encoding="utf-8")
+            command = root / ".opencode" / "commands" / "start-task.md"
+            command.parent.mkdir(parents=True)
+            command.write_text("исходный", encoding="utf-8")
+
+            w = TasksWatcher(debounce_sec=0.05, monitor_sec=0.2)
+            q = w.subscribe()
+            w.watch(tasks_dir)
+            try:
+                skill.write_text("устарел", encoding="utf-8")
+                self.assertTrue(wait_for(lambda: not q.empty()),
+                                "правка скилла не дошла до подписчика")
+                q.get()
+
+                time.sleep(0.2)  # окно дебаунса
+                command.write_text("устарела", encoding="utf-8")
+                self.assertTrue(wait_for(lambda: not q.empty()),
+                                "правка команды opencode не дошла до подписчика")
+            finally:
+                w.shutdown()
+
     def test_no_resurrect_after_stop(self) -> None:
         """Явная остановка не должна отменяться монитором."""
         with tempfile.TemporaryDirectory() as tmp:

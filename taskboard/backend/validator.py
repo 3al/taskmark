@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from backend.board_parser import parse_board
-from backend.scaffold import TASKS_TEMPLATES
+from backend.scaffold import TASKS_TEMPLATES, agentic_stale
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
 
@@ -23,7 +23,7 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
       features     — доступные возможности: create_task, logs, queue_section
     """
     critical: list[str] = []
-    degraded: list[str] = []
+    degraded: list[dict] = []
     warnings: list[str] = []
     features = {"create_task": False, "logs": False, "queue_section": False}
 
@@ -77,6 +77,15 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     if not features["logs"]:
         degraded.append({"code": "no_logs",
                          "message": f"Нет папки {logs_dir}/ — просмотр логов отключён"})
+
+    # Развёрнутое агентское окружение — тоже инструмент: следим за актуальностью
+    stale = agentic_stale(tasks_dir.parent)
+    if stale["skills"]:
+        degraded.append({"code": "outdated_skills",
+                         "message": "Скиллы устарели: " + ", ".join(stale["skills"])})
+    if stale["commands"]:
+        degraded.append({"code": "outdated_commands",
+                         "message": "Команды opencode устарели: " + ", ".join(stale["commands"])})
 
     # Мягкие предупреждения: битые ссылки и файлы вне доски
     on_board: set[str] = set()
