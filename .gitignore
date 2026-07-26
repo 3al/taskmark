@@ -1,0 +1,10 @@
+# Окружение и зависимости
+.venv/
+taskboard/.venv/
+taskboard/frontend/node_modules/
+__pycache__/
+*.pyc
+
+# Временное/staging
+tmp/
+taskboard/tmp/

@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+/* Глобальный масштаб UI: Tailwind-классы в rem — растёт всё разом */
+html {
+  font-size: 17px;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-300 antialiased;
+  font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.01em;
+}
+
+/* Тонкие скроллбары под тёмную тему */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { @apply bg-zinc-700 rounded-full; }
+*::-webkit-scrollbar-thumb:hover { @apply bg-zinc-600; }
+
+/* Стили markdown в карточке задачи */
+.md-body h1, .md-body h2, .md-body h3 { @apply font-semibold text-zinc-300 mt-4 mb-2; }
+.md-body h1 { @apply text-xl; }
+.md-body h2 { @apply text-lg; }
+.md-body h3 { @apply text-base; }
+.md-body p { @apply my-2 text-zinc-300 leading-relaxed; }
+.md-body ul, .md-body ol { @apply my-2 pl-5 text-zinc-300; }
+.md-body ul { @apply list-disc; }
+.md-body ol { @apply list-decimal; }
+.md-body li { @apply my-0.5; }
+.md-body code { @apply bg-zinc-800 text-amber-200 px-1 py-0.5 rounded text-sm; }
+.md-body pre { @apply bg-zinc-900 border border-zinc-800 rounded-lg p-3 my-3 overflow-x-auto; }
+.md-body pre code { @apply bg-transparent p-0 text-zinc-200; }
+.md-body a { @apply text-sky-400 hover:underline; }
+.md-body blockquote { @apply border-l-4 border-zinc-700 pl-3 my-2 text-zinc-400 italic; }
+.md-body input[type='checkbox'] { @apply mr-1.5 accent-emerald-500; }
+.md-body hr { @apply border-zinc-800 my-4; }
+.md-body table { @apply border-collapse my-3; }
+.md-body th, .md-body td { @apply border border-zinc-700 px-2 py-1 text-sm; }
+
+/* Подкраска заголовков markdown в тон фона шапки карточки (приглушённые пастельные) */
+/* Backlog нейтрален: вместо оттенка — яркий белый (иерархия над телом zinc-300) */
+.md-tint-zinc h1, .md-tint-zinc h2, .md-tint-zinc h3 { @apply text-zinc-100; }
+.md-tint-amber h1, .md-tint-amber h2, .md-tint-amber h3 { color: #ad9a68; }
+.md-tint-sky h1, .md-tint-sky h2, .md-tint-sky h3 { color: #7fa3b8; }
+.md-tint-violet h1, .md-tint-violet h2, .md-tint-violet h3 { color: #a08cc4; }
+.md-tint-orange h1, .md-tint-orange h2, .md-tint-orange h3 { color: #b58a5f; }
+.md-tint-emerald h1, .md-tint-emerald h2, .md-tint-emerald h3 { color: #7fae8f; }
