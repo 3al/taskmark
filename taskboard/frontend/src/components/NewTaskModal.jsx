@@ -46,7 +46,6 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
   return (
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={onClose}
     >
       <div
         className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-lg shadow-2xl"
