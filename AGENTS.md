@@ -18,6 +18,10 @@
 - `taskboard/backend/` — FastAPI-приложение. Ключевые модули: `board_parser.py`/`task_parser.py` (Markdown ⇄ модель), `queue_ops.py` (DnD-мутации), `registry.py` (мультипроектность), `scaffold.py` + `taskboard/templates/` (развёртывание структуры `tasks/` и агентского окружения в проекты пользователя), `watcher.py` (watchdog → SSE живые обновления), `lifecycle.py` (остановка/перезапуск из UI).
 - `taskboard/frontend/src/` — React-приложение; вход `main.jsx` → `App.jsx`; вызовы API собраны в `src/api.js`.
 
+## Workflow задач
+- После реализации (тесты зелёные, сервер перезапущен, dist пересобран при правках фронта) — переводи задачу скиллом finalize-task в **testing** (ревью пропускаем: пользователь стеком не владеет) и проси SMOKE-подтверждение.
+- В **completed** — только после явного подтверждения SMOKE пользователем.
+
 ## Соглашения и подводные камни
 - Исходники — UTF-8 с русскими docstring/комментариями и русскими пользовательскими строками (логи, UI). Сохраняй кодировку при редактировании (Windows PowerShell `Get-Content` может искажать отображение — сами файлы корректные UTF-8). Придерживайся существующего русского стиля.
 - Межпроцессная координация через магические константы и env-переменные, которые должны оставаться синхронными: коды выхода `EXIT_STOP=43` / `EXIT_RESTART=42` (дублируются в `taskboard.py` и `backend/lifecycle.py`), env `TASKBOARD_SUPERVISED`, `TASKBOARD_PORT`, маркер остановки `~/.taskboard/stop_<port>.flag`.

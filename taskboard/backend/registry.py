@@ -66,14 +66,22 @@ def register_project(tasks_dir: Path, name: str | None = None, activate: bool = 
 
 
 def remove_project(name: str) -> bool:
-    """Удалить проект из реестра (файлы проекта не трогаются)."""
+    """Удалить проект из реестра (файлы проекта не трогаются).
+
+    Если удалён активный проект — активным становится следующий по списку
+    (при удалении последнего — предыдущий).
+    """
     data = _load()
-    before = len(data["projects"])
-    data["projects"] = [p for p in data["projects"] if p["name"] != name]
-    if len(data["projects"]) == before:
+    idx = next((i for i, p in enumerate(data["projects"]) if p["name"] == name), None)
+    if idx is None:
         return False
+    data["projects"].pop(idx)
     if data["active"] == name:
-        data["active"] = data["projects"][0]["name"] if data["projects"] else None
+        if data["projects"]:
+            nxt = data["projects"][idx] if idx < len(data["projects"]) else data["projects"][-1]
+            data["active"] = nxt["name"]
+        else:
+            data["active"] = None
     _save(data)
     return True
 

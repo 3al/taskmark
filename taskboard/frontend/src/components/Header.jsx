@@ -63,6 +63,8 @@ export default function Header({
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
   const [error, setError] = useState(null)
+  // Подтверждение удаления: кнопка ✕ рядом с проектом легко нажать случайно
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
 
   const addProject = async () => {
     if (!path.trim()) return
@@ -71,6 +73,20 @@ export default function Header({
       await api.registerProject(path.trim())
       setPath('')
       setAdding(false)
+      onRefresh()
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  // Забыть проект: вычищает из реестра (файлы не трогаются),
+  // сервер переключается на следующий в списке
+  const removeProject = async () => {
+    if (!active) return
+    setError(null)
+    setConfirmingRemove(false)
+    try {
+      await api.removeProject(active)
       onRefresh()
     } catch (e) {
       setError(e.message)
@@ -87,7 +103,39 @@ export default function Header({
       </div>
 
       <div className="flex flex-col gap-1 w-48 shrink-0">
-        <ProjectSelect projects={projects} active={active} onSwitch={onSwitchProject} />
+        <div className="flex items-center gap-1">
+          <div className="flex-1 min-w-0">
+            <ProjectSelect projects={projects} active={active} onSwitch={onSwitchProject} />
+          </div>
+          {active && (confirmingRemove ? (
+            <span className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={removeProject}
+                className="px-2 py-1.5 text-xs rounded-lg border border-rose-800 bg-rose-950/50
+                  text-rose-200 hover:bg-rose-900/60 transition"
+                title={`Подтвердить: забыть проект «${active}» (файлы не удаляются)`}
+              >
+                Забыть?
+              </button>
+              <button
+                onClick={() => setConfirmingRemove(false)}
+                className="px-1.5 py-1.5 text-xs rounded-lg text-zinc-500 hover:text-zinc-300 transition"
+                title="Отмена"
+              >
+                ✕
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmingRemove(true)}
+              className="shrink-0 px-2 py-1.5 text-sm rounded-lg border border-zinc-700 text-zinc-500
+                hover:text-rose-300 hover:border-rose-800 hover:bg-rose-950/40 transition"
+              title={`Забыть проект «${active}» (файлы не удаляются)`}
+            >
+              ✕
+            </button>
+          ))}
+        </div>
         {activeProject?.tasks_dir && (
           <div className="flex items-center gap-1 pl-3">
             <CopyButton text={projectDir(activeProject.tasks_dir)} title="Копировать путь проекта" />
@@ -119,6 +167,8 @@ export default function Header({
           {error && <span className="text-xs text-rose-400">{error}</span>}
         </span>
       )}
+
+      {!adding && error && <span className="text-xs text-rose-400 self-center">{error}</span>}
 
       <div className="ml-auto flex items-center gap-2">
         {hasCustomOrder && (

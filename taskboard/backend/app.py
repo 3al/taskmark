@@ -148,6 +148,12 @@ def api_activate(body: ActivateIn) -> dict:
 def api_remove_project(name: str) -> dict:
     if not registry.remove_project(name):
         raise HTTPException(404, f"Проект не найден: {name}")
+    # Если удалили активный — перенацелить watcher на новый активный проект
+    proj = registry.get_active()
+    if proj:
+        watcher.watch(Path(proj["tasks_dir"]))
+    else:
+        watcher.stop()
     return {"ok": True}
 
 
