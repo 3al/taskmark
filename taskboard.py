@@ -272,6 +272,14 @@ def main() -> None:
         if not caps.get("move_after_task_id"):
             log("ВНИМАНИЕ: запущенный сервер старее текущего кода (нет move_after_task_id).")
             log("Перемещения могут работать некорректно — перезапустите сервер.")
+        # Сервер из другого расположения (напр. старая/удалённая копия)
+        other_dir = health.get("tool_dir")
+        if other_dir and Path(other_dir).resolve() != ROOT:
+            log(f"ВНИМАНИЕ: запущенный сервер работает из ДРУГОЙ папки:")
+            log(f"  {other_dir}")
+            log(f"  текущая копия: {ROOT}")
+            log("Запросы пойдут СТАРОМУ коду! Остановите его: UI → Настройки → "
+                "«Остановить», или: lsof -ti:8765 | xargs kill")
         if tasks_dir.is_dir() and register_in_running(args.port, tasks_dir):
             log(f"Проект активирован: {tasks_dir}")
         if not args.no_browser:

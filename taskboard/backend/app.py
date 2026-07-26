@@ -180,14 +180,18 @@ def api_save_config(body: ConfigIn) -> dict:
 @app.get("/api/health")
 def api_health() -> dict:
     proj = registry.get_active()
+    # Расположение инструмента: лаунчер сверяет, чтобы не подключиться
+    # к серверу, запущенному из другой (напр. удалённой) папки
+    tool_dir = str(Path(__file__).parent.parent.parent.resolve())
     if not proj:
-        return {"ok": False, "project": None, "report": None, "capabilities": CAPABILITIES}
+        return {"ok": False, "project": None, "report": None,
+                "capabilities": CAPABILITIES, "tool_dir": tool_dir}
     tasks_dir = Path(proj["tasks_dir"])
     cfg = load_project_config(tasks_dir)
     report = validate_project(tasks_dir, cfg)
     report["ok"] = report["ok"] and True
     return {"ok": report["ok"], "project": proj, "config": cfg, "report": report,
-            "capabilities": CAPABILITIES}
+            "capabilities": CAPABILITIES, "tool_dir": tool_dir}
 
 
 @app.get("/api/board")

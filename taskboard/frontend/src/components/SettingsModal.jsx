@@ -30,6 +30,17 @@ export default function SettingsModal({ onClose, onSaved }) {
   const stopServer = async () => {
     setServerAction('stop')
     try { await api.stopServer() } catch { /* сервер уже умер — это норма */ }
+    // Проверяем, что сервер действительно умер (были случаи «мягкой» остановки)
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 700))
+      try {
+        await api.health()
+      } catch {
+        return // не отвечает — умер, остаётся заглушка
+      }
+    }
+    setError('Сервер не остановился — завершите процесс вручную: lsof -ti:8765 | xargs kill')
+    setServerAction(null)
   }
 
   useEffect(() => {

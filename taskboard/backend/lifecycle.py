@@ -17,8 +17,18 @@ LAUNCHER = Path(__file__).resolve().parent.parent.parent / "taskboard.py"
 
 
 def _delayed_exit(code: int, delay: float = 0.7) -> None:
-    """Завершить процесс с задержкой — HTTP-ответ должен уйти клиенту."""
+    """Завершить процесс с задержкой — HTTP-ответ должен уйти клиенту.
+
+    Страховка: если os._exit почему-то не сработал — SIGKILL через 3 секунды
+    (был случай «остановленного из UI» сервера, продолжившего обслуживать).
+    """
     threading.Timer(delay, lambda: os._exit(code)).start()
+    threading.Timer(delay + 3, _hard_kill).start()
+
+
+def _hard_kill() -> None:
+    import signal
+    os.kill(os.getpid(), signal.SIGKILL)
 
 
 def stop_marker(port: int) -> Path:
