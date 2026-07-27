@@ -17,6 +17,7 @@ from backend.board_parser import parse_board
 from backend.config import (PROJECT_KEYS, load_global_config, load_project_config,
                             save_global_config, save_project_config)
 from backend.create_task_runner import create_task
+from backend.epics import list_epics, register_epic
 from backend.migrations import apply_config_migrations, pipeline_removals
 from backend.queue_ops import ensure_section, move_task
 from backend.scaffold import agentic_diff, agentic_stale_details, scaffold_project
@@ -60,6 +61,9 @@ class TaskIn(BaseModel):
     description: str = ""
     criteria: str = ""
     blocked_by: str = ""
+    # Ключ эпика и его имя: имя нужно, только когда ключ ещё не в реестре
+    epic: str = ""
+    epic_name: str = ""
     task_type: str = "feature"
     section: str = "feature"
     # Куда добавить: backlog (в подраздел section) или сразу в живую очередь
@@ -257,6 +261,13 @@ def api_board() -> dict:
     return board
 
 
+@app.get("/api/epics")
+def api_epics() -> dict:
+    """Реестр эпиков проекта — подсказки при создании задачи."""
+    tasks_dir, _cfg = _ctx()
+    return {"items": list_epics(tasks_dir)}
+
+
 @app.get("/api/task/{task_id}")
 def api_task(task_id: str) -> dict:
     tasks_dir, _cfg = _ctx()
@@ -271,6 +282,11 @@ def api_create_task(body: TaskIn) -> dict:
     tasks_dir, cfg, report = _validate_or_400()
     if not report["features"]["create_task"]:
         raise HTTPException(400, "Создание задач отключено: нет create_task.py")
+    # Новый ключ эпика пополняет реестр: имя эпика хранится только там, и
+    # задача не должна ссылаться на эпик, которого никто не знает по имени
+    if body.epic.strip():
+        register_epic(tasks_dir, body.epic, body.epic_name)
+
     result = create_task(tasks_dir, cfg, body.model_dump())
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Ошибка создания задачи"))

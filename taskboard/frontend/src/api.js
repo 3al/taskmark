@@ -42,6 +42,7 @@ export const api = {
     request(`/api/agentic/diff?part=${encodeURIComponent(part)}&name=${encodeURIComponent(name)}`),
   getConfig: () => request('/api/config'),
   pipeline: () => request('/api/pipeline'),
+  epics: () => request('/api/epics'),
   saveConfig: (updates, moves) =>
     request('/api/config', { method: 'POST', body: JSON.stringify({ updates, moves }) }),
   previewConfig: (updates) =>

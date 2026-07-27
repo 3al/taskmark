@@ -12,7 +12,8 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
     """
     Вызвать create_task.py в не-интерактивном режиме.
 
-    payload: title (обяз.), description, criteria, blocked_by, task_type, section.
+    payload: title (обяз.), description, criteria, blocked_by, task_type,
+    section, epic (ключ эпика).
     """
     script = tasks_dir / cfg.get("create_script", "create_task.py")
     if not script.is_file():
@@ -33,6 +34,8 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
         args += ["--type", payload["task_type"]]
     if payload.get("section"):
         args += ["--section", payload["section"]]
+    if payload.get("epic"):
+        args += ["-e", payload["epic"]]
 
     try:
         result = subprocess.run(

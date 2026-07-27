@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api'
 
 // Модалка создания задачи (вызов create_task.py через API)
@@ -9,6 +9,8 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
     description: '',
     criteria: '',
     blocked_by: '',
+    epic: '',
+    epic_name: '',
     task_type: 'feature',
     target: 'backlog',
     section: backlogSections[0] || '',
@@ -16,6 +18,17 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Реестр эпиков: известные ключи подсказываем, для нового спрашиваем имя —
+  // имя эпика хранится только в epics.md, ссылка на безымянный эпик бесполезна
+  const [epics, setEpics] = useState([])
+
+  useEffect(() => {
+    api.epics().then((d) => setEpics(d.items || [])).catch(() => { /* нет реестра */ })
+  }, [])
+
+  const epicKey = form.epic.trim()
+  const knownEpic = epics.find((e) => e.key.toLowerCase() === epicKey.toLowerCase())
+  const needsEpicName = !!epicKey && !knownEpic
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value })
 
@@ -58,6 +71,32 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
           <textarea className={`${field} h-24 resize-none`} placeholder="Описание" value={form.description} onChange={set('description')} />
           <input className={field} placeholder="Критерии приёмки (опционально)" value={form.criteria} onChange={set('criteria')} />
           <input className={field} placeholder="Заблокировано задачей (TASK-NNN, опционально)" value={form.blocked_by} onChange={set('blocked_by')} />
+
+          <div className="flex gap-3">
+            <input
+              className={field}
+              list="epic-keys"
+              placeholder="Эпик — Jira-ключ (опционально)"
+              value={form.epic}
+              onChange={set('epic')}
+            />
+            <datalist id="epic-keys">
+              {epics.map((e) => (
+                <option key={e.key} value={e.key}>{e.name}</option>
+              ))}
+            </datalist>
+            {needsEpicName && (
+              <input
+                className={field}
+                placeholder="Название нового эпика"
+                value={form.epic_name}
+                onChange={set('epic_name')}
+              />
+            )}
+          </div>
+          {knownEpic && (
+            <div className="text-[11px] text-zinc-500 -mt-1">Эпик: {knownEpic.name || knownEpic.key}</div>
+          )}
 
           <div className="flex gap-3">
             <label className="flex-1 text-xs text-zinc-500">
