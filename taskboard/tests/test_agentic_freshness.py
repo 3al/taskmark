@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import DEFAULTS  # noqa: E402
-from backend.scaffold import scaffold_project  # noqa: E402
+from backend.scaffold import agentic_diff, agentic_stale_details, scaffold_project  # noqa: E402
 from backend.validator import validate_project  # noqa: E402
 
 
@@ -72,6 +72,29 @@ class AgenticFreshnessTest(unittest.TestCase):
         codes = self._codes()
         self.assertNotIn("outdated_skills", codes)
         self.assertNotIn("outdated_commands", codes)
+
+    def test_missing_final_newline_not_reported(self) -> None:
+        """Редактор съел хвостовой перевод строки при пересохранении скилла.
+
+        Строки при этом не меняются: diff пуст, показать пользователю нечего
+        и обновлять нечего — но строгое сравнение считало файл устаревшим,
+        и баннер висел вечно, не убираясь правкой текста.
+        """
+        self._scaffold(vault=False)
+        skill = self._skill("finalize-task")
+        skill.write_bytes(skill.read_text(encoding="utf-8").rstrip("\n").encode("utf-8"))
+        self.assertNotIn("outdated_skills", self._codes())
+
+    def test_stale_only_when_diff_is_not_empty(self) -> None:
+        """Инвариант: помечен устаревшим ⇔ непустой diff (иначе баннер необъясним)."""
+        self._scaffold(vault=False)
+        skill = self._skill("finalize-task")
+        skill.write_bytes(skill.read_text(encoding="utf-8").rstrip("\n").encode("utf-8"))
+        stale = agentic_stale_details(self.root)
+        for item in stale:
+            diff = agentic_diff(self.root, item["part"], item["name"])
+            self.assertTrue(diff["added"] or diff["removed"],
+                            f"{item['part']}/{item['name']} помечен устаревшим с пустым diff")
 
     # --- Устаревание обнаруживается ---
 

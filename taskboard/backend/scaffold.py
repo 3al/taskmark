@@ -301,6 +301,16 @@ def _read(path: Path) -> str | None:
         return None
 
 
+def _same_content(current: str | None, expected: str) -> bool:
+    """Совпадает ли развёрнутый файл с эталоном — построчно, как в diff.
+
+    Ровно то сравнение, что показывает пользователю agentic_diff: иначе
+    расхождение, невидимое в diff (редактор съел хвостовой перевод строки),
+    даёт баннер устаревания, который нечем объяснить и нельзя убрать правкой.
+    """
+    return current is not None and current.splitlines() == expected.splitlines()
+
+
 def _skill_targets(project_root: Path, vault: bool | None = None) -> list[tuple[str, Path, str]]:
     """(имя, путь развёрнутого файла, эталонный текст) для каждого скилла шаблона.
 
@@ -375,7 +385,7 @@ def agentic_stale_details(project_root: Path) -> list[dict]:
     for part, targets in _deployed_parts(project_root):
         for name, path, expected in targets:
             current = _read(path)
-            if current == expected:
+            if _same_content(current, expected):
                 continue
             items.append({
                 "part": part,
@@ -408,7 +418,10 @@ def agentic_diff(project_root: Path, part: str, name: str) -> dict:
 
     _name, path, expected = target
     current = _read(path)
-    state = "missing" if current is None else "modified"
+    if current is None:
+        state = "missing"
+    else:
+        state = "modified" if not _same_content(current, expected) else "same"
 
     diff_lines = list(difflib.unified_diff(
         (current or "").splitlines(),
@@ -448,8 +461,8 @@ def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
     for name, path, expected in targets:
         rel = f"{prefix}/{name}/SKILL.md" if part == "skills" else f"{prefix}/{name}.md"
         current = _read(path)
-        if current == expected:
-            skipped.append(rel)
+        if _same_content(current, expected):
+            skipped.append(rel)  # различия только в переводах строк — не трогаем
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(expected, encoding="utf-8")
