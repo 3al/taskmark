@@ -56,10 +56,13 @@ class TasksWatcherRecoveryTest(unittest.TestCase):
                 self.assertTrue(old_observer.is_alive())
 
                 # Наблюдатель должен восстановиться
-                self.assertTrue(
-                    wait_for(lambda: w._observer is not old_observer
-                             and w._observer.is_alive()),
-                    "наблюдатель не восстановился после смерти эмиттера")
+                def restored() -> bool:
+                    observer = w._observer
+                    return observer is not None and observer is not old_observer \
+                        and observer.is_alive()
+
+                self.assertTrue(wait_for(restored),
+                                "наблюдатель не восстановился после смерти эмиттера")
 
                 # И события снова доходят до подписчика
                 time.sleep(0.2)  # окно дебаунса

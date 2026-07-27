@@ -69,9 +69,19 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     if not features["create_task"]:
         degraded.append({"code": "no_create_script",
                          "message": f"Нет {create_script} — создание задач отключено"})
-    elif _script_outdated(tasks_dir / create_script):
+    elif _script_outdated(tasks_dir / create_script, "create_task.py"):
         degraded.append({"code": "outdated_script",
                          "message": f"{create_script} устарел — не поддерживает актуальные возможности"})
+
+    # Скрипт смены статуса: агент правит им файл задачи и доску за один вызов
+    status_script = cfg.get("status_script", "set_status.py")
+    features["set_status"] = (tasks_dir / status_script).is_file()
+    if not features["set_status"]:
+        degraded.append({"code": "no_status_script",
+                         "message": f"Нет {status_script} — инструмент агента для управления задачами"})
+    elif _script_outdated(tasks_dir / status_script, "set_status.py"):
+        degraded.append({"code": "outdated_status_script",
+                         "message": f"{status_script} устарел — не поддерживает актуальные возможности"})
 
     features["logs"] = (tasks_dir / logs_dir).is_dir()
     if not features["logs"]:
@@ -104,11 +114,11 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     return _report(critical, degraded, warnings, features)
 
 
-def _script_outdated(script_path: Path) -> bool:
-    """Скрипт создания задач отличается от шаблонной версии."""
+def _script_outdated(script_path: Path, template_name: str) -> bool:
+    """Скрипт-инструмент отличается от шаблонной версии."""
     try:
         current = script_path.read_text(encoding="utf-8-sig")
-        template = (TASKS_TEMPLATES / "create_task.py").read_text(encoding="utf-8")
+        template = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
         return current != template
     except Exception:
         return False

@@ -168,7 +168,8 @@ def api_get_config() -> dict:
 def api_save_config(body: ConfigIn) -> dict:
     # Защита от мусора: разрешаем только известные ключи
     allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
-               "create_script", "logs_dir", "queue_section", "queued_status", "statuses"}
+               "create_script", "status_script", "logs_dir", "queue_section",
+               "queued_status", "statuses"}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
     old_cfg = load_global_config()
     cfg = save_global_config(updates)

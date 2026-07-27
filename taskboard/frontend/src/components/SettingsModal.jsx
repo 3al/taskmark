@@ -58,6 +58,7 @@ export default function SettingsModal({ onClose, onSaved }) {
         dnd_full_board: !!config.dnd_full_board,
         board_file: config.board_file,
         create_script: config.create_script,
+        status_script: config.status_script,
         logs_dir: config.logs_dir,
         queue_section: config.queue_section,
         queued_status: config.queued_status,
@@ -152,9 +153,14 @@ export default function SettingsModal({ onClose, onSaved }) {
                   <input className={field} value={config.create_script} onChange={(e) => set('create_script', e.target.value)} />
                 </div>
                 <div>
-                  <span className={label}>Папка логов</span>
-                  <input className={field} value={config.logs_dir} onChange={(e) => set('logs_dir', e.target.value)} />
+                  <span className={label}>Скрипт смены статуса</span>
+                  <input className={field} value={config.status_script} onChange={(e) => set('status_script', e.target.value)} />
                 </div>
+              </div>
+
+              <div>
+                <span className={label}>Папка логов</span>
+                <input className={field} value={config.logs_dir} onChange={(e) => set('logs_dir', e.target.value)} />
               </div>
 
               <div className="grid grid-cols-2 gap-3">

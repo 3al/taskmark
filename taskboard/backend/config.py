@@ -16,6 +16,7 @@ DEFAULTS: dict = {
     "tasks_dir": "tasks",
     "board_file": "board.md",
     "create_script": "create_task.py",
+    "status_script": "set_status.py",
     "logs_dir": "logs",
     "queue_section": "Queue",
     "queued_status": "queued",

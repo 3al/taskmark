@@ -252,6 +252,8 @@ export default function App() {
     no_create_script: { part: 'create_script', label: 'Создать' },
     no_logs: { part: 'logs', label: 'Создать' },
     outdated_script: { part: 'create_script', label: 'Обновить' },
+    no_status_script: { part: 'status_script', label: 'Создать' },
+    outdated_status_script: { part: 'status_script', label: 'Обновить' },
     outdated_skills: { part: 'skills', label: 'Обновить' },
     outdated_commands: { part: 'commands', label: 'Обновить' },
   }

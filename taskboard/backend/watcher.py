@@ -70,17 +70,25 @@ class TasksWatcher:
         return [self._watched, *agentic_paths(self._watched.parent)]
 
     def _start_observer(self) -> None:
-        """(Пересоздать наблюдателя на self._watched. Под _watch_lock."""
-        self._stop_observer()
+        """Пересоздать наблюдателя на self._observed_paths(). Под _watch_lock.
+
+        Новый наблюдатель поднимается до остановки старого и подменяется одним
+        присваиванием: иначе снаружи виден момент, когда _observer уже None.
+        """
         paths = self._observed_paths()
-        if not paths:
-            return
-        handler = _Handler(self._on_change)
-        self._observer = Observer()
-        for path in paths:
-            self._observer.schedule(handler, str(path), recursive=True)
-        self._observer.daemon = True
-        self._observer.start()
+        fresh = None
+        if paths:
+            handler = _Handler(self._on_change)
+            fresh = Observer()
+            for path in paths:
+                fresh.schedule(handler, str(path), recursive=True)
+            fresh.daemon = True
+            fresh.start()
+
+        previous, self._observer = self._observer, fresh
+        if previous:
+            previous.stop()
+            previous.join(timeout=2)
 
     def _stop_observer(self) -> None:
         if self._observer:

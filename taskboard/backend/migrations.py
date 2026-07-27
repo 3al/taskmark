@@ -24,6 +24,7 @@ def apply_config_migrations(tasks_dir: Path, old: dict, new: dict) -> list[str]:
     # Переименования файлов/папок внутри tasks/
     _rename_artifact(tasks_dir, old, new, "board_file", actions)
     _rename_artifact(tasks_dir, old, new, "create_script", actions)
+    _rename_artifact(tasks_dir, old, new, "status_script", actions)
     _rename_artifact(tasks_dir, old, new, "logs_dir", actions)
 
     # Переименование раздела очереди — заголовок ## в файле доски

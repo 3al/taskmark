@@ -19,6 +19,13 @@ VAULT_END = "<!-- /vault -->"
 # Маркер наличия секции правил в агентском файле
 RULES_MARKER = "TASK MANAGEMENT"
 
+# Скрипты-инструменты в tasks/: (часть scaffold, ключ конфига, имя шаблона).
+# Имя в проекте переименуемо через настройки, шаблон — нет
+TOOL_SCRIPTS = (
+    ("create_script", "create_script", "create_task.py"),
+    ("status_script", "status_script", "set_status.py"),
+)
+
 # .gitignore для разворачиваемых агентских папок: не загрязнять git-дерево проекта
 AGENTIC_GITIGNORE = (
     "# Агентское окружение, развёрнутое taskboard — в git не попадает\n*\n"
@@ -155,7 +162,8 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
 
     # --- Структура tasks/ (полностью или только запрошенные части) ---
     tasks_dir.mkdir(parents=True, exist_ok=True)
-    want = set(parts) if parts else {"board", "create_script", "epics", "gitignore", "logs"}
+    want = set(parts) if parts else {"board", "create_script", "status_script",
+                                     "epics", "gitignore", "logs"}
 
     if "board" in want:
         board_name = cfg.get("board_file", "board.md")
@@ -168,12 +176,14 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         else:
             skipped.append(board_name)
 
-    if "create_script" in want:
-        # Скрипт — инструмент, а не данные: устаревшую версию обновляем
-        # до шаблонной (поддержка произвольных подразделов, эпики и т.д.)
-        script_name = cfg.get("create_script", "create_task.py")
+    # Скрипты — инструменты, а не данные пользователя: устаревшую версию
+    # обновляем до шаблонной (иначе проект остаётся без свежих возможностей)
+    for part, cfg_key, template_name in TOOL_SCRIPTS:
+        if part not in want:
+            continue
+        script_name = cfg.get(cfg_key, template_name)
         script_path = tasks_dir / script_name
-        template_text = (TASKS_TEMPLATES / "create_task.py").read_text(encoding="utf-8")
+        template_text = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
         if not script_path.exists():
             script_path.write_text(template_text, encoding="utf-8")
             created.append(script_name)
