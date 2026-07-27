@@ -29,9 +29,16 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
           ${style.cardHover} transition select-none touch-none
           ${isDragging ? 'opacity-40' : ''} ${task.struck ? 'opacity-45 border-dashed' : ''}`}
       >
-        <div className="text-xs font-mono text-zinc-500">
-          {task.id}
-          {task.struck && <span className="ml-2 text-zinc-600 normal-case">superseded</span>}
+        <div className="flex items-center gap-2 text-xs font-mono text-zinc-500">
+          <span>{task.id}</span>
+          {task.struck && <span className="text-zinc-600 normal-case">superseded</span>}
+          {/* На превью только ключ: имя эпика показывает открытая карточка */}
+          {task.epic && (
+            <span className="ml-auto shrink-0 px-1.5 py-px rounded border border-zinc-700
+              text-[10px] text-zinc-400" title={`Эпик ${task.epic}`}>
+              {task.epic}
+            </span>
+          )}
         </div>
         <div className="text-base text-zinc-300 leading-snug mt-0.5 line-clamp-2" title={task.title}>
           {task.title}

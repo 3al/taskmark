@@ -17,7 +17,7 @@ from backend.board_parser import parse_board
 from backend.config import (PROJECT_KEYS, load_global_config, load_project_config,
                             save_global_config, save_project_config)
 from backend.create_task_runner import create_task
-from backend.epics import list_epics, register_epic
+from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import apply_config_migrations, pipeline_removals
 from backend.queue_ops import ensure_section, move_task
 from backend.scaffold import agentic_diff, agentic_stale_details, scaffold_project
@@ -248,6 +248,7 @@ def api_board() -> dict:
     tasks_dir, cfg, report = _validate_or_400()
     pipeline = load_pipeline(cfg)
     board = parse_board(tasks_dir / cfg.get("board_file", "board.md"), pipeline)
+    annotate_epics(tasks_dir, board)
     board["report"] = report
     board["config"] = {
         # Фронт рисует колонки, порядок, цвета и правила DnD по пайплайну;
@@ -274,6 +275,8 @@ def api_task(task_id: str) -> dict:
     task = parse_task(tasks_dir, task_id)
     if not task:
         raise HTTPException(404, f"Задача не найдена: {task_id}")
+    # Во frontmatter лежит ключ, а имя эпика — только в реестре
+    task["epic_name"] = epic_name(tasks_dir, task["meta"].get("epic", ""))
     return task
 
 

@@ -41,6 +41,49 @@ def list_epics(tasks_dir: Path) -> list[dict]:
     return out
 
 
+def epic_name(tasks_dir: Path, key: str) -> str:
+    """Имя эпика по ключу. Неизвестный ключ или `~` — пустая строка."""
+    key = (key or "").strip()
+    if not key or key == "~":
+        return ""
+    for epic in list_epics(tasks_dir):
+        if epic["key"] == key:
+            return epic["name"]
+    return ""
+
+
+def _task_epic(path: Path) -> str:
+    """Ключ эпика из frontmatter задачи (читаем шапку, а не файл целиком)."""
+    try:
+        with path.open(encoding="utf-8-sig") as fh:
+            for i, line in enumerate(fh):
+                if i and line.startswith("---"):
+                    break
+                m = re.match(r"^epic:\s*(.*)$", line.strip())
+                if m:
+                    value = m.group(1).strip()
+                    return "" if value in ("", "~") else value
+    except Exception:
+        pass
+    return ""
+
+
+def annotate_epics(tasks_dir: Path, board: dict) -> dict:
+    """Проставить карточкам доски ключ эпика.
+
+    В строке board.md эпика нет, поэтому берём его из frontmatter файлов задач.
+    Только ключ: на превью нужна короткая метка, имя эпика показывается уже
+    в открытой карточке задачи. Задачи без эпика поля не получают.
+    """
+    for column in board.get("columns", []):
+        for group in column.get("groups", []):
+            for task in group.get("tasks", []):
+                key = _task_epic(Path(tasks_dir) / task.get("file", ""))
+                if key:
+                    task["epic"] = key
+    return board
+
+
 def register_epic(tasks_dir: Path, key: str, name: str = "") -> bool:
     """Добавить эпик в реестр, если его там нет. Возвращает True, если добавили.
 

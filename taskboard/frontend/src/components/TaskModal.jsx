@@ -42,6 +42,11 @@ export default function TaskModal({ taskId, onClose }) {
               <div className="text-xs text-zinc-500 mt-1">
                 статус: {task.meta.status || '—'} · создана: {task.meta.created || '—'}
                 {task.meta.patch && task.meta.patch !== '~' ? ` · ${task.meta.patch}` : ''}
+                {/* Во frontmatter лежит ключ, имя эпика приходит из реестра */}
+                {task.meta.epic && task.meta.epic !== '~' && (
+                  <> · эпик: <span className="text-zinc-400">{task.meta.epic}</span>
+                    {task.epic_name ? ` — ${task.epic_name}` : ''}</>
+                )}
               </div>
             )}
           </div>
