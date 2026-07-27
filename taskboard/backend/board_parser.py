@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.statuses import Pipeline
+
 # Строка задачи: - TASK-NNN · [Заголовок](файл.md) · агент · дата
 # Допускается зачёркивание ~~...~~ вокруг всей записи
 _ENTRY_RE = re.compile(
@@ -15,27 +17,6 @@ _ENTRY_RE = re.compile(
 )
 
 _HEADING_RE = re.compile(r"^(#{2,3})\s+(.*)$")
-
-# Базовые статусы по заголовкам разделов ## (очередь конфигурируется)
-BASE_SECTION_STATUS = {
-    "backlog": "backlog",
-    "development": "development",
-    "review": "review",
-    "testing": "testing",
-    "completed": "completed",
-}
-
-
-def section_status_map(queue_section: str = "Queue", queued_status: str = "queued") -> dict:
-    """Маппинг заголовок раздела (lower) → статус, с учётом конфига очереди."""
-    mapping = dict(BASE_SECTION_STATUS)
-    mapping[queue_section.strip().lower()] = queued_status
-    return mapping
-
-
-def default_column_order(queued_status: str = "queued") -> list[str]:
-    """Логичный порядок колонок с учётом статуса очереди."""
-    return ["backlog", queued_status, "development", "review", "testing", "completed"]
 
 
 def _parse_entry(line: str) -> dict | None:
@@ -55,7 +36,7 @@ def _parse_entry(line: str) -> dict | None:
     }
 
 
-def parse_board(board_path: Path, queue_section: str = "Queue", queued_status: str = "queued") -> dict:
+def parse_board(board_path: Path, pipeline: Pipeline) -> dict:
     """
     Распарсить board.md.
 
@@ -64,6 +45,10 @@ def parse_board(board_path: Path, queue_section: str = "Queue", queued_status: s
       known_sections: [заголовки ##]
     Подразделы ### внутри раздела становятся группами; записи вне
     подразделов попадают в группу с title=None.
+
+    Соответствие «раздел ↔ статус» и порядок колонок задаёт пайплайн проекта;
+    разделы вне пайплайна остаются колонками (со статусом по заголовку) и
+    уезжают в конец — молча терять чужие данные нельзя.
     """
     content = board_path.read_text(encoding="utf-8")
     lines = content.splitlines()
@@ -97,8 +82,8 @@ def parse_board(board_path: Path, queue_section: str = "Queue", queued_status: s
             current_group["tasks"].append(entry)
 
     # Собрать колонки по известным статусам + прочие разделы в конец
-    status_map = section_status_map(queue_section, queued_status)
-    order_list = default_column_order(queued_status)
+    status_map = pipeline.section_map()
+    order_list = pipeline.keys()
     columns: list[dict] = []
     for section in sections:
         key = section["title"].strip().lower()

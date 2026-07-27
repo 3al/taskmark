@@ -119,6 +119,122 @@ class AgenticFreshnessTest(unittest.TestCase):
 
     # --- Точечное восстановление из UI ---
 
+    # --- Секция правил в агентских файлах ---
+
+    def _rules_file(self, body: str) -> Path:
+        path = self.root / "AGENTS.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_stale_rules_section_reported(self) -> None:
+        """Правила описывают жизненный цикл — их устаревание надо замечать.
+
+        Иначе после правки шаблона (или смены пайплайна) агент продолжает
+        работать по инструкциям, которых уже нет в эталоне, и сказать некому.
+        """
+        self._scaffold(vault=False)
+        self._rules_file("# 1. Проект\n\nТекст.\n\n"
+                         "# 2. TASK MANAGEMENT\n\nстарые правила\n")
+        self.assertIn("outdated_rules", self._codes())
+
+    def test_fresh_rules_section_silent(self) -> None:
+        self._scaffold(vault=False)
+        scaffold_project(self.tasks_dir, self.cfg, {
+            "skills": False, "commands": False,
+            "rules_agents": True, "rules_claude": False})
+        self.assertNotIn("outdated_rules", self._codes())
+
+    def test_missing_rules_section_reported(self) -> None:
+        """Без секции правил проект полурабочий — это чинится кнопкой, а не молчанием."""
+        self._scaffold(vault=False)
+        self._rules_file("# Проект\n\nСвои правила, без нашей секции.\n")
+        self.assertIn("no_rules", self._codes())
+
+    def test_missing_in_one_file_reported(self) -> None:
+        """Секция есть в CLAUDE.md, но в AGENTS.md её снесли.
+
+        Молчать нельзя: opencode читает именно AGENTS.md и процесса не увидит.
+        """
+        self._scaffold(vault=False)
+        scaffold_project(self.tasks_dir, self.cfg, {
+            "skills": False, "commands": False,
+            "rules_agents": True, "rules_claude": True})
+        self._rules_file("# Проект\n\nСекцию правил отсюда удалили.\n")
+
+        report = validate_project(self.tasks_dir, self.cfg)
+        found = next((d for d in report["degraded"] if d["code"] == "no_rules"), None)
+        self.assertIsNotNone(found, f"молчим о файле без правил: {report['degraded']}")
+        self.assertIn("AGENTS.md", found["message"])
+        self.assertNotIn("CLAUDE.md", found["message"], "в CLAUDE.md секция на месте")
+
+    def test_missing_in_one_file_fixed_by_button(self) -> None:
+        self._scaffold(vault=False)
+        scaffold_project(self.tasks_dir, self.cfg, {
+            "skills": False, "commands": False,
+            "rules_agents": True, "rules_claude": True})
+        path = self._rules_file("# Проект\n\nСекцию правил отсюда удалили.\n")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["rules"]})
+
+        self.assertIn("TASK MANAGEMENT", path.read_text(encoding="utf-8"))
+        self.assertNotIn("no_rules", self._codes())
+
+    def test_missing_rules_section_deployed_pointwise(self) -> None:
+        """Кнопка на баннере дописывает секцию в существующий агентский файл."""
+        self._scaffold(vault=False)
+        path = self._rules_file("# Проект\n\nСвои правила.\n")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["rules"]})
+
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("Свои правила.", content, "чужой текст файла не должен пострадать")
+        self.assertIn("TASK MANAGEMENT", content)
+        self.assertNotIn("no_rules", self._codes())
+
+    def test_rules_deployed_from_scratch(self) -> None:
+        """Агентских файлов нет вовсе — заводим оба, проект должен стать рабочим."""
+        self._scaffold(vault=False)
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            path = self.root / name
+            if path.exists():
+                path.unlink()
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["rules"]})
+
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            self.assertTrue((self.root / name).is_file(), f"{name} не создан")
+        self.assertNotIn("no_rules", self._codes())
+
+    def test_rules_section_updated_pointwise(self) -> None:
+        """Кнопка обновления приводит секцию к эталону, не трогая остальной файл."""
+        self._scaffold(vault=False)
+        path = self._rules_file("# 1. Проект\n\nМой текст.\n\n"
+                                "# 2. TASK MANAGEMENT\n\nстарые правила\n")
+
+        result = scaffold_project(self.tasks_dir, self.cfg,
+                                  {"parts": ["rules"], "names": ["AGENTS.md"]})
+
+        content = path.read_text(encoding="utf-8")
+        self.assertIn("# 1. Проект", content)
+        self.assertIn("Мой текст.", content)
+        self.assertIn("Жизненный цикл статуса", content)
+        self.assertNotIn("старые правила", content)
+        self.assertIn("AGENTS.md", result["replaced"])
+        self.assertNotIn("outdated_rules", self._codes())
+
+    def test_rules_follow_project_pipeline(self) -> None:
+        """Эталон правил считается под пайплайн проекта, а не под дефолтный."""
+        self.cfg["pipeline"] = ["backlog", "queued", "development", "completed"]
+        self._scaffold(vault=False)
+        scaffold_project(self.tasks_dir, self.cfg, {
+            "skills": False, "commands": False,
+            "rules_agents": True, "rules_claude": False})
+
+        content = (self.root / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("backlog → queued → development → completed", content)
+        self.assertNotIn("outdated_rules", self._codes())
+
     def test_parts_skills_updates_stale_file(self) -> None:
         self._scaffold(vault=False)
         skill = self._skill("start-task")

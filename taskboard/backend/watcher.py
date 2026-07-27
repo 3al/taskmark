@@ -10,7 +10,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from backend.scaffold import agentic_paths
+from backend.scaffold import RULES_FILES, agentic_paths
 
 
 class TasksWatcher:
@@ -65,15 +65,23 @@ class TasksWatcher:
             self._watching = False
             self._stop_observer()
 
-    def _observed_paths(self) -> list[Path]:
-        """Папки под наблюдением: tasks/ проекта + агентское окружение в его корне.
+    def _observed_paths(self) -> list[tuple[Path, bool, frozenset[str] | None]]:
+        """Пути под наблюдением: (папка, рекурсивно ли, интересные имена файлов).
 
         Скиллы и команды живут вне tasks/, но их устаревание тоже показывается
         на доске — без наблюдения за ними алерт обновлялся бы только по F5.
+        Корень проекта берём нерекурсивно и только по агентским файлам: там
+        лежит весь код проекта, и правка любого исходника дёргала бы доску,
+        а рекурсивный обход тащил бы ещё и node_modules со сборками.
         """
         if not self._watched or not self._watched.is_dir():
             return []
-        return [self._watched, *agentic_paths(self._watched.parent)]
+        root = self._watched.parent
+        paths: list[tuple[Path, bool, frozenset[str] | None]] = [(self._watched, True, None)]
+        paths += [(p, True, None) for p in agentic_paths(root)]
+        if root.is_dir():
+            paths.append((root, False, frozenset(RULES_FILES)))
+        return paths
 
     def _start_observer(self) -> bool:
         """Пересоздать наблюдателя на self._observed_paths(). Под _watch_lock.
@@ -95,10 +103,11 @@ class TasksWatcher:
         if not paths:
             return False
 
-        handler = _Handler(self._on_change)
         fresh = Observer()
-        for path in dict.fromkeys(str(p) for p in paths):
-            fresh.schedule(handler, path, recursive=True)
+        for path, recursive, only in dict.fromkeys((str(p), rec, names)
+                                                   for p, rec, names in paths):
+            fresh.schedule(_Handler(self._on_change, set(only) if only else None),
+                           path, recursive=recursive)
         fresh.daemon = True
         fresh.start()
         self._observer = fresh
@@ -189,14 +198,24 @@ class TasksWatcher:
 
 
 class _Handler(FileSystemEventHandler):
-    def __init__(self, callback) -> None:
+    """Обработчик событий одной наблюдаемой папки.
+
+    only — реагировать лишь на файлы с этими именами. Нужно для корня проекта:
+    там из интересного только агентские файлы с секцией правил, а рядом лежит
+    весь код проекта, правки которого к доске отношения не имеют.
+    """
+
+    def __init__(self, callback, only: set[str] | None = None) -> None:
         self._callback = callback
+        self._only = only
 
     def on_any_event(self, event) -> None:
         if event.is_directory:
             return
-        # Реагируем только на md/log-файлы, игнорируем кэши
+        # Служебное игнорируем: скрытые файлы и кэши питона
         name = Path(event.src_path).name
         if name.startswith(".") or "__pycache__" in event.src_path:
+            return
+        if self._only is not None and name not in self._only:
             return
         self._callback()

@@ -240,6 +240,44 @@ class TasksWatcherRecoveryTest(unittest.TestCase):
             finally:
                 w.shutdown()
 
+    def test_watches_rules_files_in_project_root(self) -> None:
+        """Секция правил живёт в AGENTS.md/CLAUDE.md — её правки тоже живые.
+
+        Корень наблюдается нерекурсивно: иначе в наблюдение попал бы весь
+        репозиторий проекта со сборками и node_modules.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_dir = root / "tasks"
+            tasks_dir.mkdir()
+            rules = root / "AGENTS.md"
+            rules.write_text("исходные правила", encoding="utf-8")
+            deep = root / "src" / "vendor"
+            deep.mkdir(parents=True)
+
+            w = TasksWatcher(debounce_sec=0.05, monitor_sec=0.2)
+            q = w.subscribe()
+            w.watch(tasks_dir)
+            try:
+                rules.write_text("правила устарели", encoding="utf-8")
+                self.assertTrue(wait_for(lambda: not q.empty()),
+                                "правка правил не дошла до подписчика")
+                q.get()
+
+                time.sleep(0.3)  # окно дебаунса и хвостовое событие
+                while not q.empty():
+                    q.get()
+                (deep / "build.log").write_text("шум", encoding="utf-8")
+                self.assertFalse(wait_for(lambda: not q.empty(), 1.0),
+                                 "глубина проекта попала в наблюдение")
+
+                # Код проекта лежит рядом с правилами — его правки доску не касаются
+                (root / "main.py").write_text("print('привет')", encoding="utf-8")
+                self.assertFalse(wait_for(lambda: not q.empty(), 1.0),
+                                 "правка исходника в корне дёрнула доску")
+            finally:
+                w.shutdown()
+
     def test_no_resurrect_after_stop(self) -> None:
         """Явная остановка не должна отменяться монитором."""
         with tempfile.TemporaryDirectory() as tmp:

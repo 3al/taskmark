@@ -5,16 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.board_parser import BASE_SECTION_STATUS
+from backend.statuses import Pipeline, load_pipeline
 from backend.task_parser import set_task_status
 
 
 def _status_for_section(cfg: dict, to_section: str) -> str | None:
-    """Статус frontmatter для раздела доски с учётом конфига очереди."""
-    key = to_section.strip().lower()
-    if key == cfg.get("queue_section", "Queue").strip().lower():
-        return cfg.get("queued_status", "queued")
-    return BASE_SECTION_STATUS.get(key)
+    """Статус frontmatter для раздела доски по пайплайну проекта."""
+    return load_pipeline(cfg).status_for_section(to_section)
 
 # Заголовок раздела уровня ## по имени (case-insensitive)
 def _section_bounds(lines: list[str], name: str) -> tuple[int, int] | None:
@@ -45,17 +42,36 @@ def _find_entry_line(lines: list[str], task_id: str, start: int = 0, end: int | 
     return None
 
 
-def ensure_queue_section(board_path: Path, queue_name: str) -> bool:
-    """Создать раздел ## Queue перед ## Development, если его нет."""
+def ensure_section(board_path: Path, pipeline: Pipeline, status: str) -> bool:
+    """Создать раздел статуса на его месте по порядку пайплайна, если его нет.
+
+    Место выбирается по соседям: раздел встаёт перед первым существующим
+    разделом статуса, идущего дальше по пайплайну. Так включение статуса не
+    сваливает колонку в конец доски.
+    """
+    title = pipeline.section_of(status)
+    if not title:
+        return False
+
     content = board_path.read_text(encoding="utf-8")
-    if re.search(rf"^##\s+{re.escape(queue_name)}\s*$", content, flags=re.MULTILINE | re.IGNORECASE):
+    if re.search(rf"^##\s+{re.escape(title)}\s*$", content, flags=re.MULTILINE | re.IGNORECASE):
         return True
 
-    marker = re.search(r"^##\s+Development\s*$", content, flags=re.MULTILINE | re.IGNORECASE)
+    marker = None
+    for later in pipeline.forward(status):
+        later_title = pipeline.section_of(later)
+        if not later_title:
+            continue
+        marker = re.search(rf"^##\s+{re.escape(later_title)}\s*$", content,
+                           flags=re.MULTILINE | re.IGNORECASE)
+        if marker:
+            break
+
+    block = f"## {title}\n\n_(нет)_\n\n"
     if marker:
-        content = content[:marker.start()] + f"## {queue_name}\n\n_(нет)_\n\n" + content[marker.start():]
+        content = content[:marker.start()] + block + content[marker.start():]
     else:
-        content = content.rstrip() + f"\n\n## {queue_name}\n\n_(нет)_\n"
+        content = content.rstrip() + "\n\n" + block.rstrip() + "\n"
     board_path.write_text(content, encoding="utf-8")
     return True
 
@@ -81,6 +97,7 @@ def move_task(
                (встаёт сразу после его заголовка).
     """
     board_path = tasks_dir / cfg.get("board_file", "board.md")
+    pipeline = load_pipeline(cfg)
     lines = board_path.read_text(encoding="utf-8").splitlines()
 
     src_idx = _find_entry_line(lines, task_id)
@@ -89,8 +106,10 @@ def move_task(
 
     bounds = _section_bounds(lines, to_section)
     if bounds is None:
-        if to_section.lower() == cfg.get("queue_section", "Queue").lower():
-            ensure_queue_section(board_path, cfg.get("queue_section", "Queue"))
+        # Раздел статуса из пайплайна создаём на лету: доска могла быть
+        # заведена до того, как статус включили в конфиге
+        status = pipeline.status_for_section(to_section)
+        if status and ensure_section(board_path, pipeline, status):
             lines = board_path.read_text(encoding="utf-8").splitlines()
             bounds = _section_bounds(lines, to_section)
         if bounds is None:
@@ -132,9 +151,9 @@ def move_task(
         insert_at = (task_lines[-1] + 1) if task_lines else start + 1
         _drop_empty_placeholder(lines, start, end)
     else:
-        # Позиция не задана: Backlog — в начало (возврат из очереди),
-        # остальные разделы — в конец
-        if to_section.strip().lower() == "backlog":
+        # Позиция не задана: раздел создания задач — в начало (возврат из
+        # очереди), остальные разделы — в конец
+        if pipeline.status_for_section(to_section) == pipeline.action("create"):
             insert_at = start + 1
         else:
             insert_at = (task_lines[-1] + 1) if task_lines else start + 1

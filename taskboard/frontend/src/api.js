@@ -41,7 +41,11 @@ export const api = {
   agenticDiff: (part, name) =>
     request(`/api/agentic/diff?part=${encodeURIComponent(part)}&name=${encodeURIComponent(name)}`),
   getConfig: () => request('/api/config'),
-  saveConfig: (updates) => request('/api/config', { method: 'POST', body: JSON.stringify({ updates }) }),
+  pipeline: () => request('/api/pipeline'),
+  saveConfig: (updates, moves) =>
+    request('/api/config', { method: 'POST', body: JSON.stringify({ updates, moves }) }),
+  previewConfig: (updates) =>
+    request('/api/config/preview', { method: 'POST', body: JSON.stringify({ updates }) }),
   logs: () => request('/api/logs'),
   log: (name) => request(`/api/logs/${encodeURIComponent(name)}`),
   stopServer: () => request('/api/server/stop', { method: 'POST' }),

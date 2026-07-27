@@ -25,8 +25,53 @@
 import sys
 import re
 import argparse
+import importlib.util
+import json
 from datetime import datetime
 from pathlib import Path
+
+
+def _read_json(path: Path) -> dict:
+    """Прочитать json, при любой ошибке — пустой словарь."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def load_config(tasks_dir: Path) -> dict:
+    """Дефолты → глобальный конфиг → per-project переопределения.
+
+    Конфиг проекта живёт в tasks/.taskboard.json; прежнее расположение
+    (<корень>/taskboard/config.json) читаем ради совместимости.
+    """
+    cfg = {"board_file": "board.md", "status_script": "set_status.py"}
+    cfg.update(_read_json(Path.home() / ".taskboard" / "config.json"))
+    cfg.update(_read_json(tasks_dir.parent / "taskboard" / "config.json"))
+    cfg.update(_read_json(tasks_dir / ".taskboard.json"))
+    return cfg
+
+
+def intake_status(tasks_dir: Path, cfg: dict) -> tuple[str, str]:
+    """Статус и раздел доски для новой задачи — по пайплайну проекта.
+
+    Разбор пайплайна живёт в соседнем set_status.py: это тот же жизненный цикл,
+    и второй копии каталога статусов в tasks/ быть не должно. Скрипта нет или
+    он старый — работаем как раньше, по бэклогу.
+    """
+    script = tasks_dir / cfg.get("status_script", "set_status.py")
+    try:
+        spec = importlib.util.spec_from_file_location("_set_status", script)
+        module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        pipeline = module.pipeline_of(cfg)
+        key = module.actions_of(cfg, pipeline).get("create")
+        for meta in pipeline:
+            if meta["key"] == key:
+                return key, meta["section"]
+    except Exception:
+        pass
+    return "backlog", "Backlog"
 
 # UTF-8 encoding для консоли
 if sys.platform == "win32":
@@ -140,13 +185,14 @@ def _append_to_block(board_content: str, heading: str, new_entry: str) -> str | 
     return f"{board_content[:end]}\n{new_entry}{board_content[end:]}"
 
 
-def insert_into_board(board_content: str, new_entry: str, section: str) -> str:
+def insert_into_board(board_content: str, new_entry: str, section: str,
+                      intake_section: str = "Backlog") -> str:
     """
-    Вставить новую задачу в нужный подраздел Backlog.
+    Вставить новую задачу в нужный подраздел раздела приёма задач.
 
     section — заголовок подраздела ### (полный текст) либо легаси-алиас:
     "refactor" → ### Рефакторинг, "feature" → ### Новый функционал.
-    Fallback → перед ## Development
+    Fallback → в конец раздела приёма (его имя задаёт пайплайн проекта).
     """
     aliases = {
         "refactor": "Рефакторинг",
@@ -157,10 +203,14 @@ def insert_into_board(board_content: str, new_entry: str, section: str) -> str:
     if updated is not None:
         return updated
 
-    # Fallback: перед ## Development
-    marker = "\n## Development"
-    if marker in board_content:
-        return board_content.replace(marker, f"\n{new_entry}{marker}")
+    # Fallback: в конец раздела приёма — перед следующим разделом ##
+    marker = re.search(rf"^##\s+{re.escape(intake_section)}\s*$", board_content,
+                       flags=re.MULTILINE)
+    if marker:
+        rest = board_content[marker.end():]
+        nxt = re.search(r"^##\s+", rest, flags=re.MULTILINE)
+        at = marker.end() + (nxt.start() if nxt else len(rest))
+        return board_content[:at].rstrip() + f"\n{new_entry}\n\n" + board_content[at:]
 
     # Последний fallback: в конец файла
     return board_content.rstrip() + f"\n{new_entry}\n"
@@ -215,12 +265,16 @@ def create_task(
     epic_value = epic if epic else "~"
     checklist = build_checklist(task_type)
 
+    tasks_dir = Path(__file__).parent
+    cfg = load_config(tasks_dir)
+    status_key, intake_section = intake_status(tasks_dir, cfg)
+
     # Создать содержимое файла
     content = f"""---
 id: TASK-{task_num:03d}
 title: {title}
 epic: {epic_value}
-status: backlog
+status: {status_key}
 created: {created_date}{blocked_by_line}
 patch: ~
 ---
@@ -243,26 +297,26 @@ patch: ~
 """
 
     # Создать файл
-    tasks_dir = Path(__file__).parent
     tasks_dir.mkdir(exist_ok=True)
     task_file = tasks_dir / filename
 
     task_file.write_text(content, encoding="utf-8")
     print(f"[OK] Создана задача: {filename}")
 
-    # Обновить board.md
-    board_file = tasks_dir / "board.md"
+    # Обновить доску
+    board_file = tasks_dir / cfg.get("board_file", "board.md")
     board_content = board_file.read_text(encoding="utf-8")
 
     new_entry = f"- TASK-{task_num:03d} · [{title}]({filename})"
 
-    # Случай: Backlog пуст — заменяем маркер заглушки
-    if "## Backlog\n\n_(нет)_" in board_content:
+    # Случай: раздел приёма пуст — заменяем маркер заглушки
+    empty_intake = f"## {intake_section}\n\n_(нет)_"
+    if empty_intake in board_content:
         updated = board_content.replace(
-            "## Backlog\n\n_(нет)_", f"## Backlog\n\n{new_entry}"
+            empty_intake, f"## {intake_section}\n\n{new_entry}"
         )
     else:
-        updated = insert_into_board(board_content, new_entry, section)
+        updated = insert_into_board(board_content, new_entry, section, intake_section)
 
     if updated == board_content:
         print("[WARN] Не удалось вставить в нужный раздел — запись добавлена в конец файла")
@@ -277,7 +331,7 @@ patch: ~
     print(f"  Тип: {task_type} | Секция: {section}")
     if epic:
         print(f"  Эпик: {epic}")
-    print(f"  Статус: backlog\n")
+    print(f"  Статус: {status_key}\n")
 
 
 if __name__ == "__main__":

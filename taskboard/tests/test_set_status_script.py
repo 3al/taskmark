@@ -24,6 +24,15 @@ SCRIPT = Path(__file__).resolve().parent.parent / "templates" / "tasks" / "set_s
 BOARD_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "tasks" / "board.md"
 
 
+def render_board(cfg: dict | None = None) -> str:
+    """Доска из шаблона с разделами по пайплайну — как её создаёт scaffold."""
+    from backend.scaffold import render_sections
+    from backend.statuses import load_pipeline
+
+    return BOARD_TEMPLATE.read_text(encoding="utf-8").format(
+        sections=render_sections(load_pipeline(cfg or {})))
+
+
 def load_script():
     """Загрузить шаблон скрипта как модуль (он живёт вне пакета)."""
     spec = importlib.util.spec_from_file_location("set_status", SCRIPT)
@@ -57,8 +66,7 @@ class SetStatusTest(unittest.TestCase):
         self.tasks.mkdir()
         self.board = self.tasks / "board.md"
         self.board.write_text(
-            BOARD_TEMPLATE.read_text(encoding="utf-8").format(queue_section="Queue"),
-            encoding="utf-8",
+            render_board(), encoding="utf-8",
         )
         self.mod = load_script()
         self.today = datetime.now().strftime("%Y-%m-%d")
@@ -167,22 +175,96 @@ class SetStatusTest(unittest.TestCase):
 
     def test_respects_renamed_queue_section(self) -> None:
         """Раздел очереди и её статус переименуемы — хардкод недопустим."""
-        self.board.write_text(
-            BOARD_TEMPLATE.read_text(encoding="utf-8").format(queue_section="Очередь"),
-            encoding="utf-8",
-        )
+        cfg = {"queue_section": "Очередь", "queued_status": "в очереди"}
+        self.board.write_text(render_board(cfg), encoding="utf-8")
         cfg_dir = self.root / "taskboard"
         cfg_dir.mkdir()
-        (cfg_dir / "config.json").write_text(
-            json.dumps({"queue_section": "Очередь", "queued_status": "в очереди"}),
-            encoding="utf-8",
-        )
+        (cfg_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
         self._add_task()
         result = self.mod.set_status(self.tasks, "TASK-001", "в очереди",
                                      agent="Claude Opus 5")
         self.assertTrue(result["ok"], result)
         self.assertEqual(self._section_of(), "Очередь")
         self.assertEqual(self._status(), "в очереди")
+
+    # --- Пайплайн проекта ---
+
+    def test_reads_project_config_from_tasks_dir(self) -> None:
+        """Скрипт обязан видеть тот же конфиг, что и сервер.
+
+        Конфиг проекта лежит в tasks/.taskboard.json (внутри tasks/, которая
+        игнорируется git). Пока скрипт читал только прежний путь, он работал
+        по старому пайплайну и отказывался переводить задачи в новые статусы.
+        """
+        cfg = {"pipeline": ["backlog", "todo", "development", "testing", "done"]}
+        self.board.write_text(render_board(cfg), encoding="utf-8")
+        (self.tasks / ".taskboard.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+        self._add_task()
+        result = self.mod.set_status(self.tasks, "TASK-001", "done")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual("Done", self._section_of())
+        self.assertEqual("done", self._status())
+
+    def test_custom_pipeline_defines_sections(self) -> None:
+        """Проект без review: задача едет из development сразу в тестирование."""
+        cfg = {"pipeline": ["backlog", "queued", "development", "local_testing", "completed"]}
+        self.board.write_text(render_board(cfg), encoding="utf-8")
+        cfg_dir = self.root / "taskboard"
+        cfg_dir.mkdir()
+        (cfg_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+        self._add_task()
+        result = self.mod.set_status(self.tasks, "TASK-001", "local_testing")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(self._section_of(), "Local Testing")
+        self.assertEqual(self._status(), "local_testing")
+
+        rejected = self.mod.set_status(self.tasks, "TASK-001", "review")
+        self.assertFalse(rejected["ok"], "статус вне пайплайна проекта принят")
+
+    def test_forward_jump_reports_skipped_statuses(self) -> None:
+        """Прыжок вперёд законен, но пропущенное видно в результате."""
+        self._add_task()
+        self.mod.set_status(self.tasks, "TASK-001", "development")
+        result = self.mod.set_status(self.tasks, "TASK-001", "completed")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(["review", "testing"], result["skipped"])
+
+    def test_describe_targets_for_task(self) -> None:
+        """Скиллы спрашивают у скрипта, куда можно двинуть задачу."""
+        self._add_task()
+        self.mod.set_status(self.tasks, "TASK-001", "development")
+        info = self.mod.describe(self.tasks, "TASK-001")
+        self.assertEqual("development", info["current"])
+        self.assertEqual("review", info["next"], "ожидаемый шаг — ближайший вперёд")
+        self.assertIn("completed", info["forward"], "прыжки вперёд доступны")
+        self.assertIn("backlog", info["backward"])
+        self.assertEqual("development", info["actions"]["start"])
+        self.assertEqual("queued", info["actions"]["pick"])
+
+    def test_describe_pipeline_without_task(self) -> None:
+        info = self.mod.describe(self.tasks)
+        self.assertEqual(["backlog", "queued", "development", "review", "testing", "completed"],
+                         [s["key"] for s in info["pipeline"]])
+        self.assertNotIn("current", info)
+
+    def test_cancelled_is_reachable_but_not_expected(self) -> None:
+        """Съезд с маршрута: отменить можно всегда, но это не ожидаемый шаг."""
+        cfg = {"pipeline": ["backlog", "development", "completed", "cancelled"]}
+        self.board.write_text(render_board(cfg), encoding="utf-8")
+        cfg_dir = self.root / "taskboard"
+        cfg_dir.mkdir()
+        (cfg_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+        self._add_task()
+        info = self.mod.describe(self.tasks, "TASK-001")
+        self.assertIn("cancelled", info["forward"])
+        self.assertEqual("development", info["next"])
+
+        result = self.mod.set_status(self.tasks, "TASK-001", "cancelled")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(self._section_of(), "Cancelled")
 
     # --- Идемпотентность и ошибки ---
 

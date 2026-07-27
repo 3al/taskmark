@@ -21,9 +21,18 @@ DEFAULTS: dict = {
     "queue_section": "Queue",
     "queued_status": "queued",
     "dnd_full_board": False,
-    "statuses": ["backlog", "queued", "development", "review", "testing", "completed"],
+    # Жизненный цикл задачи: порядок статусов и цели действий скиллов.
+    # Разбор и дефолты оформления — в backend/statuses.py
+    "pipeline": ["backlog", "queued", "development", "review", "testing", "completed"],
+    "actions": {"create": "backlog", "start": "development"},
     "theme": "dark",
 }
+
+# Ключи, которые имеет смысл держать на уровне проекта: жизненный цикл у каждого
+# проекта свой, а порт и тема — свойства инструмента, а не репозитория
+PROJECT_KEYS = {"pipeline", "actions", "statuses", "board_file", "create_script",
+                "status_script", "logs_dir", "queue_section", "queued_status",
+                "dnd_full_board"}
 
 
 def _read_json(path: Path) -> dict:
@@ -51,13 +60,24 @@ def load_global_config() -> dict:
 
 
 def project_config_path(tasks_dir: Path) -> Path:
-    """Путь к per-project конфигу: <корень проекта>/taskboard/config.json."""
+    """Путь к per-project конфигу: <tasks_dir>/.taskboard.json.
+
+    Внутри tasks/, а не в корне проекта: scaffold кладёт туда `.gitignore` с `*`,
+    поэтому настройки не засоряют чужой репозиторий. Прежнее расположение
+    (<корень>/taskboard/config.json) продолжаем читать — см. legacy_config_path.
+    """
+    return tasks_dir / ".taskboard.json"
+
+
+def legacy_config_path(tasks_dir: Path) -> Path:
+    """Прежнее место per-project конфига (до переезда внутрь tasks/)."""
     return tasks_dir.parent / "taskboard" / "config.json"
 
 
 def load_project_config(tasks_dir: Path) -> dict:
     """Загрузить per-project переопределения поверх глобального конфига."""
     cfg = load_global_config()
+    cfg.update(_read_json(legacy_config_path(tasks_dir)))
     cfg.update(_read_json(project_config_path(tasks_dir)))
     return cfg
 
@@ -74,3 +94,21 @@ def save_global_config(updates: dict) -> dict:
     except Exception:
         pass
     return cfg
+
+
+def save_project_config(tasks_dir: Path, updates: dict) -> dict:
+    """Слить updates в per-project конфиг проекта и сохранить.
+
+    Глобальный конфиг при этом не трогаем: жизненный цикл задач у каждого
+    проекта свой, и правка одного не должна переучивать остальные.
+    Возвращает итоговый конфиг проекта (дефолты → глобальный → проектный).
+    """
+    path = project_config_path(tasks_dir)
+    stored = _read_json(path)
+    stored.update(updates)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return load_project_config(tasks_dir)

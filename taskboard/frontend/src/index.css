@@ -51,3 +51,8 @@ body {
 .md-tint-violet h1, .md-tint-violet h2, .md-tint-violet h3 { color: #a08cc4; }
 .md-tint-orange h1, .md-tint-orange h2, .md-tint-orange h3 { color: #b58a5f; }
 .md-tint-emerald h1, .md-tint-emerald h2, .md-tint-emerald h3 { color: #7fae8f; }
+.md-tint-yellow h1, .md-tint-yellow h2, .md-tint-yellow h3 { color: #b3a760; }
+.md-tint-cyan h1, .md-tint-cyan h2, .md-tint-cyan h3 { color: #6fa5b0; }
+.md-tint-teal h1, .md-tint-teal h2, .md-tint-teal h3 { color: #6fac9f; }
+.md-tint-rose h1, .md-tint-rose h2, .md-tint-rose h3 { color: #bb8090; }
+.md-tint-stone h1, .md-tint-stone h2, .md-tint-stone h3 { color: #a8a29e; }

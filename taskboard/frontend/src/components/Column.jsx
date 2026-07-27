@@ -20,7 +20,8 @@ function GroupTail({ status, groupIndex, afterTaskId, groupTitle, allowed }) {
 }
 
 // Колонка статуса с группами (подразделы ###)
-export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, columnIndicator, queuedStatus }) {
+export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, columnIndicator,
+                                 pickStatus, createStatus }) {
   const style = statusStyle(column.status)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${column.status}`,
@@ -35,7 +36,7 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
   })
 
   const count = column.groups.reduce((n, g) => n + g.tasks.length, 0)
-  const canDrop = isDropAllowed(activeFrom, column.status, dndFullBoard, queuedStatus)
+  const canDrop = isDropAllowed(activeFrom, column.status, dndFullBoard, pickStatus, createStatus)
   // Подсветка тела колонки только когда дроп разрешён и курсор не над карточкой
   const highlight = isOver && canDrop
 

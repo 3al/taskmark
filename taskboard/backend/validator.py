@@ -6,7 +6,8 @@ import re
 from pathlib import Path
 
 from backend.board_parser import parse_board
-from backend.scaffold import TASKS_TEMPLATES, agentic_stale
+from backend.scaffold import TASKS_TEMPLATES, agentic_stale, rules_missing
+from backend.statuses import load_pipeline
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
 
@@ -30,7 +31,6 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     board_file = cfg.get("board_file", "board.md")
     create_script = cfg.get("create_script", "create_task.py")
     logs_dir = cfg.get("logs_dir", "logs")
-    queue_section = cfg.get("queue_section", "Queue")
 
     # Критичные проверки
     if not tasks_dir.is_dir():
@@ -48,21 +48,38 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
         report["structure"] = "no_board"
         return report
 
+    pipeline = load_pipeline(cfg)
     try:
-        board = parse_board(
-            board_path,
-            queue_section=cfg.get("queue_section", "Queue"),
-            queued_status=cfg.get("queued_status", "queued"),
-        )
+        board = parse_board(board_path, pipeline)
     except Exception as exc:
         critical.append(f"Не удалось распарсить {board_file}: {exc}")
         return _report(critical, degraded, warnings, features)
 
     known = {t.lower() for t in board["known_sections"]}
-    if "backlog" not in known:
-        critical.append(f"В {board_file} нет раздела Backlog")
 
-    features["queue_section"] = queue_section.lower() in known
+    # Раздел создания задач критичен: без него новую задачу некуда положить
+    create_status = pipeline.action("create")
+    create_section = pipeline.section_of(create_status) if create_status else None
+    if not create_section:
+        critical.append("Пайплайн статусов пуст: нечего показывать на доске")
+    elif create_section.lower() not in known:
+        critical.append(f"В {board_file} нет раздела {create_section}")
+
+    # Раздел, откуда берут работу (живая очередь)
+    pick_section = pipeline.section_of(pipeline.action("pick") or "")
+    features["queue_section"] = bool(pick_section) and pick_section.lower() in known
+
+    # Разделы пайплайна, которых на доске нет: колонки не будет, пока не создадим
+    missing = [s["section"] for s in pipeline.statuses()
+               if s["section"].lower() not in known]
+    if missing:
+        warnings.append("Нет разделов доски для статусов пайплайна: " + ", ".join(missing))
+
+    # Разделы вне пайплайна не трогаем молча — показываем как есть и предупреждаем
+    extra = [t for t in board["known_sections"]
+             if pipeline.status_for_section(t) is None]
+    if extra:
+        warnings.append("Разделы вне пайплайна статусов: " + ", ".join(extra))
 
     # Деградация функционала (code — для точечного восстановления из UI)
     features["create_task"] = (tasks_dir / create_script).is_file()
@@ -89,13 +106,25 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
                          "message": f"Нет папки {logs_dir}/ — просмотр логов отключён"})
 
     # Развёрнутое агентское окружение — тоже инструмент: следим за актуальностью
-    stale = agentic_stale(tasks_dir.parent)
+    stale = agentic_stale(tasks_dir.parent, cfg)
     if stale["skills"]:
         degraded.append({"code": "outdated_skills",
                          "message": "Скиллы устарели: " + ", ".join(stale["skills"])})
     if stale["commands"]:
         degraded.append({"code": "outdated_commands",
                          "message": "Команды opencode устарели: " + ", ".join(stale["commands"])})
+    if stale["rules"]:
+        # Правила описывают жизненный цикл проекта: разошлись с эталоном —
+        # агент работает по устаревшим инструкциям, а сказать об этом некому
+        degraded.append({"code": "outdated_rules",
+                         "message": "Правила для агентов устарели: " + ", ".join(stale["rules"])})
+    # Без секции правил проект полурабочий: агент, читающий этот файл, не знает
+    # ни очереди, ни как менять статус. Чинится кнопкой, как недостающий скрипт
+    missing_rules = rules_missing(tasks_dir.parent)
+    if missing_rules:
+        degraded.append({"code": "no_rules",
+                         "message": "Правила для агентов не развёрнуты: "
+                                    + ", ".join(missing_rules)})
 
     # Мягкие предупреждения: битые ссылки и файлы вне доски
     on_board: set[str] = set()

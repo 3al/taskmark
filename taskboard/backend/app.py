@@ -14,11 +14,13 @@ from pydantic import BaseModel
 
 from backend import lifecycle, registry
 from backend.board_parser import parse_board
-from backend.config import load_global_config, load_project_config, save_global_config
+from backend.config import (PROJECT_KEYS, load_global_config, load_project_config,
+                            save_global_config, save_project_config)
 from backend.create_task_runner import create_task
-from backend.migrations import apply_config_migrations
-from backend.queue_ops import ensure_queue_section, move_task
+from backend.migrations import apply_config_migrations, pipeline_removals
+from backend.queue_ops import ensure_section, move_task
 from backend.scaffold import agentic_diff, agentic_stale_details, scaffold_project
+from backend.statuses import CATALOG, load_pipeline
 from backend.task_parser import parse_task
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
@@ -68,6 +70,8 @@ class TaskIn(BaseModel):
 
 class ConfigIn(BaseModel):
     updates: dict
+    # Куда переносить задачи выключаемых статусов: {статус: новый статус}
+    moves: dict | None = None
 
 
 class ScaffoldIn(BaseModel):
@@ -77,9 +81,10 @@ class ScaffoldIn(BaseModel):
     rules_claude: bool = True
     vault: bool = False
     # Точечное восстановление: создать только перечисленные части
-    # (board | create_script | status_script | epics | gitignore | logs | skills | commands)
+    # (board | create_script | status_script | epics | gitignore | logs |
+    #  skills | commands | rules)
     parts: list[str] | None = None
-    # Точечное обновление агентского окружения: только эти скиллы/команды
+    # Точечное обновление агентского окружения: только эти скиллы/команды/файлы правил
     names: list[str] | None = None
 
 
@@ -163,6 +168,10 @@ def api_remove_project(name: str) -> dict:
 
 @app.get("/api/config")
 def api_get_config() -> dict:
+    """Действующий конфиг: для активного проекта — с его переопределениями."""
+    proj = registry.get_active()
+    if proj:
+        return load_project_config(Path(proj["tasks_dir"]))
     return load_global_config()
 
 
@@ -171,17 +180,44 @@ def api_save_config(body: ConfigIn) -> dict:
     # Защита от мусора: разрешаем только известные ключи
     allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
                "create_script", "status_script", "logs_dir", "queue_section",
-               "queued_status", "statuses"}
+               "queued_status", "statuses", "pipeline", "actions"}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
-    old_cfg = load_global_config()
-    cfg = save_global_config(updates)
+
+    proj = registry.get_active()
+    tasks_dir = Path(proj["tasks_dir"]) if proj else None
+    old_cfg = load_project_config(tasks_dir) if tasks_dir else load_global_config()
+
+    # Настройки проекта (жизненный цикл, имена артефактов) пишем в сам проект,
+    # свойства инструмента (порт, тема) — в глобальный конфиг
+    project_updates = {k: v for k, v in updates.items() if k in PROJECT_KEYS}
+    global_updates = {k: v for k, v in updates.items() if k not in PROJECT_KEYS}
+
+    if global_updates or not tasks_dir:
+        save_global_config(global_updates or updates)
+    cfg = (save_project_config(tasks_dir, project_updates) if tasks_dir and project_updates
+           else (load_project_config(tasks_dir) if tasks_dir else load_global_config()))
 
     # Переименования мигрируют данные активного проекта вслед за конфигом
     migrations: list[str] = []
-    proj = registry.get_active()
-    if proj:
-        migrations = apply_config_migrations(Path(proj["tasks_dir"]), old_cfg, cfg)
+    if tasks_dir:
+        migrations = apply_config_migrations(tasks_dir, old_cfg, cfg, body.moves)
     return {"config": cfg, "migrations": migrations}
+
+
+@app.post("/api/config/preview")
+def api_preview_config(body: ConfigIn) -> dict:
+    """Что произойдёт с задачами при таком изменении конфига.
+
+    Выключение статуса с непустым разделом — не то, что делают молча: UI
+    спрашивает, куда переносить задачи, и предлагает предыдущий по порядку.
+    """
+    proj = registry.get_active()
+    if not proj:
+        return {"removals": []}
+    tasks_dir = Path(proj["tasks_dir"])
+    old_cfg = load_project_config(tasks_dir)
+    new_cfg = {**old_cfg, **body.updates}
+    return {"removals": pipeline_removals(tasks_dir, old_cfg, new_cfg)}
 
 
 # --- Доска и задачи ---
@@ -206,15 +242,16 @@ def api_health() -> dict:
 @app.get("/api/board")
 def api_board() -> dict:
     tasks_dir, cfg, report = _validate_or_400()
-    board = parse_board(
-        tasks_dir / cfg.get("board_file", "board.md"),
-        queue_section=cfg.get("queue_section", "Queue"),
-        queued_status=cfg.get("queued_status", "queued"),
-    )
+    pipeline = load_pipeline(cfg)
+    board = parse_board(tasks_dir / cfg.get("board_file", "board.md"), pipeline)
     board["report"] = report
     board["config"] = {
-        "queue_section": cfg.get("queue_section", "Queue"),
-        "queued_status": cfg.get("queued_status", "queued"),
+        # Фронт рисует колонки, порядок, цвета и правила DnD по пайплайну;
+        # queue_section/queued_status оставлены для старых сборок фронта
+        "pipeline": pipeline.statuses(),
+        "actions": pipeline.actions(),
+        "queue_section": pipeline.section_of(pipeline.action("pick") or "") or "Queue",
+        "queued_status": pipeline.action("pick"),
         "dnd_full_board": cfg.get("dnd_full_board", False),
     }
     return board
@@ -241,8 +278,11 @@ def api_create_task(body: TaskIn) -> dict:
     # Сразу в живую очередь: задача создаётся в бэклог и переносится
     if body.target == "queue" and result.get("id"):
         position = 0 if body.queue_position == "start" else None
-        move = move_task(tasks_dir, cfg, result["id"],
-                         cfg.get("queue_section", "Queue"), position)
+        pipeline = load_pipeline(cfg)
+        queue_section = pipeline.section_of(pipeline.action("pick") or "")
+        if not queue_section:
+            raise HTTPException(400, "В пайплайне нет статуса очереди")
+        move = move_task(tasks_dir, cfg, result["id"], queue_section, position)
         if not move.get("ok"):
             raise HTTPException(400, f"Задача создана, но не попала в очередь: {move.get('error')}")
         result["status"] = move.get("status")
@@ -261,26 +301,43 @@ def api_move(task_id: str, body: MoveIn) -> dict:
 
 @app.post("/api/queue/ensure")
 def api_ensure_queue() -> dict:
+    """Создать недостающий раздел очереди (кнопка на баннере доски)."""
     tasks_dir, cfg, _report = _validate_or_400()
     board_path = tasks_dir / cfg.get("board_file", "board.md")
-    ensure_queue_section(board_path, cfg.get("queue_section", "Queue"))
+    pipeline = load_pipeline(cfg)
+    pick = pipeline.action("pick")
+    if not pick:
+        raise HTTPException(400, "В пайплайне нет статуса очереди")
+    ensure_section(board_path, pipeline, pick)
     return {"ok": True}
+
+
+@app.get("/api/pipeline")
+def api_pipeline() -> dict:
+    """Пайплайн активного проекта и каталог доступных статусов (для настроек)."""
+    tasks_dir, cfg = _ctx()
+    pipeline = load_pipeline(cfg)
+    return {
+        "pipeline": pipeline.statuses(),
+        "actions": pipeline.actions(),
+        "catalog": [{"key": key, **meta} for key, meta in CATALOG.items()],
+    }
 
 
 @app.get("/api/agentic/stale")
 def api_agentic_stale() -> dict:
     """Подробности по устаревшему агентскому окружению активного проекта."""
-    tasks_dir, _cfg = _ctx()
-    return {"items": agentic_stale_details(tasks_dir.parent)}
+    tasks_dir, cfg = _ctx()
+    return {"items": agentic_stale_details(tasks_dir.parent, cfg)}
 
 
 @app.get("/api/agentic/diff")
 def api_agentic_diff(part: str, name: str) -> dict:
-    """Unified diff «развёрнутый файл → шаблон» для скилла или команды."""
-    tasks_dir, _cfg = _ctx()
-    if part not in ("skills", "commands"):
+    """Unified diff «развёрнутое → эталон» для скилла, команды или правил."""
+    tasks_dir, cfg = _ctx()
+    if part not in ("skills", "commands", "rules"):
         raise HTTPException(400, f"Неизвестная часть: {part}")
-    result = agentic_diff(tasks_dir.parent, part, name)
+    result = agentic_diff(tasks_dir.parent, part, name, cfg)
     if not result.get("ok"):
         raise HTTPException(404, result.get("error", "Элемент не найден"))
     return result

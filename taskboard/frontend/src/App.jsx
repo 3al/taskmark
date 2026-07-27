@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DndContext, DragOverlay, PointerSensor, pointerWithin, rectIntersection, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { api, subscribeChanges } from './api'
-import { isDropAllowed, defaultColumnOrder } from './statuses'
+import { isDropAllowed, defaultColumnOrder, setPipeline } from './statuses'
 import Header from './components/Header'
 import Column from './components/Column'
 import TaskModal from './components/TaskModal'
@@ -127,18 +127,24 @@ export default function App() {
 
   // --- DnD ---
 
-  // Статус очереди из конфига проекта (может быть переименован)
-  const queuedStatus = board?.config?.queued_status || 'queued'
+  // Жизненный цикл проекта: порядок колонок, цвета и подписи статусов.
+  // Кладём в модуль до отрисовки — цвет нужен карточкам в глубине дерева
+  const pipeline = board?.config?.pipeline
+  setPipeline(pipeline)
 
-  // Колонки в порядке: сохранённый пользователем → дефолтный поток → новые разделы в хвост
+  // Откуда берут работу и куда попадают новые задачи — от них зависят правила DnD
+  const pickStatus = board?.config?.actions?.pick || board?.config?.queued_status || 'queued'
+  const createStatus = board?.config?.actions?.create || 'backlog'
+
+  // Колонки в порядке: сохранённый пользователем → пайплайн → новые разделы в хвост
   const orderedColumns = useMemo(() => {
     const cols = board?.columns || []
-    const saved = columnOrder || defaultColumnOrder(queuedStatus)
+    const saved = columnOrder || defaultColumnOrder()
     const byStatus = new Map(cols.map((c) => [c.status, c]))
     const ordered = saved.filter((s) => byStatus.has(s)).map((s) => byStatus.get(s))
     const rest = cols.filter((c) => !saved.includes(c.status))
     return [...ordered, ...rest]
-  }, [board, columnOrder, queuedStatus])
+  }, [board, columnOrder, pipeline])
 
   const findColumn = (status) => board?.columns.find((c) => c.status === status)
 
@@ -155,7 +161,7 @@ export default function App() {
     return null
   }
 
-  const isAllowed = (from, to) => isDropAllowed(from, to, dndFullBoard, queuedStatus)
+  const isAllowed = (from, to) => isDropAllowed(from, to, dndFullBoard, pickStatus, createStatus)
 
   const onDragStart = (event) => {
     const data = event.active.data.current || {}
@@ -256,10 +262,13 @@ export default function App() {
     outdated_script: { part: 'create_script', label: 'Обновить' },
     no_status_script: { part: 'status_script', label: 'Создать' },
     outdated_status_script: { part: 'status_script', label: 'Обновить' },
+    // Правила — часть механизма, а не опция: без них агент не знает процесса
+    no_rules: { part: 'rules', label: 'Развернуть' },
     // Агентское окружение — не «обновить всё вслепую»: сначала подробности,
     // где видно каждый элемент, его diff и точечное обновление
     outdated_skills: { modal: 'agentic', label: 'Подробности' },
     outdated_commands: { modal: 'agentic', label: 'Подробности' },
+    outdated_rules: { modal: 'agentic', label: 'Подробности' },
   }
   const fixDegraded = async (code) => {
     const fix = DEGRADED_FIX[code]
@@ -383,7 +392,8 @@ export default function App() {
                   onOpenTask={setOpenTask}
                   activeFrom={activeDrag?.fromStatus || null}
                   dndFullBoard={dndFullBoard}
-                  queuedStatus={queuedStatus}
+                  pickStatus={pickStatus}
+                  createStatus={createStatus}
                   columnIndicator={
                     activeDrag?.column && colDropTarget?.status === col.status
                       ? (colDropTarget.side === 'after' ? 'right' : 'left')
@@ -428,7 +438,7 @@ export default function App() {
       {showNewTask && (
         <NewTaskModal
           backlogSections={
-            (board?.columns.find((c) => c.status === 'backlog')?.groups || [])
+            (board?.columns.find((c) => c.status === createStatus)?.groups || [])
               .filter((g) => g.title)
               .map((g) => g.title)
           }

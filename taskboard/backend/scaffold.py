@@ -7,6 +7,8 @@ import re
 import shutil
 from pathlib import Path
 
+from backend.statuses import load_pipeline
+
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 TASKS_TEMPLATES = TEMPLATES_DIR / "tasks"
 AGENTIC_TEMPLATES = TEMPLATES_DIR / "agentic"
@@ -19,6 +21,9 @@ VAULT_END = "<!-- /vault -->"
 
 # Маркер наличия секции правил в агентском файле
 RULES_MARKER = "TASK MANAGEMENT"
+
+# Рубрики внутри раздела создания задач: по ним create_task.py раскладывает новое
+BACKLOG_SUBSECTIONS = ("Рефакторинг (в порядке выполнения)", "Новый функционал и баги")
 
 # Скрипты-инструменты в tasks/: (часть scaffold, ключ конфига, имя шаблона).
 # Имя в проекте переименуемо через настройки, шаблон — нет
@@ -108,12 +113,80 @@ def _renumber_rules(rules_text: str, target_text: str) -> str:
     )
 
 
-def _append_rules(project_root: Path, names: list[str]) -> tuple[list[str], list[str]]:
+def render_rules(cfg: dict) -> str:
+    """Секция правил под жизненный цикл конкретного проекта.
+
+    Жёстко вписанный «backlog → development → review → testing → completed»
+    врал бы всем, кто настроил пайплайн под себя, поэтому статусы в правилах
+    подставляются из конфига — как и в скиллах, которые спрашивают их у скрипта.
+    """
+    pipeline = load_pipeline(cfg)
+    statuses = pipeline.statuses()
+    route = [s for s in statuses if not s.get("offramp")]
+    offramps = [s for s in statuses if s.get("offramp")]
+
+    line = " → ".join(s["key"] for s in route)
+    if offramps:
+        line += "  (+ вне маршрута: " + ", ".join(s["key"] for s in offramps) + ")"
+
+    return (AGENTIC_TEMPLATES / "rules_section.md").read_text(encoding="utf-8").format(
+        pipeline_line=line,
+        statuses_line=" | ".join(s["key"] for s in statuses),
+        sections_line=", ".join(s["section"] for s in statuses),
+        pick_section=pipeline.section_of(pipeline.action("pick") or "") or "Queue",
+        create_section=pipeline.section_of(pipeline.action("create") or "") or "Backlog",
+        start_status=pipeline.action("start") or "development",
+    )
+
+
+def sync_rules(project_root: Path, cfg: dict, names: list[str] | None = None) -> list[str]:
+    """Переписать уже развёрнутую секцию правил под текущий пайплайн проекта.
+
+    Вызывается после смены жизненного цикла: иначе в AGENTS.md/CLAUDE.md
+    остаётся описание прежнего маршрута, и агент действует по нему.
+    Трогаем только саму секцию — остальной текст файла принадлежит пользователю.
+    names — обновить только перечисленные файлы (точечное обновление из UI).
+    """
+    updated: list[str] = []
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        if names is not None and name not in names:
+            continue
+        target = project_root / name
+        if not target.is_file():
+            continue
+        content = target.read_text(encoding="utf-8-sig")
+        bounds = _rules_bounds(content)
+        if not bounds:
+            continue
+        start, end = bounds
+        section = _renumber_rules(render_rules(cfg), content[:start])
+        fresh = content[:start] + section.rstrip("\n") + "\n" + content[end:]
+        if fresh != content:
+            target.write_text(fresh, encoding="utf-8")
+            updated.append(name)
+    return updated
+
+
+def _rules_bounds(content: str) -> tuple[int, int] | None:
+    """Границы секции правил в агентском файле: (начало заголовка, конец секции)."""
+    heading = None
+    for m in re.finditer(r"^#\s+.*$", content, flags=re.MULTILINE):
+        if RULES_MARKER.lower() in m.group(0).lower():
+            heading = m
+            break
+    if heading is None:
+        return None
+    rest = content[heading.end():]
+    nxt = re.search(r"^#\s+", rest, flags=re.MULTILINE)
+    return heading.start(), heading.end() + (nxt.start() if nxt else len(rest))
+
+
+def _append_rules(project_root: Path, names: list[str], cfg: dict) -> tuple[list[str], list[str]]:
     """Дописать секцию правил в указанные агентские файлы (создаёт при отсутствии).
 
     Вернуть (дописано, уже_было).
     """
-    rules_text = (AGENTIC_TEMPLATES / "rules_section.md").read_text(encoding="utf-8")
+    rules_text = render_rules(cfg)
 
     appended: list[str] = []
     present: list[str] = []
@@ -122,7 +195,7 @@ def _append_rules(project_root: Path, names: list[str]) -> tuple[list[str], list
         # utf-8-sig: BOM в начале файла не должен ломать детект секций и нумерацию
         content = target.read_text(encoding="utf-8-sig") if target.exists() else ""
         if RULES_MARKER.lower() in content.lower():
-            present.append(name)
+            present.append(name)  # существующую секцию обновляет sync_rules
             continue
         section = _renumber_rules(rules_text, content)
         target.write_text(content.rstrip("\n") + "\n\n" + section, encoding="utf-8")
@@ -171,7 +244,7 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         if _copy_file_raw(
             TASKS_TEMPLATES / "board.md",
             tasks_dir / board_name,
-            lambda t: t.format(queue_section=cfg.get("queue_section", "Queue")),
+            lambda t: t.format(sections=render_sections(load_pipeline(cfg))),
         ):
             created.append(board_name)
         else:
@@ -215,12 +288,12 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
 
     project_root = tasks_dir.parent
 
-    # Точечное восстановление: только запрошенные части, правила не трогаем
+    # Точечное восстановление: только запрошенные части
     if parts:
         names = options.get("names")
-        for part in ("skills", "commands"):
+        for part in ("skills", "commands", "rules"):
             if part in want:
-                c, r, s = refresh_agentic(project_root, part, names=names)
+                c, r, s = refresh_agentic(project_root, part, names=names, cfg=cfg)
                 created += c
                 replaced += r
                 skipped += s
@@ -255,7 +328,10 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     rules_names = ([n for n, on in (("AGENTS.md", opt_rules_agents),
                                     ("CLAUDE.md", opt_rules_claude)) if on])
     if rules_names:
-        rules_appended, rules_present = _append_rules(project_root, rules_names)
+        rules_appended, rules_present = _append_rules(project_root, rules_names, cfg)
+        # Уже развёрнутую секцию приводим к эталону под текущий пайплайн:
+        # правила — такой же инструмент, как скиллы, а не данные пользователя
+        sync_rules(project_root, cfg, rules_present)
 
     return {
         "created": created,
@@ -339,6 +415,24 @@ def _command_targets(project_root: Path) -> list[tuple[str, Path, str]]:
     ]
 
 
+def render_sections(pipeline) -> str:
+    """Разделы доски по пайплайну проекта: `## <раздел>` в порядке жизненного цикла.
+
+    Раздел создания задач получает подразделы-рубрики — по ним create_task.py
+    раскладывает новые задачи; остальные разделы стартуют пустыми.
+    """
+    create = pipeline.action("create")
+    blocks: list[str] = []
+    for status in pipeline.statuses():
+        blocks.append(f"## {status['section']}\n")
+        if status["key"] == create:
+            for title in BACKLOG_SUBSECTIONS:
+                blocks.append(f"### {title}\n\n_(нет)_\n")
+        else:
+            blocks.append("_(нет)_\n")
+    return "\n".join(blocks)
+
+
 def agentic_paths(project_root: Path) -> list[Path]:
     """Развёрнутые папки агентского окружения (для наблюдения за изменениями).
 
@@ -361,7 +455,62 @@ def uses_vault(project_root: Path) -> bool:
     return False
 
 
-def _deployed_parts(project_root: Path) -> list[tuple[str, list[tuple[str, Path, str]]]]:
+RULES_FILES = ("AGENTS.md", "CLAUDE.md")
+
+
+def rules_deployed(project_root: Path) -> list[str]:
+    """Агентские файлы, в которых секция правил уже развёрнута."""
+    out: list[str] = []
+    for name in RULES_FILES:
+        target = project_root / name
+        if target.is_file() and _rules_bounds(target.read_text(encoding="utf-8-sig")):
+            out.append(name)
+    return out
+
+
+def rules_missing(project_root: Path) -> list[str]:
+    """Агентские файлы, которым не хватает секции правил.
+
+    Существующий файл без секции — это полурабочее состояние: агент, который
+    читает именно его, не знает процесса. Файлов нет совсем — заводим оба.
+    """
+    existing = [n for n in RULES_FILES if (project_root / n).is_file()]
+    if not existing:
+        return list(RULES_FILES)
+    deployed = rules_deployed(project_root)
+    return [n for n in existing if n not in deployed]
+
+
+def _rules_targets(project_root: Path, cfg: dict) -> list[tuple[str, Path, str]]:
+    """(имя файла, путь, эталонный текст секции) для развёрнутых правил.
+
+    Эталон считается под пайплайн проекта и с номером заголовка, который
+    секция занимает в этом файле, — иначе перенумерация выглядела бы
+    расхождением.
+    """
+    out: list[tuple[str, Path, str]] = []
+    for name in rules_deployed(project_root):
+        target = project_root / name
+        content = target.read_text(encoding="utf-8-sig")
+        bounds = _rules_bounds(content)
+        if bounds:
+            out.append((name, target, _renumber_rules(render_rules(cfg), content[:bounds[0]])))
+    return out
+
+
+def _current_text(part: str, path: Path) -> str | None:
+    """Текущее содержимое развёрнутой части (для правил — только их секция)."""
+    if part != "rules":
+        return _read(path)
+    content = _read(path)
+    if content is None:
+        return None
+    bounds = _rules_bounds(content)
+    return content[bounds[0]:bounds[1]] if bounds else None
+
+
+def _deployed_parts(project_root: Path,
+                    cfg: dict | None = None) -> list[tuple[str, list[tuple[str, Path, str]]]]:
     """Развёрнутые части окружения с их эталонами.
 
     Часть, которую в проекте вообще не разворачивали, не проверяется: не все
@@ -372,19 +521,22 @@ def _deployed_parts(project_root: Path) -> list[tuple[str, list[tuple[str, Path,
         parts.append(("skills", _skill_targets(project_root)))
     if any(_deployed_commands(project_root).glob("*.md")):
         parts.append(("commands", _command_targets(project_root)))
+    rules = _rules_targets(project_root, cfg or {})
+    if rules:
+        parts.append(("rules", rules))
     return parts
 
 
-def agentic_stale_details(project_root: Path) -> list[dict]:
+def agentic_stale_details(project_root: Path, cfg: dict | None = None) -> list[dict]:
     """Подробности по расхождениям: [{part, name, state, path}].
 
     state: "modified" — файл есть, но отличается от шаблона;
            "missing"  — шаблон появился позже развёртывания.
     """
     items: list[dict] = []
-    for part, targets in _deployed_parts(project_root):
+    for part, targets in _deployed_parts(project_root, cfg):
         for name, path, expected in targets:
-            current = _read(path)
+            current = _current_text(part, path)
             if _same_content(current, expected):
                 continue
             items.append({
@@ -396,28 +548,33 @@ def agentic_stale_details(project_root: Path) -> list[dict]:
     return items
 
 
-def agentic_stale(project_root: Path) -> dict[str, list[str]]:
-    """Устаревшие/недостающие части: {"skills": [имена], "commands": [имена]}."""
-    result: dict[str, list[str]] = {"skills": [], "commands": []}
-    for item in agentic_stale_details(project_root):
+def agentic_stale(project_root: Path, cfg: dict | None = None) -> dict[str, list[str]]:
+    """Устаревшие/недостающие части: {"skills": [...], "commands": [...], "rules": [...]}."""
+    result: dict[str, list[str]] = {"skills": [], "commands": [], "rules": []}
+    for item in agentic_stale_details(project_root, cfg):
         result[item["part"]].append(item["name"])
     return result
 
 
-def agentic_diff(project_root: Path, part: str, name: str) -> dict:
-    """Unified diff «развёрнутый файл → шаблон» для одного скилла или команды.
+def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = None) -> dict:
+    """Unified diff «развёрнутое → эталон» для скилла, команды или секции правил.
 
     Направление выбрано так, чтобы «+» читалось как «появится после обновления».
-    Эталон берётся с учётом волт-режима проекта: иначе у проектов без волта
-    вырезанные блоки выглядели бы расхождением.
+    Эталон берётся с учётом волт-режима проекта (иначе у проектов без волта
+    вырезанные блоки выглядели бы расхождением) и пайплайна — для правил.
     """
-    targets = _skill_targets(project_root) if part == "skills" else _command_targets(project_root)
+    if part == "skills":
+        targets = _skill_targets(project_root)
+    elif part == "commands":
+        targets = _command_targets(project_root)
+    else:
+        targets = _rules_targets(project_root, cfg or {})
     target = next((t for t in targets if t[0] == name), None)
     if target is None:
         return {"ok": False, "error": f"Неизвестный элемент: {part}/{name}"}
 
     _name, path, expected = target
-    current = _read(path)
+    current = _current_text(part, path)
     if current is None:
         state = "missing"
     else:
@@ -439,8 +596,9 @@ def agentic_diff(project_root: Path, part: str, name: str) -> dict:
 
 
 def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
-                    names: list[str] | None = None) -> tuple[list[str], list[str], list[str]]:
-    """Развернуть/обновить скиллы или команды до шаблонной версии.
+                    names: list[str] | None = None,
+                    cfg: dict | None = None) -> tuple[list[str], list[str], list[str]]:
+    """Развернуть/обновить скиллы, команды или секцию правил до эталона.
 
     Как и create_task.py, это инструмент, а не данные пользователя:
     расходящийся файл перезаписывается. vault=None — сохранить режим волта,
@@ -448,6 +606,17 @@ def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
     names — обновить только перечисленные элементы (остальные не трогать).
     Возвращает (created, replaced, skipped) — относительные пути.
     """
+    if part == "rules":
+        # Правила живут секцией внутри пользовательского файла: устаревшую
+        # пересобираем, недостающую дописываем. Если агентских файлов нет
+        # совсем — заводим оба: проект без правил полурабочий, агент не знает
+        # ни очереди, ни как менять статус
+        wanted = list(names) if names else sorted(
+            set(rules_deployed(project_root)) | set(rules_missing(project_root)))
+        appended, _present = _append_rules(project_root, wanted, cfg or {})
+        updated = sync_rules(project_root, cfg or {}, wanted)
+        return appended, [n for n in updated if n not in appended], []
+
     targets = (_skill_targets(project_root, vault) if part == "skills"
                else _command_targets(project_root))
     if names is not None:

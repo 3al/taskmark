@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import PipelineEditor from './PipelineEditor'
 
-// Модалка настроек: редактирование глобального конфига ~/.taskboard/config.json
+// Модалка настроек. Свойства инструмента (порт, тема) живут в глобальном
+// ~/.taskboard/config.json, настройки проекта (жизненный цикл, имена
+// артефактов) — в <проект>/tasks/.taskboard.json; раскладывает их бэкенд
 export default function SettingsModal({ onClose, onSaved }) {
   const [config, setConfig] = useState(null)
+  const [pipeline, setPipelineState] = useState(null)
+  const [catalog, setCatalog] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   // Выполненные миграции после сохранения (переименования в проекте)
@@ -45,24 +50,59 @@ export default function SettingsModal({ onClose, onSaved }) {
 
   useEffect(() => {
     api.getConfig().then(setConfig).catch((e) => setError(e.message))
+    api.pipeline()
+      .then((data) => {
+        setPipelineState({ pipeline: data.pipeline, actions: data.actions })
+        setCatalog(data.catalog || [])
+      })
+      .catch(() => { /* нет активного проекта — редактор просто не покажем */ })
   }, [])
 
   const set = (key, value) => setConfig({ ...config, [key]: value })
 
-  const save = async () => {
+  // Выключение статуса с задачами: куда их девать — решает пользователь
+  const [removals, setRemovals] = useState(null)
+  const [moves, setMoves] = useState({})
+
+  const updates = () => ({
+    port: Number(config.port) || 8765,
+    dnd_full_board: !!config.dnd_full_board,
+    board_file: config.board_file,
+    create_script: config.create_script,
+    status_script: config.status_script,
+    logs_dir: config.logs_dir,
+    ...(pipeline ? {
+      pipeline: pipeline.pipeline.map((s) => s.key),
+      actions: pipeline.actions,
+    } : {}),
+  })
+
+  // Сначала спрашиваем бэкенд, не осиротеют ли задачи выключаемых статусов
+  const check = async () => {
     setBusy(true)
     setError(null)
     try {
-      const result = await api.saveConfig({
-        port: Number(config.port) || 8765,
-        dnd_full_board: !!config.dnd_full_board,
-        board_file: config.board_file,
-        create_script: config.create_script,
-        status_script: config.status_script,
-        logs_dir: config.logs_dir,
-        queue_section: config.queue_section,
-        queued_status: config.queued_status,
-      })
+      const preview = await api.previewConfig(updates())
+      if (preview.removals?.length) {
+        setRemovals(preview.removals)
+        // Ключ — заголовок раздела: у осиротевшего раздела статуса может не быть
+        setMoves(Object.fromEntries(preview.removals.map((r) => [r.section, r.suggested])))
+        return
+      }
+      await save()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const save = async (withMoves = undefined) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await api.saveConfig(updates(), withMoves)
+      setRemovals(null)
       onSaved(result.config)
       // Переименования запускают миграции в проекте — показываем что произошло
       if (result.migrations?.length) {
@@ -82,11 +122,12 @@ export default function SettingsModal({ onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md shadow-2xl">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
         <div className="px-5 py-4 border-b border-zinc-800 text-lg font-semibold">
           {serverAction === 'restart' ? 'Перезапуск сервера' :
            serverAction === 'stop' ? 'Сервер остановлен' :
-           migrations ? 'Настройки сохранены' : 'Настройки'}
+           migrations ? 'Настройки сохранены' :
+           removals ? 'Куда перенести задачи?' : 'Настройки'}
         </div>
 
         {serverAction === 'restart' ? (
@@ -98,6 +139,47 @@ export default function SettingsModal({ onClose, onSaved }) {
             <div className="text-sm text-zinc-300">Сервер остановлен. Эту вкладку можно закрыть.</div>
             <div className="text-xs text-zinc-600">Запуск: py taskboard.py</div>
           </div>
+        ) : removals ? (
+          <>
+            <div className="px-5 py-4 space-y-3">
+              <div className="text-sm text-zinc-300">
+                Эти статусы выключаются, но в их разделах остались задачи.
+                Выберите, куда их перенести — доска и frontmatter поедут вместе.
+              </div>
+              {removals.map((r) => (
+                <div key={r.section} className="space-y-1">
+                  <span className="block text-xs text-zinc-500">
+                    {r.label} — задач: {r.count}
+                  </span>
+                  <select
+                    className={field}
+                    value={moves[r.section] || ''}
+                    onChange={(e) => setMoves({ ...moves, [r.section]: e.target.value })}
+                  >
+                    {(pipeline?.pipeline || []).map((s) => (
+                      <option key={s.key} value={s.key}>{s.label}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+              {error && <div className="text-sm text-rose-400">{error}</div>}
+            </div>
+            <div className="px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
+              <button
+                onClick={() => setRemovals(null)}
+                className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => save(moves)}
+                disabled={busy}
+                className="px-4 py-2 text-sm font-medium bg-sky-600 hover:bg-sky-500 rounded-lg disabled:opacity-50"
+              >
+                {busy ? 'Переношу…' : 'Перенести и сохранить'}
+              </button>
+            </div>
+          </>
         ) : migrations ? (
           <>
             <div className="px-5 py-4 space-y-2">
@@ -129,7 +211,7 @@ export default function SettingsModal({ onClose, onSaved }) {
                   onChange={(e) => set('dnd_full_board', e.target.checked)}
                   className="accent-sky-500"
                 />
-                DnD по всей доске (не только Backlog↔Queue)
+                DnD по всей доске (иначе мышью — только приём задач ↔ очередь)
               </label>
 
               <div>
@@ -163,20 +245,21 @@ export default function SettingsModal({ onClose, onSaved }) {
                 <input className={field} value={config.logs_dir} onChange={(e) => set('logs_dir', e.target.value)} />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className={label}>Название раздела очереди</span>
-                  <input className={field} value={config.queue_section} onChange={(e) => set('queue_section', e.target.value)} />
+              {pipeline && (
+                <div className="border-t border-zinc-800 pt-4">
+                  <div className="text-sm font-medium mb-2">Жизненный цикл задачи</div>
+                  <PipelineEditor
+                    pipeline={pipeline.pipeline}
+                    actions={pipeline.actions}
+                    catalog={catalog}
+                    onChange={setPipelineState}
+                  />
                 </div>
-                <div>
-                  <span className={label}>Статус очереди (frontmatter)</span>
-                  <input className={field} value={config.queued_status} onChange={(e) => set('queued_status', e.target.value)} />
-                </div>
-              </div>
+              )}
 
               <div className="text-[11px] text-zinc-600">
-                Глобальный конфиг: ~/.taskboard/config.json · переопределения проекта:
-                &lt;проект&gt;/taskboard/config.json
+                Порт и тема — глобально (~/.taskboard/config.json), жизненный цикл и имена
+                артефактов — в проекте (tasks/.taskboard.json, вне git)
               </div>
 
               <div className="border-t border-zinc-800 pt-4">
@@ -210,7 +293,7 @@ export default function SettingsModal({ onClose, onSaved }) {
             Отмена
           </button>
           <button
-            onClick={save}
+            onClick={check}
             disabled={busy || !config}
             className="px-4 py-2 text-sm font-medium bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg"
           >
