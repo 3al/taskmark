@@ -37,6 +37,9 @@ export const api = {
     }),
   ensureQueue: () => request('/api/queue/ensure', { method: 'POST' }),
   scaffold: (options) => request('/api/scaffold', { method: 'POST', body: JSON.stringify(options) }),
+  agenticStale: () => request('/api/agentic/stale'),
+  agenticDiff: (part, name) =>
+    request(`/api/agentic/diff?part=${encodeURIComponent(part)}&name=${encodeURIComponent(name)}`),
   getConfig: () => request('/api/config'),
   saveConfig: (updates) => request('/api/config', { method: 'POST', body: JSON.stringify({ updates }) }),
   logs: () => request('/api/logs'),

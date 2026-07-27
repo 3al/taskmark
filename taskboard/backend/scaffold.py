@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 import shutil
 from pathlib import Path
@@ -216,9 +217,10 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
 
     # Точечное восстановление: только запрошенные части, правила не трогаем
     if parts:
+        names = options.get("names")
         for part in ("skills", "commands"):
             if part in want:
-                c, r, s = refresh_agentic(project_root, part)
+                c, r, s = refresh_agentic(project_root, part, names=names)
                 created += c
                 replaced += r
                 skipped += s
@@ -349,39 +351,95 @@ def uses_vault(project_root: Path) -> bool:
     return False
 
 
-def agentic_stale(project_root: Path) -> dict[str, list[str]]:
-    """Устаревшие/недостающие части агентского окружения.
+def _deployed_parts(project_root: Path) -> list[tuple[str, list[tuple[str, Path, str]]]]:
+    """Развёрнутые части окружения с их эталонами.
 
-    Возвращает {"skills": [имена], "commands": [имена]}. Часть, которую в
-    проекте вообще не разворачивали, не проверяется (пустой список): не
-    все проекты хотят скиллы, требовать их обновления — шум.
+    Часть, которую в проекте вообще не разворачивали, не проверяется: не все
+    проекты хотят скиллы, требовать их обновления — шум.
     """
-    result: dict[str, list[str]] = {"skills": [], "commands": []}
-
+    parts: list[tuple[str, list[tuple[str, Path, str]]]] = []
     if any(_deployed_skills(project_root).glob("*/SKILL.md")):
-        result["skills"] = [
-            name for name, path, expected in _skill_targets(project_root)
-            if _read(path) != expected
-        ]
+        parts.append(("skills", _skill_targets(project_root)))
     if any(_deployed_commands(project_root).glob("*.md")):
-        result["commands"] = [
-            name for name, path, expected in _command_targets(project_root)
-            if _read(path) != expected
-        ]
+        parts.append(("commands", _command_targets(project_root)))
+    return parts
+
+
+def agentic_stale_details(project_root: Path) -> list[dict]:
+    """Подробности по расхождениям: [{part, name, state, path}].
+
+    state: "modified" — файл есть, но отличается от шаблона;
+           "missing"  — шаблон появился позже развёртывания.
+    """
+    items: list[dict] = []
+    for part, targets in _deployed_parts(project_root):
+        for name, path, expected in targets:
+            current = _read(path)
+            if current == expected:
+                continue
+            items.append({
+                "part": part,
+                "name": name,
+                "state": "missing" if current is None else "modified",
+                "path": str(path.relative_to(project_root)).replace("\\", "/"),
+            })
+    return items
+
+
+def agentic_stale(project_root: Path) -> dict[str, list[str]]:
+    """Устаревшие/недостающие части: {"skills": [имена], "commands": [имена]}."""
+    result: dict[str, list[str]] = {"skills": [], "commands": []}
+    for item in agentic_stale_details(project_root):
+        result[item["part"]].append(item["name"])
     return result
 
 
-def refresh_agentic(project_root: Path, part: str,
-                    vault: bool | None = None) -> tuple[list[str], list[str], list[str]]:
+def agentic_diff(project_root: Path, part: str, name: str) -> dict:
+    """Unified diff «развёрнутый файл → шаблон» для одного скилла или команды.
+
+    Направление выбрано так, чтобы «+» читалось как «появится после обновления».
+    Эталон берётся с учётом волт-режима проекта: иначе у проектов без волта
+    вырезанные блоки выглядели бы расхождением.
+    """
+    targets = _skill_targets(project_root) if part == "skills" else _command_targets(project_root)
+    target = next((t for t in targets if t[0] == name), None)
+    if target is None:
+        return {"ok": False, "error": f"Неизвестный элемент: {part}/{name}"}
+
+    _name, path, expected = target
+    current = _read(path)
+    state = "missing" if current is None else "modified"
+
+    diff_lines = list(difflib.unified_diff(
+        (current or "").splitlines(),
+        expected.splitlines(),
+        fromfile=f"{name} — в проекте",
+        tofile=f"{name} — шаблон",
+        lineterm="",
+    ))
+    body = [ln for ln in diff_lines if not ln.startswith(("---", "+++"))]
+    added = sum(1 for ln in body if ln.startswith("+"))
+    removed = sum(1 for ln in body if ln.startswith("-"))
+
+    return {"ok": True, "part": part, "name": name, "state": state,
+            "diff": "\n".join(diff_lines), "added": added, "removed": removed}
+
+
+def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
+                    names: list[str] | None = None) -> tuple[list[str], list[str], list[str]]:
     """Развернуть/обновить скиллы или команды до шаблонной версии.
 
     Как и create_task.py, это инструмент, а не данные пользователя:
     расходящийся файл перезаписывается. vault=None — сохранить режим волта,
     уже сложившийся в проекте (точечное обновление из UI).
+    names — обновить только перечисленные элементы (остальные не трогать).
     Возвращает (created, replaced, skipped) — относительные пути.
     """
     targets = (_skill_targets(project_root, vault) if part == "skills"
                else _command_targets(project_root))
+    if names is not None:
+        wanted = set(names)
+        targets = [t for t in targets if t[0] in wanted]
     prefix = ".claude/skills" if part == "skills" else ".opencode/commands"
 
     created: list[str] = []

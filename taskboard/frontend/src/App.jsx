@@ -9,6 +9,7 @@ import NewTaskModal from './components/NewTaskModal'
 import LogsPanel from './components/LogsPanel'
 import SettingsModal from './components/SettingsModal'
 import ScaffoldModal from './components/ScaffoldModal'
+import AgenticStaleModal from './components/AgenticStaleModal'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению прямоугольников
 function collisionDetection(args) {
@@ -38,6 +39,7 @@ export default function App() {
   const [showLogs, setShowLogs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showScaffold, setShowScaffold] = useState(false)
+  const [showAgentic, setShowAgentic] = useState(false)
   const [dndFullBoard, setDndFullBoard] = useState(false)
   const configLoaded = useRef(false)
   const [activeDrag, setActiveDrag] = useState(null)
@@ -254,12 +256,18 @@ export default function App() {
     outdated_script: { part: 'create_script', label: 'Обновить' },
     no_status_script: { part: 'status_script', label: 'Создать' },
     outdated_status_script: { part: 'status_script', label: 'Обновить' },
-    outdated_skills: { part: 'skills', label: 'Обновить' },
-    outdated_commands: { part: 'commands', label: 'Обновить' },
+    // Агентское окружение — не «обновить всё вслепую»: сначала подробности,
+    // где видно каждый элемент, его diff и точечное обновление
+    outdated_skills: { modal: 'agentic', label: 'Подробности' },
+    outdated_commands: { modal: 'agentic', label: 'Подробности' },
   }
   const fixDegraded = async (code) => {
     const fix = DEGRADED_FIX[code]
     if (!fix) return
+    if (fix.modal === 'agentic') {
+      setShowAgentic(true)
+      return
+    }
     try {
       await api.scaffold({ skills: false, commands: false, rules: false, parts: [fix.part] })
       refresh()
@@ -433,6 +441,12 @@ export default function App() {
         <SettingsModal
           onClose={() => setShowSettings(false)}
           onSaved={(cfg) => { setDndFullBoard(!!cfg.dnd_full_board); refresh() }}
+        />
+      )}
+      {showAgentic && (
+        <AgenticStaleModal
+          onClose={() => setShowAgentic(false)}
+          onUpdated={refresh}
         />
       )}
       {showScaffold && (

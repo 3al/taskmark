@@ -18,7 +18,7 @@ from backend.config import load_global_config, load_project_config, save_global_
 from backend.create_task_runner import create_task
 from backend.migrations import apply_config_migrations
 from backend.queue_ops import ensure_queue_section, move_task
-from backend.scaffold import scaffold_project
+from backend.scaffold import agentic_diff, agentic_stale_details, scaffold_project
 from backend.task_parser import parse_task
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
@@ -28,7 +28,7 @@ DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 # Возможности API: лаунчер сверяет их при подключении к уже запущенному
 # серверу, чтобы предупредить об устаревшем процессе
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
-                "move_group": True, "scaffold": True}
+                "move_group": True, "scaffold": True, "agentic_diff": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -77,8 +77,10 @@ class ScaffoldIn(BaseModel):
     rules_claude: bool = True
     vault: bool = False
     # Точечное восстановление: создать только перечисленные части
-    # (board | create_script | epics | gitignore | logs), агентское окружение пропускается
+    # (board | create_script | status_script | epics | gitignore | logs | skills | commands)
     parts: list[str] | None = None
+    # Точечное обновление агентского окружения: только эти скиллы/команды
+    names: list[str] | None = None
 
 
 # --- Вспомогательные ---
@@ -263,6 +265,25 @@ def api_ensure_queue() -> dict:
     board_path = tasks_dir / cfg.get("board_file", "board.md")
     ensure_queue_section(board_path, cfg.get("queue_section", "Queue"))
     return {"ok": True}
+
+
+@app.get("/api/agentic/stale")
+def api_agentic_stale() -> dict:
+    """Подробности по устаревшему агентскому окружению активного проекта."""
+    tasks_dir, _cfg = _ctx()
+    return {"items": agentic_stale_details(tasks_dir.parent)}
+
+
+@app.get("/api/agentic/diff")
+def api_agentic_diff(part: str, name: str) -> dict:
+    """Unified diff «развёрнутый файл → шаблон» для скилла или команды."""
+    tasks_dir, _cfg = _ctx()
+    if part not in ("skills", "commands"):
+        raise HTTPException(400, f"Неизвестная часть: {part}")
+    result = agentic_diff(tasks_dir.parent, part, name)
+    if not result.get("ok"):
+        raise HTTPException(404, result.get("error", "Элемент не найден"))
+    return result
 
 
 @app.post("/api/scaffold")
