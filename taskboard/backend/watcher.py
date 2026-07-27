@@ -22,6 +22,8 @@ class TasksWatcher:
         self._lock = threading.Lock()
         self._debounce = debounce_sec
         self._last_event = 0.0
+        self._trailing: threading.Timer | None = None
+        self._trailing_lock = threading.Lock()
         self._watched: Path | None = None
         # Флаг остановки: SSE-генераторы проверяют его, чтобы завершиться
         # при shutdown сервера (иначе uvicorn --reload виснет на open SSE)
@@ -37,6 +39,10 @@ class TasksWatcher:
     def shutdown(self) -> None:
         """Завершить все SSE-подписки и остановить наблюдение."""
         self.stopped.set()
+        with self._trailing_lock:
+            if self._trailing:
+                self._trailing.cancel()
+                self._trailing = None
         with self._lock:
             subscribers = list(self._subscribers)
         for q in subscribers:
@@ -69,26 +75,34 @@ class TasksWatcher:
             return []
         return [self._watched, *agentic_paths(self._watched.parent)]
 
-    def _start_observer(self) -> None:
+    def _start_observer(self) -> bool:
         """Пересоздать наблюдателя на self._observed_paths(). Под _watch_lock.
 
-        Новый наблюдатель поднимается до остановки старого и подменяется одним
-        присваиванием: иначе снаружи виден момент, когда _observer уже None.
-        """
-        paths = self._observed_paths()
-        fresh = None
-        if paths:
-            handler = _Handler(self._on_change)
-            fresh = Observer()
-            for path in paths:
-                fresh.schedule(handler, str(path), recursive=True)
-            fresh.daemon = True
-            fresh.start()
+        Старый наблюдатель останавливается ДО подъёма нового. На macOS watch-и
+        FSEvents глобальны в процессе: второй наблюдатель на ещё занятый путь
+        падает с «it is already scheduled» прямо в потоке эмиттера, тот молча
+        умирает, монитор живости пересоздаёт наблюдателя — и так по кругу, а
+        живые обновления доски не приходят.
 
-        previous, self._observer = self._observer, fresh
+        Возвращает True, если наблюдатель поднят (False — наблюдать нечего).
+        """
+        previous, self._observer = self._observer, None
         if previous:
             previous.stop()
             previous.join(timeout=2)
+
+        paths = self._observed_paths()
+        if not paths:
+            return False
+
+        handler = _Handler(self._on_change)
+        fresh = Observer()
+        for path in dict.fromkeys(str(p) for p in paths):
+            fresh.schedule(handler, path, recursive=True)
+        fresh.daemon = True
+        fresh.start()
+        self._observer = fresh
+        return True
 
     def _stop_observer(self) -> None:
         if self._observer:
@@ -105,17 +119,21 @@ class TasksWatcher:
     def _monitor_loop(self) -> None:
         while not self.stopped.wait(self._monitor_sec):
             with self._watch_lock:
-                if not self._watching or not self._observer:
+                if not self._watching:
                     continue
+                observer = self._observer
+                # _observer == None при живом наблюдении — сорвавшийся старт
+                # (или исчезнувшая папка): пробуем поднять заново
                 dead = (
-                    not self._observer.is_alive()
-                    or any(not e.is_alive() for e in self._observer.emitters)
+                    observer is None
+                    or not observer.is_alive()
+                    or any(not e.is_alive() for e in observer.emitters)
                 )
                 if dead:
                     try:
-                        self._start_observer()
-                        print("[taskboard] watcher: наблюдатель перезапущен "
-                              f"({self._watched})", flush=True)
+                        if self._start_observer():
+                            print("[taskboard] watcher: наблюдатель перезапущен "
+                                  f"({self._watched})", flush=True)
                     except Exception:
                         pass  # повторим на следующем тике
 
@@ -135,8 +153,32 @@ class TasksWatcher:
         # Дебаунс: watcher шлёт серию событий на одну запись файла
         now = time.monotonic()
         if now - self._last_event < self._debounce:
+            self._schedule_trailing()
             return
         self._last_event = now
+        self._notify()
+
+    def _schedule_trailing(self) -> None:
+        """Досылка события в конце серии.
+
+        Пропускать хвост серии нельзя: фронт перечитывает доску по первому
+        событию, и если запись файла завершилась уже после этого, последнее
+        состояние никем не досылается — алерт на доске висит до ручного F5.
+        """
+        with self._trailing_lock:
+            if self._trailing and self._trailing.is_alive():
+                return  # хвост уже запланирован
+            self._trailing = threading.Timer(self._debounce, self._emit_trailing)
+            self._trailing.daemon = True
+            self._trailing.start()
+
+    def _emit_trailing(self) -> None:
+        if self.stopped.is_set():
+            return
+        self._last_event = time.monotonic()
+        self._notify()
+
+    def _notify(self) -> None:
         with self._lock:
             subscribers = list(self._subscribers)
         for q in subscribers:

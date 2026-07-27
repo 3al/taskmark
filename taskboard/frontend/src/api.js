@@ -51,6 +51,14 @@ export const api = {
 // Подписка на живые обновления (SSE)
 export function subscribeChanges(onChange) {
   const source = new EventSource('/api/events')
+  let opened = false
+  // Переподключение после обрыва (перезапуск сервера, сон машины): события,
+  // случившиеся в разрыве, потеряны — перечитываем состояние сами, иначе
+  // доска и баннеры застывают до ручного F5
+  source.onopen = () => {
+    if (opened) onChange()
+    opened = true
+  }
   source.onmessage = (event) => {
     if (event.data === 'changed') onChange()
   }
