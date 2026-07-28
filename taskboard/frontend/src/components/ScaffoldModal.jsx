@@ -172,8 +172,11 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
                     className={`mt-0.5 ${checkbox}`}
                   />
                   <span>
-                    Поддержка волта знаний
-                    <div className={hint}>оставить в скиллах блоки про Knowledge Vault (obsidian-волт в проекте)</div>
+                    Knowledge Vault — внешняя память проекта
+                    <div className={hint}>
+                      развернёт vault/SYS (правила, шаблоны заметок, таксономию) и скилл
+                      write-vault; в скиллах и правилах останутся блоки про волт
+                    </div>
                   </span>
                 </label>
               </div>

@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import re
 import shutil
+from datetime import date
 from pathlib import Path
 
 from backend.epics import EPICS_FILE
@@ -15,10 +16,28 @@ TASKS_TEMPLATES = TEMPLATES_DIR / "tasks"
 AGENTIC_TEMPLATES = TEMPLATES_DIR / "agentic"
 SKILLS_TEMPLATES = AGENTIC_TEMPLATES / ".claude" / "skills"
 COMMANDS_TEMPLATES = AGENTIC_TEMPLATES / ".opencode" / "commands"
+VAULT_TEMPLATES = TEMPLATES_DIR / "vault"
 
-# Маркеры волт-блоков в шаблонах скиллов: при vault=False вырезаются целиком
+# Маркеры волт-блоков в шаблонах скиллов и правил: при vault=False вырезаются целиком
 VAULT_START = "<!-- vault -->"
 VAULT_END = "<!-- /vault -->"
+
+# Инструменты, которые нужны только волту: без него это лишние файлы, на
+# которые к тому же никто не ссылается (волт-блоки соседних скиллов вырезаны)
+VAULT_SKILLS = ("write-vault",)
+
+# Папка волта фиксирована: скиллы и правила ссылаются на `vault/` десятками
+# упоминаний в тексте — подстановка имени в каждое усложнила бы шаблоны ради
+# случая, которого никто не просил
+VAULT_DIR = "vault"
+
+# Что в vault/SYS/ — поставка (сверяется с шаблоном), а что данные пользователя.
+# README и таксономию заполняет он сам: сверять их с эталоном значило бы
+# показывать баннер устаревания на каждую собственную запись
+VAULT_TEMPLATE_FILES = ("SYS/structure.md",
+                        "SYS/templates/business-note.md",
+                        "SYS/templates/code-note.md")
+VAULT_DATA_FILES = ("SYS/README.md", "SYS/taxonomy.md")
 
 # Маркер наличия секции правил в агентском файле
 RULES_MARKER = "TASK MANAGEMENT"
@@ -36,6 +55,11 @@ TOOL_SCRIPTS = (
 # .gitignore для разворачиваемых агентских папок: не загрязнять git-дерево проекта
 AGENTIC_GITIGNORE = (
     "# Агентское окружение, развёрнутое taskboard — в git не попадает\n*\n"
+)
+
+# Волт — локальная внешняя память проекта, а не его исходники
+VAULT_GITIGNORE = (
+    "# Knowledge Vault — локальная память проекта, в git не попадает\n*\n"
 )
 
 # Среды агентов, для которых разворачивается окружение. Выбор хранится в
@@ -142,7 +166,13 @@ def render_rules(cfg: dict) -> str:
     if offramps:
         line += "  (+ вне маршрута: " + ", ".join(s["key"] for s in offramps) + ")"
 
-    return (AGENTIC_TEMPLATES / "rules_section.md").read_text(encoding="utf-8").format(
+    # Про волт в правилах пишем только тем, у кого он есть: иначе агент читает
+    # инструкцию к хранилищу, которого в проекте нет
+    template = (AGENTIC_TEMPLATES / "rules_section.md").read_text(encoding="utf-8")
+    if not cfg.get("vault"):
+        template = _strip_vault_blocks(template)
+
+    return template.format(
         pipeline_line=line,
         statuses_line=" | ".join(s["key"] for s in statuses),
         sections_line=", ".join(s["section"] for s in statuses),
@@ -317,6 +347,27 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     # Точечное восстановление: только запрошенные части
     if parts:
         names = options.get("names")
+        if "vault" in want:
+            c, r, s, d = deploy_vault(project_root, overwrite=True, names=names)
+            created += c
+            replaced += r
+            skipped += s
+            diverged += d
+            # Волт без своего скилла — половина работы: пользователь нажал одну
+            # кнопку и ждёт рабочее хранилище, а не заготовку под него.
+            # Недостающее создаём, правленное не трогаем (overwrite=False)
+            if names is None:
+                for agentic in ("skills", "commands"):
+                    if agentic in want:
+                        continue  # эту часть и так развернут ниже, целиком
+                    # Команды нужны только opencode: у остальных их не бывает
+                    if agentic == "commands" and not active["opencode"]:
+                        continue
+                    c, r, s, d = refresh_agentic(project_root, agentic, vault=True, cfg=cfg,
+                                                 names=list(VAULT_SKILLS), overwrite=False)
+                    created += c
+                    replaced += r
+                    diverged += d
         for part in ("skills", "commands", "rules"):
             if part not in want:
                 continue
@@ -352,8 +403,18 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         else:
             skipped.append(f"{agent_dir.name}/.gitignore")
 
+    # Волт — часть поставки, а не только режим текстов: без структуры скиллы
+    # ссылались бы на папку, которой никто не создаёт
+    if opt_vault:
+        c, r, s, d = deploy_vault(project_root, overwrite=overwrite)
+        created += c
+        replaced += r
+        skipped += s
+        diverged += d
+
     if opt_commands:
-        c, r, s, d = refresh_agentic(project_root, "commands", overwrite=overwrite)
+        c, r, s, d = refresh_agentic(project_root, "commands", vault=opt_vault,
+                                     overwrite=overwrite)
         created += c
         replaced += r
         skipped += s
@@ -494,18 +555,103 @@ def _skill_targets(project_root: Path, vault: bool | None = None,
     for skill_dir in sorted(SKILLS_TEMPLATES.iterdir()):
         if not skill_dir.is_dir():
             continue
+        # Волт-скиллы без волта не поставляются: иначе проект получает
+        # инструмент к хранилищу, которого у него нет
+        if skill_dir.name in VAULT_SKILLS and not vault:
+            continue
         raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
         text = raw if vault else _strip_vault_blocks(raw)
         out.append((skill_dir.name, skills_dir / skill_dir.name / "SKILL.md", text))
     return out
 
 
-def _command_targets(project_root: Path) -> list[tuple[str, Path, str]]:
-    """(имя, путь развёрнутого файла, эталонный текст) для команд opencode."""
+def _command_targets(project_root: Path, vault: bool | None = None,
+                     cfg: dict | None = None) -> list[tuple[str, Path, str]]:
+    """(имя, путь развёрнутого файла, эталонный текст) для команд opencode.
+
+    Обёртка волт-скилла едет только вместе с волтом — как и сам скилл.
+    """
+    if vault is None:
+        vault = uses_vault(project_root, cfg)
     return [
         (f.stem, _deployed_commands(project_root) / f.name, f.read_text(encoding="utf-8"))
         for f in sorted(COMMANDS_TEMPLATES.glob("*.md"))
+        if vault or f.stem not in VAULT_SKILLS
     ]
+
+
+# --- Knowledge Vault ---
+
+def _vault_dir(project_root: Path) -> Path:
+    return project_root / VAULT_DIR
+
+
+def _vault_targets(project_root: Path) -> list[tuple[str, Path, str]]:
+    """(имя, путь, эталон) для поставляемой части волта.
+
+    Только правила ведения и шаблоны заметок: README и таксономию наполняет
+    пользователь, а его заметки — вообще не наша поставка.
+    """
+    vault = _vault_dir(project_root)
+    return [(rel, vault / rel, (VAULT_TEMPLATES / rel).read_text(encoding="utf-8"))
+            for rel in VAULT_TEMPLATE_FILES]
+
+
+def deploy_vault(project_root: Path, overwrite: bool = False,
+                 names: list[str] | None = None
+                 ) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Развернуть структуру `vault/`: правила, шаблоны заметок, каркас таксономии.
+
+    Файлы пользователя (README, таксономия, сами заметки) не трогаем: они
+    создаются один раз, дальше это его содержимое. names — обновить только
+    перечисленные элементы (кнопка рядом с diff).
+    Возвращает (created, replaced, skipped, diverged).
+    """
+    vault = _vault_dir(project_root)
+    created: list[str] = []
+    replaced: list[str] = []
+    skipped: list[str] = []
+    diverged: list[str] = []
+    wanted = set(names) if names is not None else None
+
+    for rel, path, expected in _vault_targets(project_root):
+        if wanted is not None and rel not in wanted:
+            continue
+        name = f"{VAULT_DIR}/{rel}"
+        current = _read(path)
+        if _same_content(current, expected):
+            skipped.append(name)
+            continue
+        if current is not None and not overwrite:
+            diverged.append(name)
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(expected, encoding="utf-8")
+        (created if current is None else replaced).append(name)
+
+    # Точечное обновление — только названные файлы: остального пользователь
+    # в этот момент не просил
+    if wanted is not None:
+        return created, replaced, skipped, diverged
+
+    # Имя проекта и дата подставляются один раз при создании: дальше это текст
+    # пользователя, и переписывать его нам нечем
+    for rel in VAULT_DATA_FILES:
+        path = vault / rel
+        name = f"{VAULT_DIR}/{rel}"
+        text = (VAULT_TEMPLATES / rel).read_text(encoding="utf-8").format(
+            project=project_root.name, date=date.today().isoformat())
+        if _write_if_absent(path, text):
+            created.append(name)
+        else:
+            skipped.append(name)
+
+    # Волт — локальная память разработчика, а не часть чужого репозитория
+    if _write_if_absent(vault / ".gitignore", VAULT_GITIGNORE):
+        created.append(f"{VAULT_DIR}/.gitignore")
+    else:
+        skipped.append(f"{VAULT_DIR}/.gitignore")
+    return created, replaced, skipped, diverged
 
 
 def render_sections(pipeline) -> str:
@@ -632,7 +778,9 @@ def _deployed_parts(project_root: Path,
     if any(_deployed_skills(project_root, cfg).glob("*/SKILL.md")):
         parts.append(("skills", _skill_targets(project_root, cfg=cfg)))
     if active["opencode"] and any(_deployed_commands(project_root).glob("*.md")):
-        parts.append(("commands", _command_targets(project_root)))
+        parts.append(("commands", _command_targets(project_root, cfg=cfg)))
+    if uses_vault(project_root, cfg) and _vault_dir(project_root).is_dir():
+        parts.append(("vault", _vault_targets(project_root)))
     rules = _rules_targets(project_root, cfg or {})
     if rules:
         parts.append(("rules", rules))
@@ -726,8 +874,13 @@ def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
         updated = sync_rules(project_root, cfg or {}, wanted)
         return appended, [n for n in updated if n not in appended], [], []
 
+    if part == "vault":
+        created, replaced, skipped, diverged = deploy_vault(
+            project_root, overwrite=overwrite, names=names)
+        return created, replaced, skipped, diverged
+
     targets = (_skill_targets(project_root, vault, cfg) if part == "skills"
-               else _command_targets(project_root))
+               else _command_targets(project_root, vault, cfg))
     if names is not None:
         wanted = set(names)
         targets = [t for t in targets if t[0] in wanted]
@@ -776,6 +929,10 @@ ENV_PARTS = (
      "missing": "no_commands", "outdated": "outdated_commands"},
     {"part": "rules", "harness": "any",
      "missing": "no_rules", "outdated": "outdated_rules"},
+    # Волт проверяется только у тех, кто его выбрал: отказ от внешней памяти —
+    # решение пользователя, а не пробел поставки
+    {"part": "vault", "harness": None, "vault_only": True,
+     "missing": "no_vault", "outdated": "outdated_vault"},
 )
 
 
@@ -790,18 +947,22 @@ def _script_state(tasks_dir: Path, cfg: dict, cfg_key: str,
     return [], ([] if _read(path) == template else [name])
 
 
-def _targets_state(part: str, targets: list[tuple[str, Path, str]]) -> tuple[list[str], list[str]]:
-    """(нет части целиком, разошедшиеся элементы) для многофайловой части.
+def _targets_state(part: str,
+                   targets: list[tuple[str, Path, str]]) -> tuple[list[str], list[str], list[str]]:
+    """(нет части целиком, недостающие элементы, разошедшиеся) для многофайловой части.
 
     Ни одного файла на диске — часть не разворачивали; хотя бы один есть —
-    остальные считаем элементами, отставшими от шаблона. Различаем по наличию
-    файла, а не по совпадению с эталоном: развёрнутая, но правленная целиком
-    часть — это устаревание, а не отсутствие.
+    остальные разбираем поэлементно. Отсутствующий файл и отставший от шаблона
+    — разные вещи: называть несуществующий скилл «устаревшим» значит врать
+    в баннере (пользователь ищет, что же там устарело, а файла просто нет).
     """
     current = [(name, _current_text(part, path), expected) for name, path, expected in targets]
     if targets and all(text is None for _n, text, _e in current):
-        return [name for name, _p, _e in targets], []
-    return [], [name for name, text, expected in current if not _same_content(text, expected)]
+        return [name for name, _p, _e in targets], [], []
+    absent = [name for name, text, _e in current if text is None]
+    modified = [name for name, text, expected in current
+                if text is not None and not _same_content(text, expected)]
+    return [], absent, modified
 
 
 def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
@@ -817,9 +978,13 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
     active = harnesses(project_root, cfg)
     decided = harness_choice(cfg) is not None
 
+    vault_on = uses_vault(project_root, cfg)
+
     issues: list[dict] = []
     for spec in ENV_PARTS:
         part, harness = spec["part"], spec["harness"]
+        if spec.get("vault_only") and not vault_on:
+            continue
         # Пока среды не выбраны, их части не проверяем: спросим в диалоге, а не
         # будем угадывать по диску и ругаться на то, чего пользователь не хотел
         if harness is not None and not decided:
@@ -829,6 +994,9 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
         if harness in HARNESSES and not active[harness]:
             continue
 
+        # partial — часть развёрнута, но отдельных элементов не хватает
+        # (появился новый скилл, включили волт): чинится тем же «Развернуть»
+        partial: list[str] = []
         if part == "create_script":
             missing, outdated = _script_state(tasks_dir, cfg, "create_script", "create_task.py")
         elif part == "status_script":
@@ -841,15 +1009,21 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             missing = [] if (tasks_dir / name).is_dir() else [f"{name}/"]
             outdated = []
         elif part == "skills":
-            missing, outdated = _targets_state(part, _skill_targets(project_root, cfg=cfg))
+            missing, partial, outdated = _targets_state(
+                part, _skill_targets(project_root, cfg=cfg))
         elif part == "commands":
-            missing, outdated = _targets_state(part, _command_targets(project_root))
+            missing, partial, outdated = _targets_state(
+                part, _command_targets(project_root, cfg=cfg))
+        elif part == "vault":
+            missing, partial, outdated = _targets_state(part, _vault_targets(project_root))
         else:  # rules
             missing = rules_missing(project_root, cfg)
-            _m, outdated = _targets_state(part, _rules_targets(project_root, cfg))
+            _m, _absent, outdated = _targets_state(part, _rules_targets(project_root, cfg))
 
-        for state, names in (("missing", missing), ("outdated", outdated)):
-            code = spec[state]
+        for state, names in (("missing", missing), ("partial", partial), ("outdated", outdated)):
+            # Недостающие элементы разворачиваются той же кнопкой, что и
+            # отсутствующая часть, поэтому код у них общий — различается текст
+            code = spec["missing"] if state == "partial" else spec[state]
             if names and code:
                 issues.append({"part": part, "code": code, "state": state, "names": names})
     return issues

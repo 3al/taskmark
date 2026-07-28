@@ -108,11 +108,18 @@ class AgenticFreshnessTest(unittest.TestCase):
                          encoding="utf-8")
         self.assertIn("start-task", self._require_degraded("outdated_skills")["message"])
 
-    def test_missing_skill_reported_outdated(self) -> None:
-        """Скилл, появившийся в шаблонах позже развёртывания, тоже требует обновления."""
+    def test_missing_skill_reported_as_gap_not_outdated(self) -> None:
+        """Скилла нет — это нехватка, а не устаревание.
+
+        Скилл, появившийся в шаблонах позже развёртывания, тоже сюда попадает:
+        чинится он кнопкой «Развернуть» (код no_skills), а не походом в diff, —
+        и называть несуществующий файл устаревшим значит врать пользователю.
+        """
         self._scaffold(vault=False)
         self._skill("fix-task").unlink()
-        self.assertIn("fix-task", self._require_degraded("outdated_skills")["message"])
+        message = self._require_degraded("no_skills")["message"]
+        self.assertIn("Не хватает скиллов", message)
+        self.assertIn("fix-task", message)
 
     def test_modified_command_reported_outdated(self) -> None:
         self._scaffold(vault=False)

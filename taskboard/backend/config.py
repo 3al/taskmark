@@ -32,7 +32,7 @@ DEFAULTS: dict = {
 # проекта свой, а порт и тема — свойства инструмента, а не репозитория
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "board_file", "create_script",
                 "status_script", "logs_dir", "queue_section", "queued_status",
-                "dnd_full_board", "harnesses"}
+                "dnd_full_board", "harnesses", "vault"}
 
 
 def _read_json(path: Path) -> dict:

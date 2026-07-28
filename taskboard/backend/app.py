@@ -22,7 +22,7 @@ from backend.migrations import apply_config_migrations, pipeline_removals
 from backend.pipeline_sources import list_sources
 from backend.queue_ops import ensure_section, move_task
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
-                              scaffold_project)
+                              scaffold_project, uses_vault)
 from backend.statuses import CATALOG, load_pipeline
 from backend.task_parser import parse_task
 from backend.validator import validate_project
@@ -92,7 +92,7 @@ class ScaffoldIn(BaseModel):
     vault: bool = False
     # Точечное восстановление: создать только перечисленные части
     # (board | create_script | status_script | epics | gitignore | logs |
-    #  skills | commands | rules)
+    #  skills | commands | rules | vault)
     parts: list[str] | None = None
     # Точечное обновление агентского окружения: только эти скиллы/команды/файлы правил
     names: list[str] | None = None
@@ -180,9 +180,15 @@ def api_remove_project(name: str) -> dict:
 def api_get_config() -> dict:
     """Действующий конфиг: для активного проекта — с его переопределениями."""
     proj = registry.get_active()
-    if proj:
-        return load_project_config(Path(proj["tasks_dir"]))
-    return load_global_config()
+    if not proj:
+        return load_global_config()
+    tasks_dir = Path(proj["tasks_dir"])
+    cfg = load_project_config(tasks_dir)
+    # Волт мог быть развёрнут до появления ключа в конфиге — тогда его режим
+    # виден только по файлам. Отдаём эффективное значение, иначе форма настроек
+    # покажет «выключен» и первым же сохранением это в конфиг и запишет
+    cfg.setdefault("vault", uses_vault(tasks_dir.parent, cfg))
+    return cfg
 
 
 @app.post("/api/config")
@@ -190,7 +196,8 @@ def api_save_config(body: ConfigIn) -> dict:
     # Защита от мусора: разрешаем только известные ключи
     allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
                "create_script", "status_script", "logs_dir", "queue_section",
-               "queued_status", "statuses", "pipeline", "actions", "harnesses"}
+               "queued_status", "statuses", "pipeline", "actions", "harnesses",
+               "vault"}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
     proj = registry.get_active()
@@ -383,7 +390,7 @@ def api_agentic_stale() -> dict:
 def api_agentic_diff(part: str, name: str) -> dict:
     """Unified diff «развёрнутое → эталон» для скилла, команды или правил."""
     tasks_dir, cfg = _ctx()
-    if part not in ("skills", "commands", "rules"):
+    if part not in ("skills", "commands", "rules", "vault"):
         raise HTTPException(400, f"Неизвестная часть: {part}")
     result = agentic_diff(tasks_dir.parent, part, name, cfg)
     if not result.get("ok"):

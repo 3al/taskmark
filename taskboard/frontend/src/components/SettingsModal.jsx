@@ -80,6 +80,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
     logs_dir: config.logs_dir,
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
+    vault: !!config.vault,
     ...(pipeline ? {
       pipeline: pipeline.pipeline.map((s) => s.key),
       actions: pipeline.actions,
@@ -279,6 +280,23 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                       </label>
                     ))}
                 </div>
+                {/* Волт — часть окружения, а не среда: спрашивается тем же
+                    диалогом, но передумать можно только здесь */}
+                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2">
+                  <input
+                    type="checkbox"
+                    checked={!!config.vault}
+                    onChange={(e) => set('vault', e.target.checked)}
+                    className="mt-0.5 accent-sky-500"
+                  />
+                  <span>
+                    Knowledge Vault
+                    <div className="text-[11px] text-zinc-500">
+                      vault/ — внешняя память проекта: скилл write-vault, шаблоны заметок,
+                      блоки про волт в скиллах и правилах
+                    </div>
+                  </span>
+                </label>
                 <div className="text-[11px] text-zinc-600 mt-1">
                   Недостающее развернётся кнопками на баннере. Скиллы лежат в одном
                   месте: opencode читает и .claude/skills

@@ -295,6 +295,10 @@ export default function App() {
     outdated_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     outdated_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     outdated_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    // Волт: скиллы уже ссылаются на vault/, поэтому его отсутствие — пробел,
+    // а не «ещё не завели»
+    no_vault: { part: 'vault', label: 'Развернуть', help: 'agentic' },
+    outdated_vault: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
   }
   const fixDegraded = async (code) => {
     const fix = DEGRADED_FIX[code]
