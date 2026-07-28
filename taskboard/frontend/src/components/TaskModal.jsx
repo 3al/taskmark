@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { api } from '../api'
 import { statusStyle } from '../statuses'
 import { highlight, rehypeHighlight } from '../highlight'
+import { rehypeNoteMeta } from '../markdown'
 import CopyButton from './CopyButton'
 
 // Модалка с полным содержимым задачи (рендер markdown).
@@ -19,7 +21,10 @@ export default function TaskModal({ taskId, query, onClose }) {
   )
   // Плагин пересобираем только при смене запроса: иначе react-markdown
   // перерисовывает всё дерево на каждый рендер модалки
-  const rehypePlugins = useMemo(() => (query?.trim() ? [rehypeHighlight(query)] : []), [query])
+  const rehypePlugins = useMemo(
+    () => (query?.trim() ? [rehypeNoteMeta, rehypeHighlight(query)] : [rehypeNoteMeta]),
+    [query],
+  )
   // Оттенок шапки модалки в цвет статуса задачи (применится после загрузки)
   const style = statusStyle(task?.meta?.status)
 
@@ -81,7 +86,9 @@ export default function TaskModal({ taskId, query, onClose }) {
           {error && <div className="text-rose-400">{error}</div>}
           {!task && !error && <div className="text-zinc-500">Загрузка…</div>}
           {task && (
-            <ReactMarkdown rehypePlugins={rehypePlugins}>{body}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}>
+              {body}
+            </ReactMarkdown>
           )}
         </div>
       </div>

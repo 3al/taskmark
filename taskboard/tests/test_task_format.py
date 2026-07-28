@@ -86,6 +86,27 @@ class TaskTemplateTest(unittest.TestCase):
         # `patch` — рудимент прежнего процесса, в новых задачах его быть не должно
         self.assertNotIn("patch:", text, "поле patch снова попало в задачу")
 
+    def test_input_newlines_become_paragraphs(self) -> None:
+        """Enter в поле формы должен давать абзац, а не склейку в простыню.
+
+        Markdown соединяет одиночные переводы строк, поэтому текст автора
+        разделяем пустой строкой на входе — файл остаётся обычным markdown.
+        """
+        scaffold_project(self.tasks_dir, self.cfg, {"harnesses": self.cfg["harnesses"]})
+        result = subprocess.run(
+            [sys.executable, str(self.tasks_dir / "create_task.py"),
+             "-t", "Многострочное описание",
+             "-d", "Первая мысль.\nВторая мысль.\n- пункт списка\n- второй пункт",
+             "-c", "критерии"],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        text = next(self.tasks_dir.glob("TASK-*.md")).read_text(encoding="utf-8")
+        self.assertIn("Первая мысль.\n\nВторая мысль.", text,
+                      "соседние строки не разделены в абзацы")
+        self.assertIn("- пункт списка\n- второй пункт", text,
+                      "список разорван пустой строкой")
+
 
 class AgentNotesFormatTest(unittest.TestCase):
     """Формат заметок агента: модель, время, отдельная строка (бывш. TASK-025)."""
@@ -125,6 +146,43 @@ class TaskRenderingTest(unittest.TestCase):
         css = (FRONTEND / "index.css").read_text(encoding="utf-8")
         for level in ("h4", "h5", "h6"):
             self.assertIn(f".md-body {level}", css, f"{level} в теле задачи не оформлен")
+
+    def test_note_meta_is_dimmed(self) -> None:
+        """Метку заметки (дата, время, модель) приглушаем, а не подсвечиваем.
+
+        Она служебная: подсвеченная — спорит с сутью, ради которой заметку
+        и читают. Шаблон узкий, чтобы обычные списки описания не задело.
+        """
+        src = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
+        self.assertIn("rehypeNoteMeta", src, "метка заметки не оформляется")
+        css = (FRONTEND / "index.css").read_text(encoding="utf-8")
+        self.assertIn(".note-meta", css, "нет стиля приглушённой метки")
+
+    def test_checklist_rendered_as_checkboxes(self) -> None:
+        """Чеклист должен быть чекбоксами, а не текстом `[x]`: это GFM-разметка."""
+        src = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
+        self.assertIn("remarkGfm", src, "в окне задачи не включён GFM — чеклист остаётся текстом")
+
+    def test_start_task_formats_description(self) -> None:
+        """Задачу из формы оформляет тот, кто берёт её в работу.
+
+        Человек в поле ввода размечать текст не будет — иначе задача так и
+        останется простынёй на всё время работы над ней.
+        """
+        skill = (AGENTIC / ".claude" / "skills" / "start-task" / "SKILL.md").read_text(
+            encoding="utf-8")
+        self.assertIn("читаемый вид", skill, "скилл старта не оформляет описание")
+        self.assertIn("дословно", skill,
+                      "не сказано, что формулировки автора менять нельзя")
+
+    def test_rules_demand_structured_text(self) -> None:
+        """Правила и скилл создания задачи требуют оформлять текст, а не лить простынёй."""
+        rules = (AGENTIC / "rules_section.md").read_text(encoding="utf-8")
+        self.assertIn("Абзац — одна мысль", rules)
+        new_task = (AGENTIC / ".claude" / "skills" / "new-task" / "SKILL.md").read_text(
+            encoding="utf-8")
+        self.assertIn("абзац — одна мысль", new_task.lower(),
+                      "скилл создания задачи не требует оформления текста")
 
     def test_html_comments_not_rendered(self) -> None:
         """Служебные комментарии в файлах задач не должны доезжать до читателя.

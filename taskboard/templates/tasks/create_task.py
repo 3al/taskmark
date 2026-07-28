@@ -165,6 +165,37 @@ TEMPLATE_FILE = "_TEMPLATE.md"
 _FILLED_SECTIONS = ("## Описание", "### Критерии приёмки", "## Чеклист")
 
 
+# Строки, которые markdown и так разбирает построчно: список, заголовок,
+# цитата, таблица, граница блока кода. Их разделять пустой строкой нельзя
+_STRUCTURAL_LINE = re.compile(r"\s*([-*+>#|]|\d+[.)]\s|```)")
+
+
+def as_paragraphs(text: str) -> str:
+    """Одиночные переносы автора → абзацы markdown.
+
+    В поле формы и в аргументе `-d` человек жмёт Enter и ждёт новую строку,
+    а markdown склеивает такие переводы в один абзац — отсюда «простыни»
+    в описаниях. Разделяем пустой строкой на входе: файл остаётся валидным
+    markdown, а рендер не приходится учить нестандартной семантике.
+    """
+    lines = text.replace("\r\n", "\n").split("\n")
+    out: list[str] = []
+    in_code = False
+    for i, line in enumerate(lines):
+        out.append(line)
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        if in_code or i + 1 >= len(lines):
+            continue
+        nxt = lines[i + 1]
+        if not line.strip() or not nxt.strip():
+            continue  # пустая строка уже разделяет
+        if _STRUCTURAL_LINE.match(line) or _STRUCTURAL_LINE.match(nxt):
+            continue  # список и заголовки markdown разбирает сам
+        out.append("")
+    return "\n".join(out)
+
+
 def _replace_section(text: str, heading: str, body: str) -> str:
     """Заменить тело секции heading, не трогая остальные.
 
@@ -326,6 +357,11 @@ created: {created_date}{blocked_by_line}
 
     # Структуру задаёт `_TEMPLATE.md` проекта; встроенная копия — запасной
     # вариант для проектов, развёрнутых до его появления
+    # Текст автора приводим к абзацам до записи: в файле остаётся обычный
+    # markdown, и он одинаково читается и в окне доски, и в редакторе
+    description = as_paragraphs(description)
+    criteria = as_paragraphs(criteria)
+
     content = render_from_template(tasks_dir, frontmatter, description, criteria, checklist)
     if content is None:
         content = f"""{frontmatter}

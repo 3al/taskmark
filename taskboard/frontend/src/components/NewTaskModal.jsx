@@ -68,7 +68,14 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
 
         <div className="px-5 py-4 space-y-3">
           <input className={field} placeholder="Название (обязательно)" value={form.title} onChange={set('title')} autoFocus />
-          <textarea className={`${field} h-24 resize-none`} placeholder="Описание" value={form.description} onChange={set('description')} />
+          {/* Переносы сохраняются и видны в задаче: markdown сам по себе склеил
+              бы строки в абзац, поэтому в окне задачи включён мягкий перенос */}
+          <textarea
+            className={`${field} h-24 resize-none`}
+            placeholder="Описание — что сделать и зачем. Абзацы через пустую строку, перечисления списком"
+            value={form.description}
+            onChange={set('description')}
+          />
           <input className={field} placeholder="Критерии приёмки (опционально)" value={form.criteria} onChange={set('criteria')} />
           <input className={field} placeholder="Заблокировано задачей (TASK-NNN, опционально)" value={form.blocked_by} onChange={set('blocked_by')} />
 
