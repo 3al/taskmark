@@ -59,6 +59,7 @@ function projectDir(tasksDir) {
 export default function Header({
   projects, active, canCreate, hasLogs, dndFullBoard, hasCustomOrder,
   onSwitchProject, onNewTask, onShowLogs, onToggleDnd, onRefresh, onResetColumns, onOpenSettings,
+  onOpenHelp,
 }) {
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
@@ -181,6 +182,7 @@ export default function Header({
           DnD по всей доске
         </label>
         {hasLogs && <button className={btn} onClick={onShowLogs}>Логи</button>}
+        <button className={btn} onClick={() => onOpenHelp()} title="Помощь: как работать с доской">?</button>
         <button className={btn} onClick={onOpenSettings} title="Настройки">⚙</button>
         {canCreate && (
           <button

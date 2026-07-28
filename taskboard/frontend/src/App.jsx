@@ -10,6 +10,7 @@ import LogsPanel from './components/LogsPanel'
 import SettingsModal from './components/SettingsModal'
 import ScaffoldModal from './components/ScaffoldModal'
 import AgenticStaleModal from './components/AgenticStaleModal'
+import HelpModal from './components/HelpModal'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению прямоугольников
 function collisionDetection(args) {
@@ -40,6 +41,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showScaffold, setShowScaffold] = useState(false)
   const [showAgentic, setShowAgentic] = useState(false)
+  // Помощь: null — закрыта, иначе раздел, на котором её открыли
+  const [helpSection, setHelpSection] = useState(null)
   const [dndFullBoard, setDndFullBoard] = useState(false)
   const configLoaded = useRef(false)
   const [activeDrag, setActiveDrag] = useState(null)
@@ -52,6 +55,9 @@ export default function App() {
   const [error, setError] = useState(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+
+  // Помощь открывается там, где возник вопрос: сразу на нужном разделе
+  const openHelp = (section = null) => setHelpSection(section || 'start')
 
   const saveColumnOrder = (order) => {
     setColumnOrder(order)
@@ -278,17 +284,17 @@ export default function App() {
     no_status_script: { part: 'status_script', label: 'Создать' },
     outdated_status_script: { part: 'status_script', label: 'Обновить' },
     // Правила — часть механизма, а не опция: без них агент не знает процесса
-    no_rules: { part: 'rules', label: 'Развернуть' },
+    no_rules: { part: 'rules', label: 'Развернуть', help: 'agentic' },
     // Отсутствие целой части чинится так же, как её устаревание: одной кнопкой
-    no_skills: { part: 'skills', label: 'Развернуть' },
-    no_commands: { part: 'commands', label: 'Развернуть' },
+    no_skills: { part: 'skills', label: 'Развернуть', help: 'agentic' },
+    no_commands: { part: 'commands', label: 'Развернуть', help: 'agentic' },
     // Состав поставки зависит от сред, а их знает только пользователь
-    no_harness_choice: { modal: 'scaffold', label: 'Настроить' },
+    no_harness_choice: { modal: 'scaffold', label: 'Настроить', help: 'agentic' },
     // Агентское окружение — не «обновить всё вслепую»: сначала подробности,
     // где видно каждый элемент, его diff и точечное обновление
-    outdated_skills: { modal: 'agentic', label: 'Подробности' },
-    outdated_commands: { modal: 'agentic', label: 'Подробности' },
-    outdated_rules: { modal: 'agentic', label: 'Подробности' },
+    outdated_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
   }
   const fixDegraded = async (code) => {
     const fix = DEGRADED_FIX[code]
@@ -330,6 +336,7 @@ export default function App() {
         onRefresh={refresh}
         onResetColumns={() => saveColumnOrder(null)}
         onOpenSettings={() => setShowSettings(true)}
+        onOpenHelp={openHelp}
       />
 
       {error && (
@@ -341,7 +348,11 @@ export default function App() {
 
       {report && !report.ok && !['missing', 'no_board'].includes(report.structure) && (
         <div className="px-4 py-3 bg-rose-950/60 border-b border-rose-800 text-sm text-rose-200 space-y-1">
-          <div className="font-semibold">Критические проблемы структуры tasks/:</div>
+          <div className="font-semibold flex items-center gap-2">
+            Критические проблемы структуры tasks/:
+            <button className="text-xs underline text-rose-300/80 hover:text-rose-200"
+                    onClick={() => openHelp('validation')}>что это значит?</button>
+          </div>
           {report.critical.map((c, i) => <div key={i}>• {c}</div>)}
         </div>
       )}
@@ -352,12 +363,22 @@ export default function App() {
             <span key={`d${i}`} className="mr-4 inline-flex items-center gap-2">
               • {d.message}
               {DEGRADED_FIX[d.code] && (
-                <button
-                  className="px-2 py-0.5 rounded bg-amber-700/50 hover:bg-amber-600/60 text-amber-100 transition"
-                  onClick={() => fixDegraded(d.code)}
-                >
-                  {DEGRADED_FIX[d.code].label}
-                </button>
+                <>
+                  <button
+                    className="px-2 py-0.5 rounded bg-amber-700/50 hover:bg-amber-600/60 text-amber-100 transition"
+                    onClick={() => fixDegraded(d.code)}
+                  >
+                    {DEGRADED_FIX[d.code].label}
+                  </button>
+                  {/* Вопрос «а что это вообще?» возникает здесь — здесь и ответ */}
+                  <button
+                    className="text-amber-300/70 hover:text-amber-100 transition"
+                    title="Что это значит"
+                    onClick={() => openHelp(DEGRADED_FIX[d.code].help || 'validation')}
+                  >
+                    ?
+                  </button>
+                </>
               )}
             </span>
           ))}
@@ -377,6 +398,8 @@ export default function App() {
           >
             Создать раздел
           </button>
+          <button className="text-xs underline text-sky-300/80 hover:text-sky-200"
+                  onClick={() => openHelp('lifecycle')}>про очередь и статусы</button>
         </div>
       )}
 
@@ -399,6 +422,10 @@ export default function App() {
               board.md со всеми разделами · create_task.py · set_status.py · epics.md ·
               окружение выбранных сред агентов
             </div>
+            <button className="text-xs underline text-zinc-500 hover:text-zinc-300"
+                    onClick={() => openHelp('start')}>
+              Что это создаст и зачем
+            </button>
           </div>
         ) : board ? (
           <DndContext
@@ -476,7 +503,11 @@ export default function App() {
         <SettingsModal
           onClose={() => setShowSettings(false)}
           onSaved={(cfg) => { setDndFullBoard(!!cfg.dnd_full_board); refresh() }}
+          onOpenHelp={openHelp}
         />
+      )}
+      {helpSection && (
+        <HelpModal section={helpSection} onClose={() => setHelpSection(null)} />
       )}
       {showAgentic && (
         <AgenticStaleModal

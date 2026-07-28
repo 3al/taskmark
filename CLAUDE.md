@@ -9,7 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Канбан-веб-интерфейс поверх Markdown-файлов задач (`tasks/`) для нескольких проектов.
 Бэкенд на Python (FastAPI + uvicorn + watchdog) раздаёт закоммиченную сборку React/Vite/Tailwind.
-`README.md` — пользовательская документация на русском, держи её в синхроне с изменениями поведения.
+Пользовательская документация на русском — `docs/help/*.md`: её же раздаёт бэкенд в раздел помощи UI
+(кнопка «?»), а `README.md` остаётся кратким обзором со ссылками на разделы. Держи их в синхроне
+с изменениями поведения; текст пиши в `docs/help/`, а не копией в README.
 
 ## Команды
 
@@ -45,6 +47,9 @@ taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t ta
   - `scaffold.py` + `taskboard/templates/` — развёртывание структуры `tasks/` и агентского окружения в проекты пользователя. Состав поставки описан реестром `ENV_PARTS` (по нему же валидатор ищет и отсутствие, и устаревание — `environment_issues`), раскладку задаёт выбор сред (`harnesses` в конфиге проекта): claude → `.claude/skills` + `CLAUDE.md`, opencode → `.opencode/commands` + `AGENTS.md`. Скиллы разворачиваются одной копией: в `.opencode/skills` они попадают только в проекте без Claude Code.
   - `migrations.py` — миграции данных проекта при переименовании артефактов в настройках.
   - `watcher.py` — watchdog → SSE-события живых обновлений; включает монитор живости, пересоздающий наблюдателя при молчаливой смерти эмиттера.
+  - `help_docs.py` — раздел помощи: читает `docs/help/*.md` (номер в имени файла задаёт порядок,
+    остаток — id раздела для deep-link из UI). Источник правды один: те же файлы, на которые
+    ссылается README, показывает `HelpModal` во фронтенде.
   - `lifecycle.py` — остановка/перезапуск сервера из UI.
 - `taskboard/frontend/src/` — React: вход `main.jsx` → `App.jsx` (состояние доски, вся логика DnD, баннеры отчёта валидации), вызовы API собраны в `api.js`, стили статусов и правила дропа — в `statuses.js`.
 

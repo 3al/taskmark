@@ -12,7 +12,7 @@ const ACTION_LABEL = {
 // Редактор жизненного цикла: порядок статусов и цели действий скиллов.
 // Порядок задаёт маршрут (что идёт за чем), а не запреты: прыжки вперёд и
 // возвраты назад законны в любом случае.
-export default function PipelineEditor({ pipeline, actions, catalog, sources, onChange }) {
+export default function PipelineEditor({ pipeline, actions, catalog, sources, onChange, onOpenHelp }) {
   const keys = pipeline.map((s) => s.key)
   const available = catalog.filter((c) => !keys.includes(c.key))
 
@@ -192,7 +192,12 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, on
         </div>
         <div>
           Выключение статуса с задачами спросит, куда их перенести.
-          Подробнее — README, раздел «Жизненный цикл задач».
+          {onOpenHelp && (
+            <button className="ml-1 underline hover:text-zinc-400"
+                    onClick={() => onOpenHelp('lifecycle')}>
+              Подробнее о жизненном цикле
+            </button>
+          )}
         </div>
       </div>
     </div>

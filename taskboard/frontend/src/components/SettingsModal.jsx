@@ -5,7 +5,7 @@ import PipelineEditor from './PipelineEditor'
 // Модалка настроек. Свойства инструмента (порт, тема) живут в глобальном
 // ~/.taskboard/config.json, настройки проекта (жизненный цикл, имена
 // артефактов) — в <проект>/tasks/.taskboard.json; раскладывает их бэкенд
-export default function SettingsModal({ onClose, onSaved }) {
+export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
   const [config, setConfig] = useState(null)
   const [pipeline, setPipelineState] = useState(null)
   const [catalog, setCatalog] = useState([])
@@ -282,6 +282,10 @@ export default function SettingsModal({ onClose, onSaved }) {
                 <div className="text-[11px] text-zinc-600 mt-1">
                   Недостающее развернётся кнопками на баннере. Скиллы лежат в одном
                   месте: opencode читает и .claude/skills
+                  {onOpenHelp && (
+                    <button className="ml-1 underline hover:text-zinc-400"
+                            onClick={() => onOpenHelp('agentic')}>подробнее</button>
+                  )}
                 </div>
               </div>
 
@@ -293,6 +297,7 @@ export default function SettingsModal({ onClose, onSaved }) {
                     actions={pipeline.actions}
                     catalog={catalog}
                     sources={sources}
+                    onOpenHelp={onOpenHelp}
                     onChange={({ pipeline: next, actions: nextActions, statuses }) => {
                       setPipelineState({ pipeline: next, actions: nextActions })
                       if (statuses !== undefined) setStatusesOverride(statuses)

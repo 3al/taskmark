@@ -4,7 +4,7 @@
 - Всегда общайся с пользователем на русском языке.
 
 ## Обзор
-Канбан-веб-интерфейс поверх Markdown-файлов задач (`tasks/`) для нескольких проектов. Стек: бэкенд на Python (FastAPI + uvicorn + watchdog), раздающий закоммиченную сборку React/Vite/Tailwind. README.md — на русском, это пользовательская документация — держи её в синхроне с изменениями поведения.
+Канбан-веб-интерфейс поверх Markdown-файлов задач (`tasks/`) для нескольких проектов. Стек: бэкенд на Python (FastAPI + uvicorn + watchdog), раздающий закоммиченную сборку React/Vite/Tailwind. Пользовательская документация на русском — `docs/help/*.md` (её же раздаёт кнопка «?» в UI), README.md — краткий обзор со ссылками на неё; держи оба в синхроне с изменениями поведения.
 
 ## Команды
 - Запуск приложения: `py taskboard.py` (Windows) / `python3 taskboard.py` — сам создаёт `taskboard/.venv` и перезапускается под ним; не создавай venv вручную.
@@ -15,7 +15,7 @@
 
 ## Архитектура
 - `taskboard.py` — единственная точка входа: bootstrap (проверки venv/deps/dist), логика единственного инстанса, супервизор. Если сервер уже слушает порт, второй запуск просто регистрирует проект и выходит — учитывай это при тестировании.
-- `taskboard/backend/` — FastAPI-приложение. Ключевые модули: `board_parser.py`/`task_parser.py` (Markdown ⇄ модель), `queue_ops.py` (DnD-мутации), `registry.py` (мультипроектность), `pipeline_sources.py` (готовые жизненные циклы: пресеты и пайплайны других проектов), `scaffold.py` + `taskboard/templates/` (развёртывание структуры `tasks/` и агентского окружения; состав поставки — реестр `ENV_PARTS`, раскладка — выбор сред `harnesses` в конфиге проекта), `watcher.py` (watchdog → SSE живые обновления), `lifecycle.py` (остановка/перезапуск из UI).
+- `taskboard/backend/` — FastAPI-приложение. Ключевые модули: `board_parser.py`/`task_parser.py` (Markdown ⇄ модель), `queue_ops.py` (DnD-мутации), `registry.py` (мультипроектность), `pipeline_sources.py` (готовые жизненные циклы: пресеты и пайплайны других проектов), `scaffold.py` + `taskboard/templates/` (развёртывание структуры `tasks/` и агентского окружения; состав поставки — реестр `ENV_PARTS`, раскладка — выбор сред `harnesses` в конфиге проекта), `watcher.py` (watchdog → SSE живые обновления), `lifecycle.py` (остановка/перезапуск из UI), `help_docs.py` (раздача разделов помощи из `docs/help/`).
 - `taskboard/frontend/src/` — React-приложение; вход `main.jsx` → `App.jsx`; вызовы API собраны в `src/api.js`.
 
 ## Workflow задач

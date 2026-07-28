@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend import lifecycle, registry
+from backend import help_docs, lifecycle, registry
 from backend.board_parser import parse_board
 from backend.config import (PROJECT_KEYS, load_global_config, load_project_config,
                             save_global_config, save_project_config)
@@ -34,7 +34,7 @@ DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 # серверу, чтобы предупредить об устаревшем процессе
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
-                "harnesses": True, "pipeline_sources": True}
+                "harnesses": True, "pipeline_sources": True, "help": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -354,6 +354,22 @@ def api_pipeline_sources() -> dict:
     """Готовые жизненные циклы: пресеты и пайплайны других проектов реестра."""
     proj = registry.get_active()
     return {"items": list_sources(Path(proj["tasks_dir"]) if proj else None)}
+
+
+# --- Помощь ---
+
+@app.get("/api/help")
+def api_help() -> dict:
+    """Разделы помощи: те же файлы docs/help, на которые ссылается README."""
+    return {"items": help_docs.list_sections()}
+
+
+@app.get("/api/help/{section_id}")
+def api_help_section(section_id: str) -> dict:
+    section = help_docs.get_section(section_id)
+    if not section:
+        raise HTTPException(404, f"Раздел помощи не найден: {section_id}")
+    return section
 
 
 @app.get("/api/agentic/stale")

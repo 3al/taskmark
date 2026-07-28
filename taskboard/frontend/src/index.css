@@ -34,14 +34,20 @@ body {
 .md-body ol { @apply list-decimal; }
 .md-body li { @apply my-0.5; }
 .md-body code { @apply bg-zinc-800 text-amber-200 px-1 py-0.5 rounded text-sm; }
-.md-body pre { @apply bg-zinc-900 border border-zinc-800 rounded-lg p-3 my-3 overflow-x-auto; }
+/* Вставки (код, цитаты) читаются как вставки только на своём фоне: zinc-900
+   совпадал с фоном модалки, и рамка висела вокруг пустоты. Берём тон светлее
+   полотна — вставка выступает вперёд, а не проваливается в дыру */
+.md-body pre { @apply bg-zinc-800/70 border border-zinc-700 rounded-lg p-3 my-3 overflow-x-auto; }
 .md-body pre code { @apply bg-transparent p-0 text-zinc-200; }
 .md-body a { @apply text-sky-400 hover:underline; }
-.md-body blockquote { @apply border-l-4 border-zinc-700 pl-3 my-2 text-zinc-400 italic; }
+.md-body blockquote { @apply border-l-4 border-zinc-600 bg-zinc-800/50 rounded-r-lg
+  pl-3 pr-3 py-2 my-3 text-zinc-400 italic; }
 .md-body input[type='checkbox'] { @apply mr-1.5 accent-emerald-500; }
 .md-body hr { @apply border-zinc-800 my-4; }
-.md-body table { @apply border-collapse my-3; }
+.md-body table { @apply border-collapse my-3 rounded-lg overflow-hidden; }
 .md-body th, .md-body td { @apply border border-zinc-700 px-2 py-1 text-sm; }
+.md-body th { @apply bg-zinc-800/60 text-zinc-200 font-semibold text-left; }
+.md-body tbody tr:nth-child(even) { @apply bg-zinc-800/20; }
 
 /* Подкраска заголовков markdown в тон фона шапки карточки (приглушённые пастельные) */
 /* Backlog нейтрален: вместо оттенка — яркий белый (иерархия над телом zinc-300) */
