@@ -19,6 +19,7 @@ from backend.config import (PROJECT_KEYS, load_global_config, load_project_confi
 from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import apply_config_migrations, pipeline_removals
+from backend.pipeline_sources import list_sources
 from backend.queue_ops import ensure_section, move_task
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project)
@@ -33,7 +34,7 @@ DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 # серверу, чтобы предупредить об устаревшем процессе
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
-                "harnesses": True}
+                "harnesses": True, "pipeline_sources": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -346,6 +347,13 @@ def api_pipeline() -> dict:
         "actions": pipeline.actions(),
         "catalog": [{"key": key, **meta} for key, meta in CATALOG.items()],
     }
+
+
+@app.get("/api/pipeline/sources")
+def api_pipeline_sources() -> dict:
+    """Готовые жизненные циклы: пресеты и пайплайны других проектов реестра."""
+    proj = registry.get_active()
+    return {"items": list_sources(Path(proj["tasks_dir"]) if proj else None)}
 
 
 @app.get("/api/agentic/stale")

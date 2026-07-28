@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { COLOR_STYLE } from '../statuses'
 
 // Роли действий: подписи бейджей рядом со статусом-целью
@@ -11,12 +12,29 @@ const ACTION_LABEL = {
 // Редактор жизненного цикла: порядок статусов и цели действий скиллов.
 // Порядок задаёт маршрут (что идёт за чем), а не запреты: прыжки вперёд и
 // возвраты назад законны в любом случае.
-export default function PipelineEditor({ pipeline, actions, catalog, onChange }) {
+export default function PipelineEditor({ pipeline, actions, catalog, sources, onChange }) {
   const keys = pipeline.map((s) => s.key)
   const available = catalog.filter((c) => !keys.includes(c.key))
 
-  const emit = (nextPipeline, nextActions = actions) =>
-    onChange({ pipeline: nextPipeline, actions: nextActions })
+  // Чем заполнен маршрут — видно в поле выбора. Ручная правка сбрасывает его:
+  // после неё в форме уже не тот маршрут, что у источника (и заодно источник
+  // можно выбрать повторно, чтобы вернуться к нему)
+  const [picked, setPicked] = useState('')
+
+  const emit = (nextPipeline, nextActions = actions, nextStatuses) => {
+    setPicked('')
+    onChange({ pipeline: nextPipeline, actions: nextActions, statuses: nextStatuses })
+  }
+
+  // Готовый маршрут подставляется в форму, а не сохраняется: дальше его можно
+  // поправить, а применится он обычным «Сохранить» — с переносом задач из
+  // выключаемых статусов, как при ручной правке
+  const applySource = (value) => {
+    const source = sources?.[Number(value)]
+    if (!source) return
+    emit(source.pipeline, source.actions, source.statuses || {})
+    setPicked(value)
+  }
 
   const move = (index, delta) => {
     const next = [...pipeline]
@@ -57,8 +75,42 @@ export default function PipelineEditor({ pipeline, actions, catalog, onChange })
   const label = 'block text-xs text-zinc-500 mb-1'
   const field = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-sky-500'
 
+  const presets = (sources || []).filter((s) => s.kind === 'preset')
+  const projects = (sources || []).filter((s) => s.kind === 'project')
+
   return (
     <div className="space-y-3">
+      {sources?.length > 0 && (
+        <div>
+          <span className={label}>Взять готовый маршрут</span>
+          <select className={field} value={picked}
+                  onChange={(e) => applySource(e.target.value)}>
+            <option value="">Заполнить из…</option>
+            {presets.length > 0 && (
+              <optgroup label="Пресеты">
+                {presets.map((s) => (
+                  <option key={s.name} value={sources.indexOf(s)}>
+                    {s.name} — {s.hint}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {projects.length > 0 && (
+              <optgroup label="Другие проекты">
+                {projects.map((s) => (
+                  <option key={s.name} value={sources.indexOf(s)}>
+                    {s.name} ({s.pipeline.map((p) => p.label).join(' → ')})
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+          <div className="text-[11px] text-zinc-600 mt-1">
+            Подставит статусы и действия в форму — сохранение по кнопке ниже
+          </div>
+        </div>
+      )}
+
       <div>
         <span className={label}>Статусы по порядку — он задаёт ожидаемый маршрут задачи</span>
         <div className="space-y-1">

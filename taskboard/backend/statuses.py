@@ -54,6 +54,36 @@ CATALOG: dict[str, dict] = {
 DEFAULT_PIPELINE = ["backlog", "queued", "development", "review", "testing", "completed"]
 DEFAULT_ACTIONS = {"create": "backlog", "start": "development"}
 
+# Готовые маршруты: собирать пайплайн с нуля в каждом проекте — работа руками
+# ради того, что у всех примерно одинаково. Это не ограничение, а стартовая
+# точка: после применения пресет правится тем же редактором
+PRESETS: tuple[dict, ...] = (
+    {
+        "name": "Простой",
+        "hint": "без ревью: сделал — проверил — закрыл",
+        "pipeline": ["backlog", "todo", "development", "testing", "done", "cancelled"],
+        "actions": {"create": "backlog", "pick": "todo",
+                    "start": "development", "return": "development"},
+    },
+    {
+        "name": "С ревью",
+        "hint": "код-ревью между разработкой и тестированием",
+        "pipeline": ["backlog", "todo", "development", "review", "testing",
+                     "done", "cancelled"],
+        "actions": {"create": "backlog", "pick": "todo",
+                    "start": "development", "return": "development"},
+    },
+    {
+        "name": "Полный",
+        "hint": "локальная проверка, ревью, стенд и релиз; возвраты через «На исправление»",
+        "pipeline": ["backlog", "todo", "to_fix", "development", "local_testing",
+                     "review", "to_testing", "testing", "ready_to_deploy",
+                     "done", "cancelled"],
+        "actions": {"create": "backlog", "pick": "todo",
+                    "start": "development", "return": "to_fix"},
+    },
+)
+
 
 def _titleize(key: str) -> str:
     """Заголовок раздела для ключа без описания: hotfix_wait → Hotfix Wait."""
@@ -205,7 +235,8 @@ def load_pipeline(cfg: dict) -> Pipeline:
         statuses.append(meta)
 
     known = {s["key"] for s in statuses}
-    actions = dict(DEFAULT_ACTIONS)
+    # Значение может стать None: пайплайн бывает пустым, и действию некуда вести
+    actions: dict[str, str | None] = dict(DEFAULT_ACTIONS)
     actions.update({k: v for k, v in (cfg.get("actions") or {}).items() if v})
 
     # Действие, указывающее в никуда, хуже отсутствующего: чинимся по составу

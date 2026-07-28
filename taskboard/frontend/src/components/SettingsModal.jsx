@@ -9,6 +9,10 @@ export default function SettingsModal({ onClose, onSaved }) {
   const [config, setConfig] = useState(null)
   const [pipeline, setPipelineState] = useState(null)
   const [catalog, setCatalog] = useState([])
+  const [sources, setSources] = useState([])
+  // Переопределения подписей приезжают вместе с готовым маршрутом; null —
+  // пользователь их не менял, и трогать сохранённые не нужно
+  const [statusesOverride, setStatusesOverride] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   // Выполненные миграции после сохранения (переименования в проекте)
@@ -56,6 +60,9 @@ export default function SettingsModal({ onClose, onSaved }) {
         setCatalog(data.catalog || [])
       })
       .catch(() => { /* нет активного проекта — редактор просто не покажем */ })
+    api.pipelineSources()
+      .then((data) => setSources(data.items || []))
+      .catch(() => { /* без источников редактор работает как раньше */ })
   }, [])
 
   const set = (key, value) => setConfig({ ...config, [key]: value })
@@ -77,6 +84,7 @@ export default function SettingsModal({ onClose, onSaved }) {
       pipeline: pipeline.pipeline.map((s) => s.key),
       actions: pipeline.actions,
     } : {}),
+    ...(statusesOverride !== null ? { statuses: statusesOverride } : {}),
   })
 
   // Сначала спрашиваем бэкенд, не осиротеют ли задачи выключаемых статусов
@@ -284,7 +292,11 @@ export default function SettingsModal({ onClose, onSaved }) {
                     pipeline={pipeline.pipeline}
                     actions={pipeline.actions}
                     catalog={catalog}
-                    onChange={setPipelineState}
+                    sources={sources}
+                    onChange={({ pipeline: next, actions: nextActions, statuses }) => {
+                      setPipelineState({ pipeline: next, actions: nextActions })
+                      if (statuses !== undefined) setStatusesOverride(statuses)
+                    }}
                   />
                 </div>
               )}

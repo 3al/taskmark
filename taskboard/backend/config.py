@@ -74,6 +74,17 @@ def legacy_config_path(tasks_dir: Path) -> Path:
     return tasks_dir.parent / "taskboard" / "config.json"
 
 
+def stored_project_config(tasks_dir: Path) -> dict:
+    """Только то, что реально записано в проекте, без дефолтов.
+
+    Нужно, чтобы отличить «проект настроен по-своему» от «проект на дефолтах»:
+    у второго копировать нечего.
+    """
+    stored = _read_json(legacy_config_path(tasks_dir))
+    stored.update(_read_json(project_config_path(tasks_dir)))
+    return stored
+
+
 def load_project_config(tasks_dir: Path) -> dict:
     """Загрузить per-project переопределения поверх глобального конфига."""
     cfg = load_global_config()

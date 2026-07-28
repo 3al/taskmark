@@ -39,6 +39,7 @@ taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t ta
   - `board_parser.py` / `task_parser.py` — Markdown ⇄ модель. Доска — источник правды: разделы `##` → колонки (статусы), подразделы `###` → группы, строки задач разбираются регуляркой `TASK-NNN · [Заголовок](файл) · агент · дата`.
   - `queue_ops.py` — перемещения (DnD): переписывает строки `board.md` **и** синхронно правит `status` во frontmatter задачи через `set_task_status`. Оба конца должны оставаться согласованными.
   - `registry.py` — мультипроектность (реестр + активный проект).
+  - `pipeline_sources.py` — готовые жизненные циклы для заполнения настроек: пресеты (`statuses.PRESETS`) и пайплайны других проектов реестра. Настройки остаются в проекте: скрипты `tasks/*.py` автономны и читают конфиг рядом с собой.
   - `config.py` — дефолты → глобальный конфиг → per-project переопределения.
   - `validator.py` — отчёт о структуре проекта (`critical` / `degraded` / `warnings` / `features`); он же управляет деградацией UI и возвратом 400 из эндпоинтов при критичных проблемах.
   - `scaffold.py` + `taskboard/templates/` — развёртывание структуры `tasks/` и агентского окружения в проекты пользователя. Состав поставки описан реестром `ENV_PARTS` (по нему же валидатор ищет и отсутствие, и устаревание — `environment_issues`), раскладку задаёт выбор сред (`harnesses` в конфиге проекта): claude → `.claude/skills` + `CLAUDE.md`, opencode → `.opencode/commands` + `AGENTS.md`. Скиллы разворачиваются одной копией: в `.opencode/skills` они попадают только в проекте без Claude Code.
