@@ -24,21 +24,35 @@ body {
 *::-webkit-scrollbar-thumb:hover { @apply bg-zinc-600; }
 
 /* Стили markdown в карточке задачи */
-.md-body h1, .md-body h2, .md-body h3 { @apply font-semibold text-zinc-300 mt-4 mb-2; }
+/* Текст задачи читают подолгу: держим его на тон мягче интерфейсных надписей,
+   иерархию даёт контраст заголовков к телу, а не общая яркость */
+.md-body h1, .md-body h2, .md-body h3,
+.md-body h4, .md-body h5, .md-body h6 { @apply font-semibold text-zinc-300/90 mt-4 mb-2; }
 .md-body h1 { @apply text-xl; }
 .md-body h2 { @apply text-lg; }
 .md-body h3 { @apply text-base; }
-.md-body p { @apply my-2 text-zinc-300 leading-relaxed; }
-.md-body ul, .md-body ol { @apply my-2 pl-5 text-zinc-300; }
+/* Мелкие уровни не крупнее тела: иерархию держат цвет и трекинг, а не кегль,
+   иначе h4 и абзац сливаются в одну серую массу */
+.md-body h4 { @apply text-sm text-zinc-300; }
+.md-body h5, .md-body h6 { @apply text-xs uppercase tracking-wide text-zinc-400 mt-3 mb-1; }
+/* Первый заголовок не отрывается от верха контейнера */
+.md-body > :first-child { @apply mt-0; }
+.md-body p { @apply my-2 text-zinc-300/80 leading-relaxed; }
+.md-body ul, .md-body ol { @apply my-2 pl-5 text-zinc-300/80; }
 .md-body ul { @apply list-disc; }
 .md-body ol { @apply list-decimal; }
 .md-body li { @apply my-0.5; }
+/* Вложенный список — своя ступень, а не продолжение строки родителя */
+.md-body li > ul, .md-body li > ol { @apply my-1 pl-4; }
+.md-body li > ul { @apply list-[circle]; }
+/* Пункты чеклиста читаются построчно: маркер убираем, чекбокс и есть маркер */
+.md-body li:has(> input[type='checkbox']) { @apply list-none -ml-5 my-1; }
 .md-body code { @apply bg-zinc-800 text-amber-200 px-1 py-0.5 rounded text-sm; }
 /* Вставки (код, цитаты) читаются как вставки только на своём фоне: zinc-900
    совпадал с фоном модалки, и рамка висела вокруг пустоты. Берём тон светлее
    полотна — вставка выступает вперёд, а не проваливается в дыру */
 .md-body pre { @apply bg-zinc-800/70 border border-zinc-700 rounded-lg p-3 my-3 overflow-x-auto; }
-.md-body pre code { @apply bg-transparent p-0 text-zinc-200; }
+.md-body pre code { @apply bg-transparent p-0 text-zinc-300; }
 .md-body a { @apply text-sky-400 hover:underline; }
 .md-body blockquote { @apply border-l-4 border-zinc-600 bg-zinc-800/50 rounded-r-lg
   pl-3 pr-3 py-2 my-3 text-zinc-400 italic; }
@@ -46,15 +60,15 @@ body {
 .md-body hr { @apply border-zinc-800 my-4; }
 .md-body table { @apply border-collapse my-3 rounded-lg overflow-hidden; }
 .md-body th, .md-body td { @apply border border-zinc-700 px-2 py-1 text-sm; }
-.md-body th { @apply bg-zinc-800/60 text-zinc-200 font-semibold text-left; }
+.md-body th { @apply bg-zinc-800/60 text-zinc-300 font-semibold text-left; }
 .md-body tbody tr:nth-child(even) { @apply bg-zinc-800/20; }
 
 /* Совпадения поиска в теле задачи */
 .md-body mark, mark.search-hit { @apply bg-amber-400/30 text-amber-100 rounded px-0.5; }
 
 /* Подкраска заголовков markdown в тон фона шапки карточки (приглушённые пастельные) */
-/* Backlog нейтрален: вместо оттенка — яркий белый (иерархия над телом zinc-300) */
-.md-tint-zinc h1, .md-tint-zinc h2, .md-tint-zinc h3 { @apply text-zinc-100; }
+/* Backlog нейтрален: вместо оттенка — та же серая шкала, на ступень светлее тела */
+.md-tint-zinc h1, .md-tint-zinc h2, .md-tint-zinc h3 { @apply text-zinc-200; }
 .md-tint-amber h1, .md-tint-amber h2, .md-tint-amber h3 { color: #ad9a68; }
 .md-tint-sky h1, .md-tint-sky h2, .md-tint-sky h3 { color: #7fa3b8; }
 .md-tint-violet h1, .md-tint-violet h2, .md-tint-violet h3 { color: #a08cc4; }

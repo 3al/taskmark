@@ -10,6 +10,13 @@ import CopyButton from './CopyButton'
 export default function TaskModal({ taskId, query, onClose }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
+  // HTML-комментарии в файле задачи — служебные пометки для агентов; человеку
+  // на доске они видны как блоки текста и только мешают читать задачу.
+  // Файл не трогаем: чистим то, что показываем и копируем
+  const body = useMemo(
+    () => (task?.body || '').replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim(),
+    [task],
+  )
   // Плагин пересобираем только при смене запроса: иначе react-markdown
   // перерисовывает всё дерево на каждый рендер модалки
   const rehypePlugins = useMemo(() => (query?.trim() ? [rehypeHighlight(query)] : []), [query])
@@ -46,7 +53,6 @@ export default function TaskModal({ taskId, query, onClose }) {
             {task?.meta && (
               <div className="text-xs text-zinc-500 mt-1">
                 статус: {task.meta.status || '—'} · создана: {task.meta.created || '—'}
-                {task.meta.patch && task.meta.patch !== '~' ? ` · ${task.meta.patch}` : ''}
                 {/* Во frontmatter лежит ключ, имя эпика приходит из реестра */}
                 {task.meta.epic && task.meta.epic !== '~' && (
                   <> · эпик: <span className="text-zinc-400">{task.meta.epic}</span>
@@ -58,7 +64,7 @@ export default function TaskModal({ taskId, query, onClose }) {
           {task && (
             <CopyButton
               className="ml-auto"
-              text={`${task.meta?.title || taskId}\n\n${task.body || ''}`}
+              text={`${task.meta?.title || taskId}\n\n${body}`}
               title="Копировать содержимое задачи"
             />
           )}
@@ -75,7 +81,7 @@ export default function TaskModal({ taskId, query, onClose }) {
           {error && <div className="text-rose-400">{error}</div>}
           {!task && !error && <div className="text-zinc-500">Загрузка…</div>}
           {task && (
-            <ReactMarkdown rehypePlugins={rehypePlugins}>{task.body}</ReactMarkdown>
+            <ReactMarkdown rehypePlugins={rehypePlugins}>{body}</ReactMarkdown>
           )}
         </div>
       </div>

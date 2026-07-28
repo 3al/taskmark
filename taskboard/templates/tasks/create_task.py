@@ -157,6 +157,53 @@ def build_checklist(task_type: str) -> str:
     return checklists.get(task_type, checklists["feature"])
 
 
+TEMPLATE_FILE = "_TEMPLATE.md"
+
+# Заголовок секции → чем заполнить её тело при создании задачи.
+# Остальные секции шаблона (заметки агента, история коммитов) переезжают
+# в новую задачу как есть
+_FILLED_SECTIONS = ("## Описание", "### Критерии приёмки", "## Чеклист")
+
+
+def _replace_section(text: str, heading: str, body: str) -> str:
+    """Заменить тело секции heading, не трогая остальные.
+
+    Границей считается следующий заголовок любого уровня — так секция
+    «### Критерии приёмки» внутри «## Описание» остаётся на месте.
+    """
+    start = text.find(heading + "\n")
+    if start < 0:
+        return text
+    body_start = start + len(heading) + 1
+    next_heading = re.search(r"^#{1,6} ", text[body_start:], flags=re.M)
+    body_end = body_start + next_heading.start() if next_heading else len(text)
+    return text[:body_start] + f"\n{body.strip()}\n\n" + text[body_end:]
+
+
+def render_from_template(tasks_dir: Path, frontmatter: str, description: str,
+                         criteria: str, checklist: str) -> str | None:
+    """Собрать файл задачи из `_TEMPLATE.md`, если он есть в проекте.
+
+    Шаблон — видимый эталон структуры: его правят руками, и созданные задачи
+    должны следовать за ним, а не за копией структуры внутри скрипта.
+    Нет шаблона (старый проект) — вернуть None, вызывающий возьмёт встроенную.
+    """
+    template = tasks_dir / TEMPLATE_FILE
+    try:
+        text = template.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    end = text.find("\n---", 3)
+    if not text.startswith("---") or end < 0:
+        return None  # шаблон без frontmatter — считаем его сломанным
+    text = frontmatter + text[end + 4:]
+
+    for heading, body in zip(_FILLED_SECTIONS, (description, criteria, checklist)):
+        text = _replace_section(text, heading, body)
+    return text
+
+
 def _append_to_block(board_content: str, heading: str, new_entry: str) -> str | None:
     """
     Дописать запись в конец блока с заголовком heading.
@@ -259,7 +306,7 @@ def create_task(
     task_num = get_next_task_number()
     slug = slugify(title)
     filename = f"TASK-{task_num:03d}-{slug}.md"
-    created_date = datetime.now().strftime("%Y-%m-%d")
+    created_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     blocked_by_line = f"\nblocked_by: {blocked_by}" if blocked_by else ""
     epic_value = epic if epic else "~"
@@ -269,15 +316,19 @@ def create_task(
     cfg = load_config(tasks_dir)
     status_key, intake_section = intake_status(tasks_dir, cfg)
 
-    # Создать содержимое файла
-    content = f"""---
+    frontmatter = f"""---
 id: TASK-{task_num:03d}
 title: {title}
 epic: {epic_value}
 status: {status_key}
 created: {created_date}{blocked_by_line}
-patch: ~
----
+---"""
+
+    # Структуру задаёт `_TEMPLATE.md` проекта; встроенная копия — запасной
+    # вариант для проектов, развёрнутых до его появления
+    content = render_from_template(tasks_dir, frontmatter, description, criteria, checklist)
+    if content is None:
+        content = f"""{frontmatter}
 
 ## Описание
 
@@ -293,7 +344,7 @@ patch: ~
 
 ## Заметки агента
 
-<!-- Компактно. Макс ~15 строк. Формат: АГЕНТ (модель): ДАТА ВРЕМЯ: суть -->
+## История коммитов
 """
 
     # Создать файл

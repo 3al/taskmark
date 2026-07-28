@@ -42,7 +42,9 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             </span>
           )}
         </div>
-        <div className="text-base text-zinc-300 leading-snug mt-0.5 line-clamp-2" title={task.title}>
+        {/* Заголовок превью чуть мягче интерфейсных надписей: карточек на доске
+            десятки, полная яркость превращает колонку в стену текста */}
+        <div className="text-base text-zinc-300/90 leading-snug mt-0.5 line-clamp-2" title={task.title}>
           {highlight(task.title, query)}
         </div>
         {/* Нашлось в теле задачи — показываем, где именно: иначе непонятно,

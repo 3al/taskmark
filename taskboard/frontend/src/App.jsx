@@ -311,6 +311,9 @@ export default function App() {
     no_create_script: { part: 'create_script', label: 'Создать' },
     no_logs: { part: 'logs', label: 'Создать' },
     no_epics: { part: 'epics', label: 'Создать' },
+    // Шаблон задачи — эталон структуры: по нему создаются новые задачи
+    no_template: { part: 'template', label: 'Создать' },
+    outdated_template: { part: 'template', label: 'Обновить' },
     outdated_script: { part: 'create_script', label: 'Обновить' },
     no_status_script: { part: 'status_script', label: 'Создать' },
     outdated_status_script: { part: 'status_script', label: 'Обновить' },

@@ -45,6 +45,10 @@ RULES_MARKER = "TASK MANAGEMENT"
 # Рубрики внутри раздела создания задач: по ним create_task.py раскладывает новое
 BACKLOG_SUBSECTIONS = ("Рефакторинг (в порядке выполнения)", "Новый функционал и баги")
 
+# Эталон структуры файла задачи: его же копирует человек вручную, на него
+# ссылаются скиллы, и из него create_task.py собирает новую задачу
+TASK_TEMPLATE_FILE = "_TEMPLATE.md"
+
 # Скрипты-инструменты в tasks/: (часть scaffold, ключ конфига, имя шаблона).
 # Имя в проекте переименуемо через настройки, шаблон — нет
 TOOL_SCRIPTS = (
@@ -290,7 +294,7 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     # --- Структура tasks/ (полностью или только запрошенные части) ---
     tasks_dir.mkdir(parents=True, exist_ok=True)
     want = set(parts) if parts else {"board", "create_script", "status_script",
-                                     "epics", "gitignore", "logs"}
+                                     "template", "epics", "gitignore", "logs"}
 
     if "board" in want:
         board_name = cfg.get("board_file", "board.md")
@@ -322,6 +326,22 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             replaced.append(script_name)
         else:
             diverged.append(script_name)
+
+    # Шаблон задачи — инструмент, а не данные: правится редко, но обновляется
+    # до эталона по кнопке, как скрипты
+    if "template" in want:
+        template_path = tasks_dir / TASK_TEMPLATE_FILE
+        template_text = (TASKS_TEMPLATES / TASK_TEMPLATE_FILE).read_text(encoding="utf-8")
+        if not template_path.exists():
+            template_path.write_text(template_text, encoding="utf-8")
+            created.append(TASK_TEMPLATE_FILE)
+        elif _same_content(_read(template_path), template_text):
+            skipped.append(TASK_TEMPLATE_FILE)
+        elif overwrite:
+            template_path.write_text(template_text, encoding="utf-8")
+            replaced.append(TASK_TEMPLATE_FILE)
+        else:
+            diverged.append(TASK_TEMPLATE_FILE)
 
     # (часть, файл-шаблон, имя в проекте): шаблон gitignore хранится без точки —
     # иначе он сам срабатывает как ignore-правило в репозитории инструмента
@@ -921,6 +941,8 @@ ENV_PARTS = (
      "missing": "no_create_script", "outdated": "outdated_script"},
     {"part": "status_script", "harness": None,
      "missing": "no_status_script", "outdated": "outdated_status_script"},
+    {"part": "template", "harness": None,
+     "missing": "no_template", "outdated": "outdated_template"},
     {"part": "epics", "harness": None, "missing": "no_epics", "outdated": None},
     {"part": "logs", "harness": None, "missing": "no_logs", "outdated": None},
     {"part": "skills", "harness": "any",
@@ -1001,6 +1023,12 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             missing, outdated = _script_state(tasks_dir, cfg, "create_script", "create_task.py")
         elif part == "status_script":
             missing, outdated = _script_state(tasks_dir, cfg, "status_script", "set_status.py")
+        elif part == "template":
+            path = tasks_dir / TASK_TEMPLATE_FILE
+            template = (TASKS_TEMPLATES / TASK_TEMPLATE_FILE).read_text(encoding="utf-8")
+            missing = [] if path.is_file() else [TASK_TEMPLATE_FILE]
+            outdated = ([] if not path.is_file() or _same_content(_read(path), template)
+                        else [TASK_TEMPLATE_FILE])
         elif part == "epics":
             missing = [] if (tasks_dir / EPICS_FILE).is_file() else [EPICS_FILE]
             outdated = []  # реестр эпиков — данные пользователя, эталона нет
