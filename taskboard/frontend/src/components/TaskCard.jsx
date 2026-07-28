@@ -1,8 +1,10 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { statusStyle } from '../statuses'
+import { highlight } from '../highlight'
 
 // Карточка задачи: draggable + droppable (дроп на карточку = вставка на её позицию)
-export default function TaskCard({ task, status, onOpen, indicatorAllowed = true }) {
+export default function TaskCard({ task, status, onOpen, indicatorAllowed = true,
+                                   query, match }) {
   const style = statusStyle(status)
   const dragId = `task:${task.id}`
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
@@ -41,8 +43,16 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
           )}
         </div>
         <div className="text-base text-zinc-300 leading-snug mt-0.5 line-clamp-2" title={task.title}>
-          {task.title}
+          {highlight(task.title, query)}
         </div>
+        {/* Нашлось в теле задачи — показываем, где именно: иначе непонятно,
+            почему карточка попала в выдачу */}
+        {match && !match.in_title && match.excerpt && (
+          <div className="text-[11px] text-zinc-500 mt-1 line-clamp-2 leading-snug"
+               title={match.excerpt}>
+            {highlight(match.excerpt, query)}
+          </div>
+        )}
         {task.meta && <div className="text-xs text-zinc-500 mt-1 truncate">{task.meta}</div>}
       </div>
     </div>

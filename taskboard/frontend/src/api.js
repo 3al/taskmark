@@ -48,6 +48,7 @@ export const api = {
     request('/api/config', { method: 'POST', body: JSON.stringify({ updates, moves }) }),
   previewConfig: (updates) =>
     request('/api/config/preview', { method: 'POST', body: JSON.stringify({ updates }) }),
+  search: (q) => request(`/api/search?q=${encodeURIComponent(q)}`),
   help: () => request('/api/help'),
   helpSection: (id) => request(`/api/help/${encodeURIComponent(id)}`),
   logs: () => request('/api/logs'),

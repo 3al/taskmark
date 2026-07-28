@@ -49,6 +49,9 @@ body {
 .md-body th { @apply bg-zinc-800/60 text-zinc-200 font-semibold text-left; }
 .md-body tbody tr:nth-child(even) { @apply bg-zinc-800/20; }
 
+/* Совпадения поиска в теле задачи */
+.md-body mark, mark.search-hit { @apply bg-amber-400/30 text-amber-100 rounded px-0.5; }
+
 /* Подкраска заголовков markdown в тон фона шапки карточки (приглушённые пастельные) */
 /* Backlog нейтрален: вместо оттенка — яркий белый (иерархия над телом zinc-300) */
 .md-tint-zinc h1, .md-tint-zinc h2, .md-tint-zinc h3 { @apply text-zinc-100; }

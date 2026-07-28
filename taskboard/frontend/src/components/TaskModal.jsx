@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { api } from '../api'
 import { statusStyle } from '../statuses'
+import { highlight, rehypeHighlight } from '../highlight'
 import CopyButton from './CopyButton'
 
-// Модалка с полным содержимым задачи (рендер markdown)
-export default function TaskModal({ taskId, onClose }) {
+// Модалка с полным содержимым задачи (рендер markdown).
+// query — активный поиск: совпадения подсвечиваются прямо в тексте задачи
+export default function TaskModal({ taskId, query, onClose }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
+  // Плагин пересобираем только при смене запроса: иначе react-markdown
+  // перерисовывает всё дерево на каждый рендер модалки
+  const rehypePlugins = useMemo(() => (query?.trim() ? [rehypeHighlight(query)] : []), [query])
   // Оттенок шапки модалки в цвет статуса задачи (применится после загрузки)
   const style = statusStyle(task?.meta?.status)
 
@@ -36,7 +41,7 @@ export default function TaskModal({ taskId, onClose }) {
           <div className="min-w-0">
             <div className="text-xs font-mono text-zinc-500">{taskId}</div>
             <div className="text-xl font-semibold text-zinc-300 leading-snug">
-              {task?.meta?.title || '…'}
+              {task?.meta?.title ? highlight(task.meta.title, query) : '…'}
             </div>
             {task?.meta && (
               <div className="text-xs text-zinc-500 mt-1">
@@ -69,7 +74,9 @@ export default function TaskModal({ taskId, onClose }) {
         <div className={`overflow-y-auto px-5 py-4 md-body text-sm ${style.mdTint}`}>
           {error && <div className="text-rose-400">{error}</div>}
           {!task && !error && <div className="text-zinc-500">Загрузка…</div>}
-          {task && <ReactMarkdown>{task.body}</ReactMarkdown>}
+          {task && (
+            <ReactMarkdown rehypePlugins={rehypePlugins}>{task.body}</ReactMarkdown>
+          )}
         </div>
       </div>
     </div>

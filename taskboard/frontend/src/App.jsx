@@ -43,6 +43,10 @@ export default function App() {
   const [showAgentic, setShowAgentic] = useState(false)
   // Помощь: null — закрыта, иначе раздел, на котором её открыли
   const [helpSection, setHelpSection] = useState(null)
+  // Живой поиск: строка ввода и результат с бэкенда (id → попадания).
+  // Ищем на сервере, потому что содержание задач лежит в файлах, а не на доске
+  const [query, setQuery] = useState('')
+  const [found, setFound] = useState(null)
   const [dndFullBoard, setDndFullBoard] = useState(false)
   const configLoaded = useRef(false)
   const [activeDrag, setActiveDrag] = useState(null)
@@ -58,6 +62,21 @@ export default function App() {
 
   // Помощь открывается там, где возник вопрос: сразу на нужном разделе
   const openHelp = (section = null) => setHelpSection(section || 'start')
+
+  // Ввод опережает сеть: запрос уходит после паузы, иначе каждая буква — запрос
+  useEffect(() => {
+    const needle = query.trim()
+    if (!needle) {
+      setFound(null)
+      return
+    }
+    const timer = setTimeout(() => {
+      api.search(needle)
+        .then((r) => setFound(new Map(r.items.map((i) => [i.id, i]))))
+        .catch((e) => setError(e.message))
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [query, board])
 
   const saveColumnOrder = (order) => {
     setColumnOrder(order)
@@ -165,6 +184,18 @@ export default function App() {
     const rest = cols.filter((c) => !saved.includes(c.status))
     return [...ordered, ...rest]
   }, [board, columnOrder, pipeline])
+
+  // Доска под фильтром: колонки остаются на местах (структура не должна
+  // прыгать под руками), внутри — только найденные задачи
+  const visibleColumns = useMemo(() => {
+    if (!found) return orderedColumns
+    return orderedColumns.map((col) => ({
+      ...col,
+      groups: col.groups
+        .map((g) => ({ ...g, tasks: g.tasks.filter((t) => found.has(t.id)) }))
+        .filter((g) => g.tasks.length),
+    }))
+  }, [orderedColumns, found])
 
   const findColumn = (status) => board?.columns.find((c) => c.status === status)
 
@@ -341,6 +372,9 @@ export default function App() {
         onResetColumns={() => saveColumnOrder(null)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenHelp={openHelp}
+        query={query}
+        onQuery={setQuery}
+        matches={found ? found.size : null}
       />
 
       {error && (
@@ -441,7 +475,7 @@ export default function App() {
             onDragCancel={() => { setActiveDrag(null); setColDropTarget(null) }}
           >
             <div className="flex gap-3 h-full items-stretch">
-              {orderedColumns.map((col) => (
+              {visibleColumns.map((col) => (
                 <Column
                   key={col.title}
                   column={col}
@@ -450,6 +484,8 @@ export default function App() {
                   dndFullBoard={dndFullBoard}
                   pickStatus={pickStatus}
                   createStatus={createStatus}
+                  query={query}
+                  matches={found}
                   columnIndicator={
                     activeDrag?.column && colDropTarget?.status === col.status
                       ? (colDropTarget.side === 'after' ? 'right' : 'left')
@@ -490,7 +526,10 @@ export default function App() {
         )}
       </main>
 
-      {openTask && <TaskModal taskId={openTask} onClose={() => setOpenTask(null)} />}
+      {/* Открыли найденную задачу — совпадения подсвечены в её тексте */}
+      {openTask && (
+        <TaskModal taskId={openTask} query={query} onClose={() => setOpenTask(null)} />
+      )}
       {showNewTask && (
         <NewTaskModal
           backlogSections={

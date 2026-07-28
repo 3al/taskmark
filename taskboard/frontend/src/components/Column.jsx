@@ -21,7 +21,7 @@ function GroupTail({ status, groupIndex, afterTaskId, groupTitle, allowed }) {
 
 // Колонка статуса с группами (подразделы ###)
 export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, columnIndicator,
-                                 pickStatus, createStatus }) {
+                                 pickStatus, createStatus, query, matches }) {
   const style = statusStyle(column.status)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${column.status}`,
@@ -80,21 +80,31 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
                 status={column.status}
                 onOpen={onOpenTask}
                 indicatorAllowed={canDrop}
+                query={query}
+                match={matches?.get(task.id)}
               />
             ))}
-            <GroupTail
-              status={column.status}
-              groupIndex={gi}
-              afterTaskId={group.tasks.length ? group.tasks[group.tasks.length - 1].id : null}
-              groupTitle={group.title}
-              allowed={canDrop}
-            />
+            {/* Под фильтром хвостовая зона врала бы: «после последней» указывало
+                бы на последнюю найденную, а не на последнюю в разделе */}
+            {!matches && (
+              <GroupTail
+                status={column.status}
+                groupIndex={gi}
+                afterTaskId={group.tasks.length ? group.tasks[group.tasks.length - 1].id : null}
+                groupTitle={group.title}
+                allowed={canDrop}
+              />
+            )}
             {!group.tasks.length && (
               <div className="text-xs text-zinc-600 italic px-1">пусто</div>
             )}
           </div>
         ))}
-        {!column.groups.length && <div className="text-xs text-zinc-600 italic px-1">пусто</div>}
+        {!column.groups.length && (
+          <div className="text-xs text-zinc-600 italic px-1">
+            {matches ? 'нет совпадений' : 'пусто'}
+          </div>
+        )}
       </div>
     </div>
   )

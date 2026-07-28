@@ -59,7 +59,7 @@ function projectDir(tasksDir) {
 export default function Header({
   projects, active, canCreate, hasLogs, dndFullBoard, hasCustomOrder,
   onSwitchProject, onNewTask, onShowLogs, onToggleDnd, onRefresh, onResetColumns, onOpenSettings,
-  onOpenHelp,
+  onOpenHelp, query, onQuery, matches,
 }) {
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
@@ -171,7 +171,34 @@ export default function Header({
 
       {!adding && error && <span className="text-xs text-rose-400 self-center">{error}</span>}
 
-      <div className="ml-auto flex items-center gap-2">
+      {/* Живой фильтр: без кнопки «искать» — доска сужается по мере ввода */}
+      <div className="ml-auto flex items-center relative">
+        <input
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && onQuery('')}
+          placeholder="Поиск по задачам…"
+          title="Ищет по номеру, заголовку и содержанию задач (Esc — сбросить)"
+          className="bg-zinc-800 border border-zinc-700 rounded-lg pl-2.5 pr-16 py-1.5 text-sm w-56
+            focus:outline-none focus:border-sky-500 placeholder:text-zinc-600"
+        />
+        {query && (
+          <span className="absolute right-2 flex items-center gap-1.5">
+            <span className={`text-[11px] ${matches ? 'text-zinc-500' : 'text-rose-400'}`}>
+              {matches ?? 0}
+            </span>
+            <button
+              onClick={() => onQuery('')}
+              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none"
+              title="Сбросить поиск (Esc)"
+            >
+              ✕
+            </button>
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
         {hasCustomOrder && (
           <button className={btn} onClick={onResetColumns} title="Сбросить порядок колонок на порядок по умолчанию">
             ↺ колонки

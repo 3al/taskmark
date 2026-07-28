@@ -23,6 +23,7 @@ from backend.pipeline_sources import list_sources
 from backend.queue_ops import ensure_section, move_task
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
+from backend.search import search_tasks
 from backend.statuses import CATALOG, load_pipeline
 from backend.task_parser import parse_task
 from backend.validator import validate_project
@@ -273,6 +274,13 @@ def api_board() -> dict:
         "dnd_full_board": cfg.get("dnd_full_board", False),
     }
     return board
+
+
+@app.get("/api/search")
+def api_search(q: str = "") -> dict:
+    """Живой фильтр доски: задачи, в которых встречается запрос."""
+    tasks_dir, _cfg = _ctx()
+    return {"query": q, "items": search_tasks(tasks_dir, q)}
 
 
 @app.get("/api/epics")
