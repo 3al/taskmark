@@ -71,6 +71,8 @@ export default function SettingsModal({ onClose, onSaved }) {
     create_script: config.create_script,
     status_script: config.status_script,
     logs_dir: config.logs_dir,
+    // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
+    ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     ...(pipeline ? {
       pipeline: pipeline.pipeline.map((s) => s.key),
       actions: pipeline.actions,
@@ -243,6 +245,36 @@ export default function SettingsModal({ onClose, onSaved }) {
               <div>
                 <span className={label}>Папка логов</span>
                 <input className={field} value={config.logs_dir} onChange={(e) => set('logs_dir', e.target.value)} />
+              </div>
+
+              {/* Состав агентского окружения проверяется по выбранным средам:
+                  выключенная среда молчит, включённая — требует полного набора */}
+              <div className="border-t border-zinc-800 pt-4">
+                <span className={label}>Среды агентов</span>
+                <div className="space-y-2">
+                  {[['claude', 'Claude Code', '.claude/skills · CLAUDE.md'],
+                    ['opencode', 'opencode', '.opencode/commands · AGENTS.md']].map(
+                    ([key, title, where]) => (
+                      <label key={key} className="flex items-start gap-2 text-sm cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={!!config.harnesses?.[key]}
+                          onChange={(e) => set('harnesses', {
+                            ...(config.harnesses || {}), [key]: e.target.checked,
+                          })}
+                          className="mt-0.5 accent-sky-500"
+                        />
+                        <span>
+                          {title}
+                          <div className="text-[11px] text-zinc-500">{where}</div>
+                        </span>
+                      </label>
+                    ))}
+                </div>
+                <div className="text-[11px] text-zinc-600 mt-1">
+                  Недостающее развернётся кнопками на баннере. Скиллы лежат в одном
+                  месте: opencode читает и .claude/skills
+                </div>
               </div>
 
               {pipeline && (

@@ -6,10 +6,35 @@ import re
 from pathlib import Path
 
 from backend.board_parser import parse_board
-from backend.scaffold import TASKS_TEMPLATES, agentic_stale, rules_missing
+from backend.scaffold import detect_harnesses, environment_issues, harness_choice
 from backend.statuses import load_pipeline
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
+
+# Как назвать часть окружения в сообщении о пробеле поставки: (нет, устарело).
+# Формулировки одинаковой формы для всех частей — чтобы отсутствие скиллов
+# читалось так же серьёзно, как отсутствие скрипта, а не терялось в молчании
+_PART_WORDING = {
+    "create_script": ("Нет {names} — создание задач отключено",
+                      "{names} устарел — не поддерживает актуальные возможности"),
+    "status_script": ("Нет {names} — инструмент агента для управления задачами",
+                      "{names} устарел — не поддерживает актуальные возможности"),
+    "epics": ("Нет {names} — реестру эпиков негде хранить имена", ""),
+    "logs": ("Нет папки {names} — просмотр логов отключён", ""),
+    "skills": ("Скиллы не развёрнуты — агент не знает процесса работы с задачами",
+               "Скиллы устарели: {names}"),
+    "commands": ("Команды opencode не развёрнуты: без них среда не видит скиллы",
+                 "Команды opencode устарели: {names}"),
+    "rules": ("Правила для агентов не развёрнуты: {names}",
+              "Правила для агентов устарели: {names}"),
+}
+
+
+def _issue_message(issue: dict) -> str:
+    """Сообщение о пробеле поставки по реестру частей."""
+    missing, outdated = _PART_WORDING[issue["part"]]
+    template = missing if issue["state"] == "missing" else outdated
+    return template.format(names=", ".join(issue["names"]))
 
 
 def validate_project(tasks_dir: Path, cfg: dict) -> dict:
@@ -81,50 +106,22 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     if extra:
         warnings.append("Разделы вне пайплайна статусов: " + ", ".join(extra))
 
-    # Деградация функционала (code — для точечного восстановления из UI)
+    # Деградация функционала (code — для точечного восстановления из UI).
+    # Возможности зависят от наличия инструментов, сами проблемы полноты
+    # поставки перечисляет реестр частей окружения
     features["create_task"] = (tasks_dir / create_script).is_file()
-    if not features["create_task"]:
-        degraded.append({"code": "no_create_script",
-                         "message": f"Нет {create_script} — создание задач отключено"})
-    elif _script_outdated(tasks_dir / create_script, "create_task.py"):
-        degraded.append({"code": "outdated_script",
-                         "message": f"{create_script} устарел — не поддерживает актуальные возможности"})
-
-    # Скрипт смены статуса: агент правит им файл задачи и доску за один вызов
-    status_script = cfg.get("status_script", "set_status.py")
-    features["set_status"] = (tasks_dir / status_script).is_file()
-    if not features["set_status"]:
-        degraded.append({"code": "no_status_script",
-                         "message": f"Нет {status_script} — инструмент агента для управления задачами"})
-    elif _script_outdated(tasks_dir / status_script, "set_status.py"):
-        degraded.append({"code": "outdated_status_script",
-                         "message": f"{status_script} устарел — не поддерживает актуальные возможности"})
-
+    features["set_status"] = (tasks_dir / cfg.get("status_script", "set_status.py")).is_file()
     features["logs"] = (tasks_dir / logs_dir).is_dir()
-    if not features["logs"]:
-        degraded.append({"code": "no_logs",
-                         "message": f"Нет папки {logs_dir}/ — просмотр логов отключён"})
 
-    # Развёрнутое агентское окружение — тоже инструмент: следим за актуальностью
-    stale = agentic_stale(tasks_dir.parent, cfg)
-    if stale["skills"]:
-        degraded.append({"code": "outdated_skills",
-                         "message": "Скиллы устарели: " + ", ".join(stale["skills"])})
-    if stale["commands"]:
-        degraded.append({"code": "outdated_commands",
-                         "message": "Команды opencode устарели: " + ", ".join(stale["commands"])})
-    if stale["rules"]:
-        # Правила описывают жизненный цикл проекта: разошлись с эталоном —
-        # агент работает по устаревшим инструкциям, а сказать об этом некому
-        degraded.append({"code": "outdated_rules",
-                         "message": "Правила для агентов устарели: " + ", ".join(stale["rules"])})
-    # Без секции правил проект полурабочий: агент, читающий этот файл, не знает
-    # ни очереди, ни как менять статус. Чинится кнопкой, как недостающий скрипт
-    missing_rules = rules_missing(tasks_dir.parent)
-    if missing_rules:
-        degraded.append({"code": "no_rules",
-                         "message": "Правила для агентов не развёрнуты: "
-                                    + ", ".join(missing_rules)})
+    # Пока среды не выбраны, про их части молчим: спрашиваем выбор один раз
+    if harness_choice(cfg) is None:
+        degraded.append({"code": "no_harness_choice",
+                         "message": "Не выбраны среды агентов — окружение проверяется не полностью"})
+
+    for issue in environment_issues(tasks_dir, cfg):
+        degraded.append({"code": issue["code"],
+                         "message": _issue_message(issue),
+                         "names": issue["names"]})
 
     # Мягкие предупреждения: битые ссылки и файлы вне доски
     on_board: set[str] = set()
@@ -140,17 +137,11 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
         if m and m.group(1) not in on_board:
             warnings.append(f"{f.name}: файла нет на доске")
 
-    return _report(critical, degraded, warnings, features)
-
-
-def _script_outdated(script_path: Path, template_name: str) -> bool:
-    """Скрипт-инструмент отличается от шаблонной версии."""
-    try:
-        current = script_path.read_text(encoding="utf-8-sig")
-        template = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
-        return current != template
-    except Exception:
-        return False
+    report = _report(critical, degraded, warnings, features)
+    # Выбор сред и предзаполнение диалога: по нему UI решает, спрашивать ли
+    report["harnesses"] = {"choice": harness_choice(cfg),
+                           "detected": detect_harnesses(tasks_dir.parent)}
+    return report
 
 
 def _report(critical: list, degraded: list, warnings: list, features: dict) -> dict:

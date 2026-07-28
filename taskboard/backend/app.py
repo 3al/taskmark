@@ -20,7 +20,8 @@ from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import apply_config_migrations, pipeline_removals
 from backend.queue_ops import ensure_section, move_task
-from backend.scaffold import agentic_diff, agentic_stale_details, scaffold_project
+from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
+                              scaffold_project)
 from backend.statuses import CATALOG, load_pipeline
 from backend.task_parser import parse_task
 from backend.validator import validate_project
@@ -31,7 +32,8 @@ DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 # Возможности API: лаунчер сверяет их при подключении к уже запущенному
 # серверу, чтобы предупредить об устаревшем процессе
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
-                "move_group": True, "scaffold": True, "agentic_diff": True}
+                "move_group": True, "scaffold": True, "agentic_diff": True,
+                "harnesses": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -79,8 +81,11 @@ class ConfigIn(BaseModel):
 
 
 class ScaffoldIn(BaseModel):
-    skills: bool = True
-    commands: bool = True
+    # Среды агентов: {"claude": bool, "opencode": bool}. Передан — выбор
+    # пользователя запоминается в конфиге проекта и задаёт состав поставки
+    harnesses: dict | None = None
+    skills: bool | None = None
+    commands: bool | None = None
     rules_agents: bool = True
     rules_claude: bool = True
     vault: bool = False
@@ -184,7 +189,7 @@ def api_save_config(body: ConfigIn) -> dict:
     # Защита от мусора: разрешаем только известные ключи
     allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
                "create_script", "status_script", "logs_dir", "queue_section",
-               "queued_status", "statuses", "pipeline", "actions"}
+               "queued_status", "statuses", "pipeline", "actions", "harnesses"}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
     proj = registry.get_active()
@@ -366,7 +371,16 @@ def api_agentic_diff(part: str, name: str) -> dict:
 def api_scaffold(body: ScaffoldIn | None = None) -> dict:
     """Развернуть структуру tasks/ и агентское окружение в активном проекте."""
     tasks_dir, cfg = _ctx()
-    options = body.model_dump() if body else {}
+    # None — «не задано»: пусть решает состав по выбранным средам, а не пустое значение
+    options = {k: v for k, v in (body.model_dump() if body else {}).items() if v is not None}
+    harnesses = options.get("harnesses")
+    if harnesses is not None:
+        # Выбор сред и волта делается в диалоге и живёт в конфиге проекта:
+        # дальше по нему проверяется полнота поставки и считается эталон
+        # скиллов, а сам диалог больше не спрашивают
+        cfg = save_project_config(tasks_dir, {
+            "harnesses": {h: bool(harnesses.get(h)) for h in HARNESSES},
+            "vault": bool(options.get("vault"))})
     result = scaffold_project(tasks_dir, cfg, options)
     watcher.watch(tasks_dir)
     return {"ok": True, **result}

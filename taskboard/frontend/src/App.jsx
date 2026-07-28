@@ -105,6 +105,20 @@ export default function App() {
 
   useEffect(() => { refresh() }, [refresh])
 
+  // Первое открытие проекта: состав окружения зависит от сред, в которых с ним
+  // работают, — а это знает только пользователь. Спрашиваем один раз на проект;
+  // дальше выбор живёт в его конфиге, и вопрос больше не всплывает
+  const harnessAsked = useRef(null)
+  useEffect(() => {
+    const report = health?.report
+    if (!report || report.harnesses?.choice) return
+    // Структуры нет вовсе — там свой экран с той же кнопкой, не перехватываем
+    if (['missing', 'no_board'].includes(report.structure)) return
+    if (harnessAsked.current === projects.active) return
+    harnessAsked.current = projects.active
+    setShowScaffold(true)
+  }, [health, projects.active])
+
   // Живые обновления от watcher'а (агент двигает задачи — доска перечитывается)
   useEffect(() => subscribeChanges(() => refresh()), [refresh])
 
@@ -259,11 +273,17 @@ export default function App() {
   const DEGRADED_FIX = {
     no_create_script: { part: 'create_script', label: 'Создать' },
     no_logs: { part: 'logs', label: 'Создать' },
+    no_epics: { part: 'epics', label: 'Создать' },
     outdated_script: { part: 'create_script', label: 'Обновить' },
     no_status_script: { part: 'status_script', label: 'Создать' },
     outdated_status_script: { part: 'status_script', label: 'Обновить' },
     // Правила — часть механизма, а не опция: без них агент не знает процесса
     no_rules: { part: 'rules', label: 'Развернуть' },
+    // Отсутствие целой части чинится так же, как её устаревание: одной кнопкой
+    no_skills: { part: 'skills', label: 'Развернуть' },
+    no_commands: { part: 'commands', label: 'Развернуть' },
+    // Состав поставки зависит от сред, а их знает только пользователь
+    no_harness_choice: { modal: 'scaffold', label: 'Настроить' },
     // Агентское окружение — не «обновить всё вслепую»: сначала подробности,
     // где видно каждый элемент, его diff и точечное обновление
     outdated_skills: { modal: 'agentic', label: 'Подробности' },
@@ -275,6 +295,10 @@ export default function App() {
     if (!fix) return
     if (fix.modal === 'agentic') {
       setShowAgentic(true)
+      return
+    }
+    if (fix.modal === 'scaffold') {
+      setShowScaffold(true)
       return
     }
     try {
@@ -372,7 +396,8 @@ export default function App() {
               Развернуть структуру
             </button>
             <div className="text-xs text-zinc-600">
-              board.md со всеми разделами · create_task.py · epics.md · опционально скиллы и правила
+              board.md со всеми разделами · create_task.py · set_status.py · epics.md ·
+              окружение выбранных сред агентов
             </div>
           </div>
         ) : board ? (
@@ -462,6 +487,8 @@ export default function App() {
       {showScaffold && (
         <ScaffoldModal
           tasksDir={health?.project?.tasks_dir}
+          harnesses={report?.harnesses}
+          onShowDiff={() => { setShowScaffold(false); refresh(); setShowAgentic(true) }}
           onClose={() => setShowScaffold(false)}
           onDone={() => { setShowScaffold(false); refresh() }}
         />

@@ -7,6 +7,7 @@ import re
 import shutil
 from pathlib import Path
 
+from backend.epics import EPICS_FILE
 from backend.statuses import load_pipeline
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
@@ -36,6 +37,18 @@ TOOL_SCRIPTS = (
 AGENTIC_GITIGNORE = (
     "# Агентское окружение, развёрнутое taskboard — в git не попадает\n*\n"
 )
+
+# Среды агентов, для которых разворачивается окружение. Выбор хранится в
+# конфиге проекта (ключ "harnesses"): по раскладке на диске его не угадать —
+# папки может не быть просто потому, что проект ещё не открывали в этой среде,
+# а планы на неё знает только пользователь.
+HARNESSES = ("claude", "opencode")
+
+# Файл правил каждой среды — тот, который она реально читает
+HARNESS_RULES_FILE = {"claude": "CLAUDE.md", "opencode": "AGENTS.md"}
+
+# Опция scaffold, которой можно отказаться от конкретного файла правил
+_RULES_OPTION = {"CLAUDE.md": "rules_claude", "AGENTS.md": "rules_agents"}
 
 
 def _strip_vault_blocks(text: str) -> str:
@@ -217,22 +230,32 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
                      skills | commands); остальное не трогается
 
     Существующие артефакты не перезаписываются (попадают в skipped).
-    Исключение — инструменты, а не данные: create_task.py, скиллы и
-    команды обновляются до шаблонной версии (попадают в replaced).
+    Расходящиеся с шаблоном инструменты (правленные скиллы, скрипты) полное
+    развёртывание тоже не трогает — они попадают в diverged: у пользователя
+    там могут быть свои инструкции, и терять их по нажатию одной кнопки
+    нельзя. Перезапись возможна только точечно (parts), то есть по кнопке
+    «Обновить» рядом с diff, где видно, что именно изменится.
     """
     options = options or {}
-    opt_skills = options.get("skills", True)
-    opt_commands = options.get("commands", True)
-    # Легаси-ключ "rules" управляет обоими файлами, если раздельные не переданы
-    legacy_rules = options.get("rules", True)
-    opt_rules_agents = options.get("rules_agents", legacy_rules)
-    opt_rules_claude = options.get("rules_claude", legacy_rules)
+    # Выбор сред задаёт состав поставки: он же ляжет в конфиг проекта, поэтому
+    # дальше все функции раскладки читают его отсюда, а не гадают по диску
+    chosen = options.get("harnesses")
+    if isinstance(chosen, dict):
+        cfg = {**cfg, "harnesses": {h: bool(chosen.get(h)) for h in HARNESSES}}
+    active = harnesses(tasks_dir.parent, cfg)
+
+    opt_skills = options.get("skills", any(active.values()))
+    opt_commands = options.get("commands", active["opencode"])
     opt_vault = options.get("vault", False)
     parts = options.get("parts")
 
     created: list[str] = []
     skipped: list[str] = []
     replaced: list[str] = []
+    diverged: list[str] = []
+    # Перезаписываем только при точечном восстановлении: там пользователь
+    # нажал «Обновить» у конкретного элемента, посмотрев его diff
+    overwrite = bool(parts)
 
     # --- Структура tasks/ (полностью или только запрошенные части) ---
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -251,7 +274,8 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             skipped.append(board_name)
 
     # Скрипты — инструменты, а не данные пользователя: устаревшую версию
-    # обновляем до шаблонной (иначе проект остаётся без свежих возможностей)
+    # обновляем до шаблонной, но только по явной команде (кнопка «Обновить»).
+    # Полное развёртывание расходящийся файл не трогает — см. overwrite
     for part, cfg_key, template_name in TOOL_SCRIPTS:
         if part not in want:
             continue
@@ -263,9 +287,11 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             created.append(script_name)
         elif script_path.read_text(encoding="utf-8-sig") == template_text:
             skipped.append(script_name)
-        else:
+        elif overwrite:
             script_path.write_text(template_text, encoding="utf-8")
             replaced.append(script_name)
+        else:
+            diverged.append(script_name)
 
     # (часть, файл-шаблон, имя в проекте): шаблон gitignore хранится без точки —
     # иначе он сам срабатывает как ignore-правило в репозитории инструмента
@@ -292,51 +318,73 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     if parts:
         names = options.get("names")
         for part in ("skills", "commands", "rules"):
-            if part in want:
-                c, r, s = refresh_agentic(project_root, part, names=names, cfg=cfg)
-                created += c
-                replaced += r
-                skipped += s
+            if part not in want:
+                continue
+            c, r, s, d = refresh_agentic(project_root, part, names=names, cfg=cfg)
+            created += c
+            replaced += r
+            skipped += s
+            diverged += d
+            # Кнопка на баннере разворачивает часть в папку, которой могло ещё
+            # не быть: без .gitignore её содержимое утечёт в git проекта
+            if part in ("skills", "commands") and c:
+                agent_dir = (_deployed_skills(project_root, cfg) if part == "skills"
+                             else _deployed_commands(project_root)).parent
+                if _write_if_absent(agent_dir / ".gitignore", AGENTIC_GITIGNORE):
+                    created.append(f"{agent_dir.name}/.gitignore")
         return {"created": created, "skipped": skipped, "replaced": replaced,
-                "rules": {"appended": [], "already_present": []}}
+                "diverged": diverged, "rules": {"appended": [], "already_present": []}}
 
     # --- Агентское окружение (в корне проекта) ---
 
     if opt_skills:
         # Режим волта здесь задаёт пользователь чекбоксом, а не текущее состояние проекта
-        c, r, s = refresh_agentic(project_root, "skills", vault=opt_vault)
+        c, r, s, d = refresh_agentic(project_root, "skills", vault=opt_vault, cfg=cfg,
+                                     overwrite=overwrite)
         created += c
         replaced += r
         skipped += s
-        if _write_if_absent(project_root / ".claude" / ".gitignore", AGENTIC_GITIGNORE):
-            created.append(".claude/.gitignore")
+        diverged += d
+        # .gitignore кладём в ту агентскую папку, куда легли скиллы
+        agent_dir = _deployed_skills(project_root, cfg).parent
+        if _write_if_absent(agent_dir / ".gitignore", AGENTIC_GITIGNORE):
+            created.append(f"{agent_dir.name}/.gitignore")
         else:
-            skipped.append(".claude/.gitignore")
+            skipped.append(f"{agent_dir.name}/.gitignore")
 
     if opt_commands:
-        c, r, s = refresh_agentic(project_root, "commands")
+        c, r, s, d = refresh_agentic(project_root, "commands", overwrite=overwrite)
         created += c
         replaced += r
         skipped += s
+        diverged += d
         if _write_if_absent(project_root / ".opencode" / ".gitignore", AGENTIC_GITIGNORE):
             created.append(".opencode/.gitignore")
         else:
             skipped.append(".opencode/.gitignore")
 
+    # Состав файлов правил задаёт выбор сред; отдельные ключи (rules_agents /
+    # rules_claude, легаси-«rules» на оба) оставлены как явное «этот не надо»
+    legacy_rules = options.get("rules", True)
     rules_appended: list[str] = []
     rules_present: list[str] = []
-    rules_names = ([n for n, on in (("AGENTS.md", opt_rules_agents),
-                                    ("CLAUDE.md", opt_rules_claude)) if on])
+    rules_names = [n for n in rules_files(project_root, cfg)
+                   if options.get(_RULES_OPTION[n], legacy_rules)]
     if rules_names:
         rules_appended, rules_present = _append_rules(project_root, rules_names, cfg)
-        # Уже развёрнутую секцию приводим к эталону под текущий пайплайн:
-        # правила — такой же инструмент, как скиллы, а не данные пользователя
-        sync_rules(project_root, cfg, rules_present)
+        # Уже развёрнутую секцию не переписываем: пользователь мог дополнить её
+        # под свой процесс. Разошедшуюся показываем в diverged — обновляется
+        # кнопкой рядом с diff, как скиллы
+        diverged += [name for name, _path, expected in _rules_targets(project_root, cfg)
+                     if name in rules_present
+                     and not _same_content(_current_text("rules", project_root / name),
+                                           expected)]
 
     return {
         "created": created,
         "skipped": skipped,
         "replaced": replaced,
+        "diverged": diverged,
         "rules": {"appended": rules_appended, "already_present": rules_present},
     }
 
@@ -359,9 +407,52 @@ def _write_if_absent(dst: Path, text: str) -> bool:
     return True
 
 
+# --- Выбор сред (харнессов) ---
+
+def harness_choice(cfg: dict | None) -> dict | None:
+    """Сохранённый выбор сред или None, если его ещё не делали.
+
+    None — не «сред нет», а «не спрашивали»: UI показывает диалог выбора,
+    а проверки полноты по средам до ответа молчат.
+    """
+    raw = (cfg or {}).get("harnesses")
+    if not isinstance(raw, dict) or not any(h in raw for h in HARNESSES):
+        return None
+    return {h: bool(raw.get(h)) for h in HARNESSES}
+
+
+def detect_harnesses(project_root: Path) -> dict:
+    """Чем проект похоже пользуется — предзаполнение диалога выбора.
+
+    Не найдено ничего — проект просто не открывали ни в одной среде;
+    предлагаем обе, лишнее пользователь снимет сам.
+    """
+    found = {
+        "claude": (project_root / ".claude").is_dir() or (project_root / "CLAUDE.md").is_file(),
+        "opencode": ((project_root / ".opencode").is_dir()
+                     or (project_root / "AGENTS.md").is_file()),
+    }
+    return found if any(found.values()) else {h: True for h in HARNESSES}
+
+
+def harnesses(project_root: Path, cfg: dict | None = None) -> dict:
+    """Действующий набор сред: сохранённый выбор, иначе определённый по проекту."""
+    return harness_choice(cfg) or detect_harnesses(project_root)
+
+
 # --- Актуальность развёрнутого агентского окружения ---
 
-def _deployed_skills(project_root: Path) -> Path:
+def _deployed_skills(project_root: Path, cfg: dict | None = None) -> Path:
+    """Где живут наши скиллы — одна копия на проект.
+
+    opencode читает и `.claude/skills`, поэтому при обеих средах дублировать
+    нечего; отдельная папка `.opencode/skills` нужна только проекту без
+    Claude Code. Смена выбора не удаляет прежнюю копию (там могут быть правки),
+    но в проверке участвует только действующее расположение.
+    """
+    active = harnesses(project_root, cfg)
+    if active["opencode"] and not active["claude"]:
+        return project_root / ".opencode" / "skills"
     return project_root / ".claude" / "skills"
 
 
@@ -387,23 +478,25 @@ def _same_content(current: str | None, expected: str) -> bool:
     return current is not None and current.splitlines() == expected.splitlines()
 
 
-def _skill_targets(project_root: Path, vault: bool | None = None) -> list[tuple[str, Path, str]]:
+def _skill_targets(project_root: Path, vault: bool | None = None,
+                   cfg: dict | None = None) -> list[tuple[str, Path, str]]:
     """(имя, путь развёрнутого файла, эталонный текст) для каждого скилла шаблона.
 
+    Перечисляем только скиллы шаблонов: чужие файлы рядом (собственные скиллы
+    пользователя) в целевой список не попадают и не трогаются.
     Эталон выбирается по режиму волта: явный (выбор пользователя при
     развёртывании) или, если не задан, определённый по самому проекту.
     """
     if vault is None:
-        vault = uses_vault(project_root)
+        vault = uses_vault(project_root, cfg)
+    skills_dir = _deployed_skills(project_root, cfg)
     out: list[tuple[str, Path, str]] = []
     for skill_dir in sorted(SKILLS_TEMPLATES.iterdir()):
         if not skill_dir.is_dir():
             continue
         raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
         text = raw if vault else _strip_vault_blocks(raw)
-        out.append((skill_dir.name,
-                    _deployed_skills(project_root) / skill_dir.name / "SKILL.md",
-                    text))
+        out.append((skill_dir.name, skills_dir / skill_dir.name / "SKILL.md", text))
     return out
 
 
@@ -438,18 +531,27 @@ def agentic_paths(project_root: Path) -> list[Path]:
 
     Точечно скиллы и команды, а не корень и не `.claude` целиком: рядом
     лежат часто меняющиеся настройки самих агентов — это был бы шум.
+    Обе возможные папки скиллов: наблюдаем за тем, что реально лежит на диске,
+    независимо от текущего выбора сред.
     """
-    return [p for p in (_deployed_skills(project_root), _deployed_commands(project_root))
-            if p.is_dir()]
+    candidates = (project_root / ".claude" / "skills",
+                  project_root / ".opencode" / "skills",
+                  _deployed_commands(project_root))
+    return [p for p in candidates if p.is_dir()]
 
 
-def uses_vault(project_root: Path) -> bool:
-    """Развёрнуты ли скиллы с блоками волта знаний.
+def uses_vault(project_root: Path, cfg: dict | None = None) -> bool:
+    """Нужны ли в скиллах блоки волта знаний.
 
-    Определяем по самим файлам: при vault=False блоки вырезаны вместе с
-    маркерами, значит их наличие = проект развёрнут с поддержкой волта.
+    Приоритет у выбора пользователя из конфига проекта: галка должна что-то
+    менять, а перезаписывать файлы молча мы больше не имеем права — со
+    сменой эталона расхождение просто становится видно в баннере.
+    Ключа нет (проект развёрнут до его появления) — определяем по самим
+    файлам: при vault=False блоки вырезаны вместе с маркерами.
     """
-    for skill in _deployed_skills(project_root).glob("*/SKILL.md"):
+    if isinstance(cfg, dict) and "vault" in cfg:
+        return bool(cfg["vault"])
+    for skill in _deployed_skills(project_root, cfg).glob("*/SKILL.md"):
         if VAULT_START in (_read(skill) or ""):
             return True
     return False
@@ -458,27 +560,35 @@ def uses_vault(project_root: Path) -> bool:
 RULES_FILES = ("AGENTS.md", "CLAUDE.md")
 
 
-def rules_deployed(project_root: Path) -> list[str]:
+def rules_files(project_root: Path, cfg: dict | None = None) -> list[str]:
+    """Файлы правил, нужные проекту: по одному на выбранную среду.
+
+    Раньше состав угадывался по тому, какие файлы уже лежат в корне, — из-за
+    чего проект без единого агентского файла получал оба. Теперь его задаёт
+    выбор сред: каждая среда читает свой файл.
+    """
+    active = harnesses(project_root, cfg)
+    return [HARNESS_RULES_FILE[h] for h in HARNESSES if active[h]]
+
+
+def rules_deployed(project_root: Path, cfg: dict | None = None) -> list[str]:
     """Агентские файлы, в которых секция правил уже развёрнута."""
     out: list[str] = []
-    for name in RULES_FILES:
+    for name in rules_files(project_root, cfg):
         target = project_root / name
         if target.is_file() and _rules_bounds(target.read_text(encoding="utf-8-sig")):
             out.append(name)
     return out
 
 
-def rules_missing(project_root: Path) -> list[str]:
+def rules_missing(project_root: Path, cfg: dict | None = None) -> list[str]:
     """Агентские файлы, которым не хватает секции правил.
 
-    Существующий файл без секции — это полурабочее состояние: агент, который
-    читает именно его, не знает процесса. Файлов нет совсем — заводим оба.
+    Файл без секции — полурабочее состояние: агент, который читает именно его,
+    не знает процесса. Файла нет совсем — заведём при развёртывании.
     """
-    existing = [n for n in RULES_FILES if (project_root / n).is_file()]
-    if not existing:
-        return list(RULES_FILES)
-    deployed = rules_deployed(project_root)
-    return [n for n in existing if n not in deployed]
+    deployed = rules_deployed(project_root, cfg)
+    return [n for n in rules_files(project_root, cfg) if n not in deployed]
 
 
 def _rules_targets(project_root: Path, cfg: dict) -> list[tuple[str, Path, str]]:
@@ -489,7 +599,7 @@ def _rules_targets(project_root: Path, cfg: dict) -> list[tuple[str, Path, str]]
     расхождением.
     """
     out: list[tuple[str, Path, str]] = []
-    for name in rules_deployed(project_root):
+    for name in rules_deployed(project_root, cfg):
         target = project_root / name
         content = target.read_text(encoding="utf-8-sig")
         bounds = _rules_bounds(content)
@@ -513,13 +623,15 @@ def _deployed_parts(project_root: Path,
                     cfg: dict | None = None) -> list[tuple[str, list[tuple[str, Path, str]]]]:
     """Развёрнутые части окружения с их эталонами.
 
-    Часть, которую в проекте вообще не разворачивали, не проверяется: не все
-    проекты хотят скиллы, требовать их обновления — шум.
+    Часть, которую в проекте ещё не разворачивали, здесь не проверяется — про
+    её отсутствие целиком сообщает environment_issues; это окно показывает
+    расхождения внутри уже развёрнутого.
     """
+    active = harnesses(project_root, cfg)
     parts: list[tuple[str, list[tuple[str, Path, str]]]] = []
-    if any(_deployed_skills(project_root).glob("*/SKILL.md")):
-        parts.append(("skills", _skill_targets(project_root)))
-    if any(_deployed_commands(project_root).glob("*.md")):
+    if any(_deployed_skills(project_root, cfg).glob("*/SKILL.md")):
+        parts.append(("skills", _skill_targets(project_root, cfg=cfg)))
+    if active["opencode"] and any(_deployed_commands(project_root).glob("*.md")):
         parts.append(("commands", _command_targets(project_root)))
     rules = _rules_targets(project_root, cfg or {})
     if rules:
@@ -548,14 +660,6 @@ def agentic_stale_details(project_root: Path, cfg: dict | None = None) -> list[d
     return items
 
 
-def agentic_stale(project_root: Path, cfg: dict | None = None) -> dict[str, list[str]]:
-    """Устаревшие/недостающие части: {"skills": [...], "commands": [...], "rules": [...]}."""
-    result: dict[str, list[str]] = {"skills": [], "commands": [], "rules": []}
-    for item in agentic_stale_details(project_root, cfg):
-        result[item["part"]].append(item["name"])
-    return result
-
-
 def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = None) -> dict:
     """Unified diff «развёрнутое → эталон» для скилла, команды или секции правил.
 
@@ -564,7 +668,7 @@ def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = No
     вырезанные блоки выглядели бы расхождением) и пайплайна — для правил.
     """
     if part == "skills":
-        targets = _skill_targets(project_root)
+        targets = _skill_targets(project_root, cfg=cfg)
     elif part == "commands":
         targets = _command_targets(project_root)
     else:
@@ -596,44 +700,156 @@ def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = No
 
 
 def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
-                    names: list[str] | None = None,
-                    cfg: dict | None = None) -> tuple[list[str], list[str], list[str]]:
+                    names: list[str] | None = None, cfg: dict | None = None,
+                    overwrite: bool = True) -> tuple[list[str], list[str], list[str], list[str]]:
     """Развернуть/обновить скиллы, команды или секцию правил до эталона.
 
-    Как и create_task.py, это инструмент, а не данные пользователя:
-    расходящийся файл перезаписывается. vault=None — сохранить режим волта,
-    уже сложившийся в проекте (точечное обновление из UI).
-    names — обновить только перечисленные элементы (остальные не трогать).
-    Возвращает (created, replaced, skipped) — относительные пути.
+    vault=None — сохранить режим волта, уже сложившийся в проекте (точечное
+    обновление из UI). names — обновить только перечисленные элементы.
+    overwrite=False — недостающее создать, а расходящееся не трогать: в
+    правленном скилле могут быть инструкции пользователя, и одна кнопка не
+    должна их стирать. Такие файлы возвращаются в diverged.
+    Возвращает (created, replaced, skipped, diverged) — относительные пути.
     """
     if part == "rules":
-        # Правила живут секцией внутри пользовательского файла: устаревшую
-        # пересобираем, недостающую дописываем. Если агентских файлов нет
-        # совсем — заводим оба: проект без правил полурабочий, агент не знает
-        # ни очереди, ни как менять статус
+        # Правила живут секцией внутри пользовательского файла: недостающую
+        # дописываем, устаревшую пересобираем только по явной команде.
+        # Состав файлов задаёт выбор сред (CLAUDE.md / AGENTS.md)
         wanted = list(names) if names else sorted(
-            set(rules_deployed(project_root)) | set(rules_missing(project_root)))
+            set(rules_deployed(project_root, cfg)) | set(rules_missing(project_root, cfg)))
         appended, _present = _append_rules(project_root, wanted, cfg or {})
+        if not overwrite:
+            stale = [name for name, _path, expected in _rules_targets(project_root, cfg or {})
+                     if name in wanted and name not in appended
+                     and not _same_content(_current_text("rules", project_root / name), expected)]
+            return appended, [], [], stale
         updated = sync_rules(project_root, cfg or {}, wanted)
-        return appended, [n for n in updated if n not in appended], []
+        return appended, [n for n in updated if n not in appended], [], []
 
-    targets = (_skill_targets(project_root, vault) if part == "skills"
+    targets = (_skill_targets(project_root, vault, cfg) if part == "skills"
                else _command_targets(project_root))
     if names is not None:
         wanted = set(names)
         targets = [t for t in targets if t[0] in wanted]
-    prefix = ".claude/skills" if part == "skills" else ".opencode/commands"
 
     created: list[str] = []
     replaced: list[str] = []
     skipped: list[str] = []
-    for name, path, expected in targets:
-        rel = f"{prefix}/{name}/SKILL.md" if part == "skills" else f"{prefix}/{name}.md"
+    diverged: list[str] = []
+    for _name, path, expected in targets:
+        # Путь скиллов зависит от выбранных сред, поэтому берём его из цели,
+        # а не из константы
+        rel = str(path.relative_to(project_root)).replace("\\", "/")
         current = _read(path)
         if _same_content(current, expected):
             skipped.append(rel)  # различия только в переводах строк — не трогаем
             continue
+        if current is not None and not overwrite:
+            diverged.append(rel)
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(expected, encoding="utf-8")
         (created if current is None else replaced).append(rel)
-    return created, replaced, skipped
+    return created, replaced, skipped, diverged
+
+
+# --- Полнота поставки: единый реестр частей окружения ---
+
+# Из чего состоит поставка. Одна таблица отвечает и за развёртывание, и за
+# проверку: часть не может «поставляться, но молча не проверяться». Раньше
+# проверялось только уже развёрнутое, и отсутствие целой части принималось за
+# выбор пользователя — отсюда молчание про несуществующие скиллы и обёртки.
+#   part     — ключ точечного развёртывания (scaffold parts) и кнопки в UI
+#   harness  — от какой среды зависит: None — часть проекта, общая для всех;
+#              "any" — нужна, если выбрана хоть одна среда
+#   missing / outdated — коды деградаций валидатора (None — устаревания нет)
+ENV_PARTS = (
+    {"part": "create_script", "harness": None,
+     "missing": "no_create_script", "outdated": "outdated_script"},
+    {"part": "status_script", "harness": None,
+     "missing": "no_status_script", "outdated": "outdated_status_script"},
+    {"part": "epics", "harness": None, "missing": "no_epics", "outdated": None},
+    {"part": "logs", "harness": None, "missing": "no_logs", "outdated": None},
+    {"part": "skills", "harness": "any",
+     "missing": "no_skills", "outdated": "outdated_skills"},
+    {"part": "commands", "harness": "opencode",
+     "missing": "no_commands", "outdated": "outdated_commands"},
+    {"part": "rules", "harness": "any",
+     "missing": "no_rules", "outdated": "outdated_rules"},
+)
+
+
+def _script_state(tasks_dir: Path, cfg: dict, cfg_key: str,
+                  template_name: str) -> tuple[list[str], list[str]]:
+    """(нет, устарел) для скрипта-инструмента в tasks/."""
+    name = cfg.get(cfg_key, template_name)
+    path = tasks_dir / name
+    if not path.is_file():
+        return [name], []
+    template = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
+    return [], ([] if _read(path) == template else [name])
+
+
+def _targets_state(part: str, targets: list[tuple[str, Path, str]]) -> tuple[list[str], list[str]]:
+    """(нет части целиком, разошедшиеся элементы) для многофайловой части.
+
+    Ни одного файла на диске — часть не разворачивали; хотя бы один есть —
+    остальные считаем элементами, отставшими от шаблона. Различаем по наличию
+    файла, а не по совпадению с эталоном: развёрнутая, но правленная целиком
+    часть — это устаревание, а не отсутствие.
+    """
+    current = [(name, _current_text(part, path), expected) for name, path, expected in targets]
+    if targets and all(text is None for _n, text, _e in current):
+        return [name for name, _p, _e in targets], []
+    return [], [name for name, text, expected in current if not _same_content(text, expected)]
+
+
+def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
+    """Пробелы поставки: [{part, code, state, names}] — запись на вид проблемы.
+
+    state: "missing" — части нет вовсе; "outdated" — часть развёрнута, но
+    отдельные элементы разошлись с шаблоном или отсутствуют.
+    Пустой список — окружение полно и актуально.
+    Части невыбранной среды не проверяются: отказ от opencode — это решение
+    пользователя, а не пробел поставки.
+    """
+    project_root = tasks_dir.parent
+    active = harnesses(project_root, cfg)
+    decided = harness_choice(cfg) is not None
+
+    issues: list[dict] = []
+    for spec in ENV_PARTS:
+        part, harness = spec["part"], spec["harness"]
+        # Пока среды не выбраны, их части не проверяем: спросим в диалоге, а не
+        # будем угадывать по диску и ругаться на то, чего пользователь не хотел
+        if harness is not None and not decided:
+            continue
+        if harness == "any" and not any(active.values()):
+            continue
+        if harness in HARNESSES and not active[harness]:
+            continue
+
+        if part == "create_script":
+            missing, outdated = _script_state(tasks_dir, cfg, "create_script", "create_task.py")
+        elif part == "status_script":
+            missing, outdated = _script_state(tasks_dir, cfg, "status_script", "set_status.py")
+        elif part == "epics":
+            missing = [] if (tasks_dir / EPICS_FILE).is_file() else [EPICS_FILE]
+            outdated = []  # реестр эпиков — данные пользователя, эталона нет
+        elif part == "logs":
+            name = cfg.get("logs_dir", "logs")
+            missing = [] if (tasks_dir / name).is_dir() else [f"{name}/"]
+            outdated = []
+        elif part == "skills":
+            missing, outdated = _targets_state(part, _skill_targets(project_root, cfg=cfg))
+        elif part == "commands":
+            missing, outdated = _targets_state(part, _command_targets(project_root))
+        else:  # rules
+            missing = rules_missing(project_root, cfg)
+            _m, outdated = _targets_state(part, _rules_targets(project_root, cfg))
+
+        for state, names in (("missing", missing), ("outdated", outdated)):
+            code = spec[state]
+            if names and code:
+                issues.append({"part": part, "code": code, "state": state, "names": names})
+    return issues

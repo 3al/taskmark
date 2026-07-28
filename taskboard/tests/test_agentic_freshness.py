@@ -28,6 +28,9 @@ class AgenticFreshnessTest(unittest.TestCase):
         self.root = Path(self._tmp.name) / "project"
         self.tasks_dir = self.root / "tasks"
         self.cfg = dict(DEFAULTS)
+        # Выбор сред — часть конфига проекта: без него части, зависящие от
+        # среды, не проверяются (UI сначала спрашивает выбор)
+        self.cfg["harnesses"] = {"claude": True, "opencode": True}
 
     def _scaffold(self, vault: bool = False) -> dict:
         return scaffold_project(self.tasks_dir, self.cfg, {
@@ -259,22 +262,47 @@ class AgenticFreshnessTest(unittest.TestCase):
         self.assertEqual(skill.read_text(encoding="utf-8"), original)
         self.assertIn("<!-- vault -->", skill.read_text(encoding="utf-8"))
 
-    def test_full_scaffold_updates_stale_skill(self) -> None:
-        """Повторное развёртывание тоже подтягивает скиллы до шаблонной версии."""
+    def test_full_scaffold_keeps_customized_skill(self) -> None:
+        """Развёртывание не стирает правленный скилл — там инструкции пользователя.
+
+        Раньше повторное «Развернуть» молча приводило файл к шаблону: одна
+        кнопка уносила всю локальную настройку. Теперь расхождение только
+        показывается, а переписывается по кнопке рядом с diff.
+        """
+        self._scaffold(vault=False)
+        skill = self._skill("start-task")
+        skill.write_text("мои инструкции", encoding="utf-8")
+
+        result = self._scaffold(vault=False)
+
+        self.assertEqual(skill.read_text(encoding="utf-8"), "мои инструкции")
+        self.assertTrue(any("start-task" in d for d in result["diverged"]))
+        self.assertFalse(any("start-task" in r for r in result["replaced"]))
+
+    def test_pointwise_update_still_overwrites(self) -> None:
+        """Осознанное обновление (кнопка у diff) по-прежнему приводит к шаблону."""
         self._scaffold(vault=False)
         skill = self._skill("start-task")
         original = skill.read_text(encoding="utf-8")
-        skill.write_text("устаревшее содержимое", encoding="utf-8")
+        skill.write_text("мои инструкции", encoding="utf-8")
 
-        result = self._scaffold(vault=False)
+        result = scaffold_project(self.tasks_dir, self.cfg,
+                                  {"parts": ["skills"], "names": ["start-task"]})
 
         self.assertEqual(skill.read_text(encoding="utf-8"), original)
         self.assertTrue(any("start-task" in r for r in result["replaced"]))
 
-    def test_full_scaffold_respects_vault_checkbox(self) -> None:
-        """Выбор пользователя важнее сложившегося в проекте режима."""
+    def test_vault_checkbox_changes_expected_version(self) -> None:
+        """Галка волта меняет эталон, а не переписывает файлы за спиной.
+
+        Иначе выбор пользователя либо ничего не делает, либо молча правит
+        скиллы — оба варианта плохи; расхождение показывается в баннере.
+        """
         self._scaffold(vault=False)
-        self._scaffold(vault=True)
+        self.cfg["vault"] = True
+
+        self.assertIn("start-task", self._require_degraded("outdated_skills")["message"])
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["skills"]})
         self.assertIn("<!-- vault -->",
                       self._skill("start-task").read_text(encoding="utf-8"))
 

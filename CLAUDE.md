@@ -41,7 +41,7 @@ taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t ta
   - `registry.py` — мультипроектность (реестр + активный проект).
   - `config.py` — дефолты → глобальный конфиг → per-project переопределения.
   - `validator.py` — отчёт о структуре проекта (`critical` / `degraded` / `warnings` / `features`); он же управляет деградацией UI и возвратом 400 из эндпоинтов при критичных проблемах.
-  - `scaffold.py` + `taskboard/templates/` — развёртывание структуры `tasks/` и агентского окружения в проекты пользователя.
+  - `scaffold.py` + `taskboard/templates/` — развёртывание структуры `tasks/` и агентского окружения в проекты пользователя. Состав поставки описан реестром `ENV_PARTS` (по нему же валидатор ищет и отсутствие, и устаревание — `environment_issues`), раскладку задаёт выбор сред (`harnesses` в конфиге проекта): claude → `.claude/skills` + `CLAUDE.md`, opencode → `.opencode/commands` + `AGENTS.md`. Скиллы разворачиваются одной копией: в `.opencode/skills` они попадают только в проекте без Claude Code.
   - `migrations.py` — миграции данных проекта при переименовании артефактов в настройках.
   - `watcher.py` — watchdog → SSE-события живых обновлений; включает монитор живости, пересоздающий наблюдателя при молчаливой смерти эмиттера.
   - `lifecycle.py` — остановка/перезапуск сервера из UI.

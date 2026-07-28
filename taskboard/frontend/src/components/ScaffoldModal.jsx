@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { api } from '../api'
 
-// Модалка развёртывания структуры tasks/ и агентского окружения
-export default function ScaffoldModal({ tasksDir, onClose, onDone }) {
+// Модалка развёртывания структуры tasks/ и агентского окружения.
+// Состав поставки задают выбранные среды: по раскладке на диске их не угадать —
+// папки может не быть просто потому, что проект ещё не открывали в этой среде.
+// Ответ запоминается в конфиге проекта, дальше по нему проверяется полнота.
+export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, onShowDiff }) {
   const [options, setOptions] = useState({
-    skills: true,
-    commands: true,
-    rules_agents: true,
-    rules_claude: true,
+    claude: harnesses?.choice?.claude ?? harnesses?.detected?.claude ?? true,
+    opencode: harnesses?.choice?.opencode ?? harnesses?.detected?.opencode ?? true,
     vault: false,
   })
   const [busy, setBusy] = useState(false)
@@ -20,7 +21,10 @@ export default function ScaffoldModal({ tasksDir, onClose, onDone }) {
     setBusy(true)
     setError(null)
     try {
-      setResult(await api.scaffold(options))
+      setResult(await api.scaffold({
+        harnesses: { claude: options.claude, opencode: options.opencode },
+        vault: options.vault,
+      }))
     } catch (e) {
       setError(e.message)
     } finally {
@@ -36,7 +40,7 @@ export default function ScaffoldModal({ tasksDir, onClose, onDone }) {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md shadow-2xl max-h-[85vh] flex flex-col">
         <div className="px-5 py-4 border-b border-zinc-800 text-lg font-semibold">
-          {result ? 'Структура развёрнута' : 'Развернуть структуру'}
+          {result ? 'Окружение развёрнуто' : 'Настройка окружения проекта'}
         </div>
 
         {result ? (
@@ -56,6 +60,29 @@ export default function ScaffoldModal({ tasksDir, onClose, onDone }) {
                   {result.replaced.map((f, i) => (
                     <div key={i} className="text-amber-300">↻ {f}</div>
                   ))}
+                </div>
+              )}
+              {result.diverged?.length > 0 && (
+                <div className="border border-amber-800/60 bg-amber-950/30 rounded-lg px-3 py-2">
+                  <div className="text-amber-200 mb-1">
+                    Отличаются от шаблона — оставлены как есть:
+                  </div>
+                  {result.diverged.map((f, i) => (
+                    <div key={i} className="text-amber-300/90 font-mono text-xs">≠ {f}</div>
+                  ))}
+                  <div className="text-[11px] text-zinc-400 mt-2">
+                    В них могут быть ваши правки, поэтому развёртывание их не трогает.
+                    Посмотрите diff и решите по каждому файлу отдельно.
+                  </div>
+                  {onShowDiff && (
+                    <button
+                      onClick={onShowDiff}
+                      className="mt-2 px-3 py-1.5 text-xs rounded-lg bg-zinc-800 hover:bg-zinc-700
+                        border border-zinc-700"
+                    >
+                      Посмотреть отличия
+                    </button>
+                  )}
                 </div>
               )}
               {result.rules?.appended?.length > 0 && (
@@ -90,69 +117,57 @@ export default function ScaffoldModal({ tasksDir, onClose, onDone }) {
           <>
             <div className="px-5 py-4 space-y-3 overflow-y-auto">
               <div className="text-sm text-zinc-300">
-                Всегда создаётся: board.md со всеми разделами, create_task.py, epics.md,
-                .gitignore, папка логов.
+                Всегда создаётся: board.md со всеми разделами, create_task.py,
+                set_status.py, epics.md, .gitignore, папка логов.
               </div>
               <div className="text-xs text-zinc-500 font-mono break-all">{tasksDir}</div>
 
               <div className="border-t border-zinc-800 pt-3 space-y-3">
+                <div className="text-sm text-zinc-300">
+                  В каких средах вы работаете с этим проектом?
+                  <div className="text-[11px] text-zinc-500 mt-1">
+                    Отсутствие папки ни о чём не говорит — проект мог просто ни разу
+                    не открываться в этой среде. Ответ запомнится: дальше taskboard
+                    следит, чтобы окружение выбранных сред было полным и актуальным.
+                  </div>
+                </div>
+
                 <label className={row}>
                   <input
                     type="checkbox"
-                    checked={options.skills}
-                    onChange={(e) => set('skills', e.target.checked)}
+                    checked={options.claude}
+                    onChange={(e) => set('claude', e.target.checked)}
                     className={`mt-0.5 ${checkbox}`}
                   />
                   <span>
-                    Скиллы Claude Code
-                    <div className={hint}>.claude/skills/ — new-task, start-task, fix-task, finalize-task, brainstorm, brainstorm-team</div>
+                    Claude Code
+                    <div className={hint}>.claude/skills/ — new-task, start-task, fix-task, finalize-task, brainstorm, brainstorm-team · секция правил в CLAUDE.md</div>
                   </span>
                 </label>
 
                 <label className={row}>
                   <input
                     type="checkbox"
-                    checked={options.commands}
-                    onChange={(e) => set('commands', e.target.checked)}
+                    checked={options.opencode}
+                    onChange={(e) => set('opencode', e.target.checked)}
                     className={`mt-0.5 ${checkbox}`}
                   />
                   <span>
-                    Команды opencode
-                    <div className={hint}>.opencode/commands/ — обёртки вызова скиллов</div>
+                    opencode
+                    <div className={hint}>.opencode/commands/ — обёртки вызова скиллов · секция правил в AGENTS.md</div>
                   </span>
                 </label>
 
-                <label className={row}>
-                  <input
-                    type="checkbox"
-                    checked={options.rules_agents}
-                    onChange={(e) => set('rules_agents', e.target.checked)}
-                    className={`mt-0.5 ${checkbox}`}
-                  />
-                  <span>
-                    Секция правил в AGENTS.md
-                    <div className={hint}>TASK MANAGEMENT (создаст файл при отсутствии, не дублирует)</div>
-                  </span>
-                </label>
+                <div className="text-[11px] text-zinc-500 pl-6">
+                  Скиллы разворачиваются один раз: opencode читает и .claude/skills,
+                  поэтому вторая копия нужна только проекту без Claude Code.
+                </div>
 
-                <label className={row}>
-                  <input
-                    type="checkbox"
-                    checked={options.rules_claude}
-                    onChange={(e) => set('rules_claude', e.target.checked)}
-                    className={`mt-0.5 ${checkbox}`}
-                  />
-                  <span>
-                    Секция правил в CLAUDE.md
-                    <div className={hint}>TASK MANAGEMENT (создаст файл при отсутствии, не дублирует)</div>
-                  </span>
-                </label>
-
-                <label className={`${row} ${!options.skills ? 'opacity-40 pointer-events-none' : ''}`}>
+                <label className={`${row} ${!options.claude && !options.opencode ? 'opacity-40 pointer-events-none' : ''}`}>
                   <input
                     type="checkbox"
                     checked={options.vault}
-                    disabled={!options.skills}
+                    disabled={!options.claude && !options.opencode}
                     onChange={(e) => set('vault', e.target.checked)}
                     className={`mt-0.5 ${checkbox}`}
                   />
@@ -164,9 +179,9 @@ export default function ScaffoldModal({ tasksDir, onClose, onDone }) {
               </div>
 
               <div className="text-[11px] text-zinc-600">
-                Существующие файлы не перезаписываются. Исключение — инструменты
-                (create_task.py, скиллы, команды): устаревшая версия обновляется
-                до актуальной шаблонной.
+                Существующие файлы не перезаписываются: развёртывание только создаёт
+                недостающее. Скиллы и скрипты с вашими правками останутся как есть —
+                их отличия покажем отдельно, обновить можно будет по одному, посмотрев diff.
               </div>
 
               {error && <div className="text-sm text-rose-400">{error}</div>}

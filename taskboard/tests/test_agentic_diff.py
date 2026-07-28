@@ -117,7 +117,8 @@ class AgenticDetailsTest(unittest.TestCase):
         first.write_text("устарел", encoding="utf-8")
         second.write_text("тоже устарел", encoding="utf-8")
 
-        created, replaced, skipped = refresh_agentic(self.root, "skills", names=["start-task"])
+        created, replaced, skipped, _diverged = refresh_agentic(
+            self.root, "skills", names=["start-task"])
 
         self.assertEqual([Path(p).parts[-2] for p in replaced], ["start-task"])
         self.assertEqual(second.read_text(encoding="utf-8"), "тоже устарел",
