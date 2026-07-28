@@ -46,6 +46,34 @@ class TestHelpSections(unittest.TestCase):
             self.assertIsNone(help_docs.get_section(evil), f'выход за docs/help: {evil}')
 
 
+class TestCrossLinks(unittest.TestCase):
+    """Ссылки между разделами: в UI они переключают окно, на GitHub — открывают файл.
+
+    Поэтому пишутся именами файлов, а не спецсхемой, — и обязаны существовать:
+    битая ссылка одинаково ломает оба места.
+    """
+
+    def test_links_resolve(self) -> None:
+        ids = {item['id'] for item in help_docs.list_sections()}
+        link_re = re.compile(r'\]\((?!https?:|#)([^)]+)\)')
+        for path in sorted(help_docs.DOCS_DIR.glob('*.md')):
+            # Примеры разметки внутри ``` — не ссылки: там живут строки доски
+            # вида [Заголовок](TASK-042-*.md), которые никуда не ведут
+            text = re.sub(r'```.*?```', '', path.read_text(encoding='utf-8'), flags=re.S)
+            for href in link_re.findall(text):
+                target = re.sub(r'#.*$', '', href)
+                m = re.match(r'^(?:\./)?(?:\d+-)?([a-z0-9-]+)\.md$', target)
+                self.assertIsNotNone(
+                    m, f'{path.name}: ссылка не на раздел помощи: {href}')
+                self.assertIn(m.group(1), ids,
+                              f'{path.name}: ссылка на несуществующий раздел: {href}')
+
+    def test_modal_intercepts_section_links(self) -> None:
+        src = (FRONTEND / 'components' / 'HelpModal.jsx').read_text(encoding='utf-8')
+        self.assertIn('setCurrent(target)', src,
+                      'ссылка на раздел не переключает окно помощи')
+
+
 class TestSingleSource(unittest.TestCase):
     """README не дублирует помощь, а ссылается на неё."""
 
