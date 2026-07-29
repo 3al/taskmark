@@ -174,6 +174,17 @@ class EnvironmentPartsTest(unittest.TestCase):
         self.assertIn("outdated_skills", codes)
         self.assertNotIn("no_skills", codes)
 
+    # --- Рубрики доски по умолчанию (TASK-058) ---
+
+    def test_board_template_has_default_subsections(self) -> None:
+        """Раздел приёма задач стартует с дефолтным набором рубрик."""
+        self._deploy(CLAUDE_ONLY)
+        board = (self.tasks_dir / "board.md").read_text(encoding="utf-8")
+        for title in ("### Новый функционал", "### Рефакторинг", "### Баги",
+                      "### Уборка", "### Дизайн"):
+            # \n в конце: «### Рефакторинг» не должно сматчиться на более длинный заголовок
+            self.assertIn(f"{title}\n", board)
+
     # --- Раскладка opencode-проекта без Claude Code ---
 
     def test_opencode_only_deploys_skills_to_opencode(self) -> None:

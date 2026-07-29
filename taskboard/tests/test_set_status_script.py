@@ -72,7 +72,7 @@ class SetStatusTest(unittest.TestCase):
         self.today = datetime.now().strftime("%Y-%m-%d")
 
     def _add_task(self, task_id: str = "TASK-001", title: str = "Тестовая",
-                  status: str = "backlog", section: str = "### Новый функционал и баги",
+                  status: str = "backlog", section: str = "### Новый функционал",
                   meta: str = "") -> Path:
         """Создать файл задачи и запись на доске в указанном разделе."""
         filename = f"{task_id}-test.md"
