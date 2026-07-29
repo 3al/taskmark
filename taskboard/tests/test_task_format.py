@@ -108,6 +108,41 @@ class TaskTemplateTest(unittest.TestCase):
                       "список разорван пустой строкой")
 
 
+class StartTaskQueueTest(unittest.TestCase):
+    """Очередь читается в момент старта, а не из памяти сессии (TASK-062).
+
+    Правила проекта велят прочитать board.md в начале сессии, но к моменту
+    «возьми задачу» доска могла обновиться через UI или другого агента.
+    Скилл старта обязан перечитывать очередь, иначе агент предлагает задачи
+    по устаревшему снимку.
+    """
+
+    def _skill(self) -> str:
+        return (AGENTIC / ".claude" / "skills" / "start-task" / "SKILL.md").read_text(
+            encoding="utf-8")
+
+    def test_skill_rereads_board_before_pick(self) -> None:
+        skill = self._skill()
+        self.assertIn("перечитай `tasks/board.md`", skill,
+                      "скилл старта не требует свежего чтения очереди")
+        self.assertIn("устар", skill.lower(),
+                      "не объяснено, почему прочитанное в начале сессии не годится")
+
+    def test_skill_important_notes_queue_freshness(self) -> None:
+        skill = self._skill()
+        important = skill.split("## Важно")[-1]
+        self.assertIn("перечитай", important.lower(),
+                      "инвариант свежей очереди не закреплён в разделе «Важно»")
+
+    def test_rules_demand_queue_reread(self) -> None:
+        """Секция «Живая очередь» в правилах говорит о том же: иначе скилл
+        и правила противоречат друг другу."""
+        rules = (AGENTIC / "rules_section.md").read_text(encoding="utf-8")
+        queue = rules.split("## Живая очередь")[-1].split("\n## ")[0]
+        self.assertIn("перечитай", queue.lower(),
+                      "правила не требуют перечитывать доску перед предложением задачи")
+
+
 class AgentNotesFormatTest(unittest.TestCase):
     """Формат заметок агента: модель, время, отдельная строка (бывш. TASK-025)."""
 
