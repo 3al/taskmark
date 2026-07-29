@@ -144,6 +144,13 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     # repairable UI решает, показывать ли её на баннере
     repairable = 0
     on_board: set[str] = set()
+    # Файл ищем по id, а не по ссылке из строки: ссылка могла устареть
+    # после переименования, и тогда жалоба «файл не найден» — ложная
+    files_by_id: dict[str, str] = {}
+    for f in sorted(tasks_dir.glob("TASK-*.md")):
+        m = _TASK_ID_RE.match(f.name)
+        if m:
+            files_by_id.setdefault(m.group(1), f.name)
     for column in board["columns"]:
         # Записи в техническом разделе уже разобраны починкой: файла у них нет
         # по определению, и повторять про них — держать баннер вечно
@@ -153,14 +160,19 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
         for group in column["groups"]:
             for task in group["tasks"]:
                 on_board.add(task["id"])
-                path = tasks_dir / task["file"]
-                if not path.is_file():
+                real_file = files_by_id.get(task["id"])
+                if real_file is None:
                     warnings.append(f"{task['id']}: файл {task['file']} не найден")
                     repairable += 1
                     continue
+                if task["file"] != real_file:
+                    warnings.append(
+                        f"{task['id']}: ссылка ведёт на {task['file']}, "
+                        f"файл переименован в {real_file}")
+                    repairable += 1
                 if not target:
                     continue
-                meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+                meta, _ = parse_frontmatter((tasks_dir / real_file).read_text(encoding="utf-8"))
                 current = (meta.get("status") or "").strip()
                 if current != target:
                     warnings.append(

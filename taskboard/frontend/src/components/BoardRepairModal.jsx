@@ -38,7 +38,9 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
 
   useEffect(() => { load() }, [])
 
-  const total = plan ? plan.add.length + plan.status.length + plan.lost.length : 0
+  const total = plan
+    ? plan.add.length + plan.status.length + plan.lost.length + (plan.relink?.length ?? 0)
+    : 0
 
   const apply = async () => {
     setBusy(true)
@@ -84,6 +86,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             <div className="text-sm text-emerald-300">
               Готово: на доску возвращено {done.added}, статусов выправлено {done.restatused},
               {' '}записей без файла убрано {done.lost}
+              {done.relinked > 0 && <>, ссылок исправлено {done.relinked}</>}
               {done.failed?.length > 0 && (
                 <div className="text-rose-300 mt-1">Не удалось: {done.failed.join('; ')}</div>
               )}
@@ -117,6 +120,22 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
                 <span className="text-zinc-500">{i.id}</span> · {i.file}
                 <span className="text-zinc-500"> : </span>
                 <span className="text-rose-300/80">{i.from || 'пусто'}</span>
+                <span className="text-zinc-500"> → </span>
+                <span className="text-emerald-300/80">{i.to}</span>
+              </>
+            )}
+          />
+
+          <Group
+            title="Исправить ссылку"
+            hint="файл переименовали, а строка осталась со старым именем — ссылку перепишем, место не тронем"
+            tone="text-violet-300"
+            items={plan?.relink}
+            render={(i) => (
+              <>
+                <span className="text-zinc-500">{i.id}</span>
+                <span className="text-zinc-500"> : </span>
+                <span className="text-rose-300/80">{i.from}</span>
                 <span className="text-zinc-500"> → </span>
                 <span className="text-emerald-300/80">{i.to}</span>
               </>

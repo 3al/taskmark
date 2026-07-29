@@ -11,6 +11,12 @@ frontmatter, — и агент, правящий один конец без вт
              своего `status:` (незнакомый статус → раздел создания задач)
 - `status` — строка и файл разошлись: `status:` в файле приводится к разделу
 - `lost`   — строки не на что ссылаться: запись уезжает в технический раздел
+- `relink` — файл переименовали, а строка осталась со старым именем:
+             ссылка в записи переписывается на актуальное имя
+
+Файл задачи ищется **по id**, а не по ссылке из строки: иначе устаревшая
+ссылка качала бы починку по кругу — на доске строка «без файла» уезжала
+в свалку, откуда её тут же возвращал restore по живому файлу с тем же id.
 
 Ничего не удаляется: чужие данные нам не принадлежат, и «сирота» на доске
 может оказаться файлом, который просто не подтянули из чужой ветки.
@@ -26,7 +32,7 @@ from pathlib import Path
 
 from backend.board_parser import parse_board
 from backend.config import is_lost_section, lost_section
-from backend.queue_ops import add_entry, ensure_plain_section, move_task
+from backend.queue_ops import add_entry, ensure_plain_section, move_task, relink_entry
 from backend.statuses import Pipeline, load_pipeline
 from backend.task_parser import parse_frontmatter, set_task_status
 
@@ -80,25 +86,37 @@ def _section_for_status(pipeline: Pipeline, status: str) -> str | None:
     return pipeline.section_of(pipeline.action("create") or "")
 
 
+def _files_by_id(tasks_dir: Path) -> dict[str, Path]:
+    """Реальные файлы задач: id → путь. Единственный способ искать файл —
+    ссылка в строке доски могла устареть после переименования."""
+    files: dict[str, Path] = {}
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        m = _TASK_ID_RE.match(path.name)
+        if m:
+            files.setdefault(m.group(1), path)
+    return files
+
+
 def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
     """Что разошлось между доской и файлами. Ничего не меняет."""
     board_path = tasks_dir / cfg.get("board_file", "board.md")
     if not board_path.is_file():
-        return {"add": [], "status": [], "lost": []}
+        return {"add": [], "status": [], "lost": [], "relink": []}
 
     pipeline = load_pipeline(cfg)
     board = parse_board(board_path, pipeline)
     on_board = _on_board(board, cfg)
     in_lost = _in_lost(board, cfg)
+    files = _files_by_id(tasks_dir)
 
     add: list[dict] = []
     status_fix: list[dict] = []
     lost: list[dict] = []
+    relink: list[dict] = []
 
     # Файлы задач, которых нет на доске
-    for path in sorted(tasks_dir.glob("TASK-*.md")):
-        m = _TASK_ID_RE.match(path.name)
-        if not m or m.group(1) in on_board:
+    for task_id, path in files.items():
+        if task_id in on_board:
             continue
         meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
         status = (meta.get("status") or "").strip()
@@ -107,26 +125,29 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
             continue
         # Файл вернулся, а строка ждёт в свалке — её и переносим обратно,
         # иначе на доске окажутся две записи об одной задаче
-        add.append({"id": m.group(1), "file": path.name, "title": _title_from_file(path),
+        add.append({"id": task_id, "file": path.name, "title": _title_from_file(path),
                     "status": status, "section": section,
-                    "restore": m.group(1) in in_lost})
+                    "restore": task_id in in_lost})
 
-    # Строки доски: без файла — в свалку, с файлом — сверяем статус
+    # Строки доски: без файла — в свалку, с файлом — сверяем ссылку и статус
     for task_id, entry in on_board.items():
-        path = tasks_dir / entry["file"]
-        if not path.is_file():
+        path = files.get(task_id)
+        if path is None:
             lost.append({"id": task_id, "file": entry["file"], "section": entry["section"]})
             continue
+        if entry["file"] != path.name:
+            relink.append({"id": task_id, "section": entry["section"],
+                           "from": entry["file"], "to": path.name})
         target = pipeline.status_for_section(entry["section"])
         if not target:
             continue  # раздел вне пайплайна: статуса, к которому приводить, нет
         meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
         current = (meta.get("status") or "").strip()
         if current != target:
-            status_fix.append({"id": task_id, "file": entry["file"], "section": entry["section"],
+            status_fix.append({"id": task_id, "file": path.name, "section": entry["section"],
                                "from": current, "to": target})
 
-    return {"add": add, "status": status_fix, "lost": lost}
+    return {"add": add, "status": status_fix, "lost": lost, "relink": relink}
 
 
 def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
@@ -144,9 +165,18 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
             if not result.get("ok"):
                 failed.append(f"{item['id']}: {result.get('error')}")
 
+    for item in plan["relink"]:
+        result = relink_entry(board_path, item["id"], item["to"])
+        if not result.get("ok"):
+            failed.append(f"{item['id']}: {result.get('error')}")
+
     for item in plan["add"]:
         if item.get("restore"):
             result = move_task(tasks_dir, cfg, item["id"], item["section"])
+            # Строка в свалке могла хранить ссылку на старое имя файла —
+            # переносим с актуальной, иначе вернувшаяся запись снова «без файла»
+            if result.get("ok"):
+                result = relink_entry(board_path, item["id"], item["file"])
         else:
             entry = f"- {item['id']} · [{item['title']}]({item['file']})"
             result = add_entry(board_path, pipeline, item["section"], entry)
@@ -161,4 +191,5 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
             "added": len(plan["add"]),
             "restatused": len(plan["status"]),
             "lost": len(plan["lost"]),
+            "relinked": len(plan["relink"]),
             "failed": failed}

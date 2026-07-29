@@ -230,6 +230,74 @@ class RepairIsIdempotentTest(RepairCase):
         self.assertEqual((plan["add"], plan["status"], plan["lost"]), ([], [], []))
 
 
+class StaleLinkTest(RepairCase):
+    """Строка ссылается на переименованный файл, но файл с тем же id есть.
+
+    Именно этот расклад качал починку по кругу: строку с битой ссылкой
+    признавали сиротой и убирали в свалку, а оттуда её тут же возвращал
+    restore — реальный файл с тем же id существует. Ссылку при переносе
+    никто не правил, и цикл повторялся (возврат TASK-056 с ревью).
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.task_file("TASK-030", "Переименованная", "testing",
+                       name="TASK-030-новое-имя.md")
+        self.add_entry("Testing",
+                       "- TASK-030 · [Переименованная](TASK-030-старое-имя.md) · k3 · 2026-07-29")
+
+    def test_plan_reports_relink_not_lost(self):
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual(plan["lost"], [], "файл по id есть — это не сирота")
+        self.assertEqual(plan["add"], [])
+        self.assertEqual(len(plan["relink"]), 1)
+        item = plan["relink"][0]
+        self.assertEqual(item["id"], "TASK-030")
+        self.assertEqual(item["from"], "TASK-030-старое-имя.md")
+        self.assertEqual(item["to"], "TASK-030-новое-имя.md")
+
+    def test_apply_rewrites_link_in_place(self):
+        result = apply_repair(self.tasks_dir, CFG)
+        self.assertEqual(result["relinked"], 1)
+        content = self.board.read_text(encoding="utf-8")
+        self.assertIn("](TASK-030-новое-имя.md)", content)
+        self.assertNotIn("TASK-030-старое-имя.md", content)
+        self.assertEqual(self.sections_of()["Testing"], ["TASK-030"],
+                         "строка остаётся на своём месте — меняется только ссылка")
+
+    def test_repair_converges_after_one_pass(self):
+        """Одного применения хватает: ни качелей lost↔restore, ни остатка."""
+        apply_repair(self.tasks_dir, CFG)
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual((plan["add"], plan["status"], plan["lost"], plan["relink"]),
+                         ([], [], [], []))
+        self.assertEqual(validate_project(self.tasks_dir, CFG)["warnings"], [])
+
+    def test_restore_from_lost_section_fixes_link_too(self):
+        """Возврат из свалки с битой ссылкой — сразу с исправленной."""
+        apply_repair(self.tasks_dir, CFG)  # sanity: теперь это relink, не свалка
+        # руками имитируем старое состояние: строка уже лежит в свалке с битой ссылкой
+        content = self.board.read_text(encoding="utf-8")
+        content = content.replace("](TASK-030-новое-имя.md)", "](TASK-030-старое-имя.md)")
+        content = content.replace("## Testing", "## Потерянные", 1)
+        self.board.write_text(content, encoding="utf-8")
+
+        result = apply_repair(self.tasks_dir, CFG)
+        self.assertEqual(result["added"], 1)
+        content = self.board.read_text(encoding="utf-8")
+        self.assertIn("](TASK-030-новое-имя.md)", content)
+        self.assertNotIn("TASK-030-старое-имя.md", content)
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual((plan["add"], plan["lost"], plan["relink"]), ([], [], []))
+
+    def test_validator_points_at_stale_link(self):
+        report = validate_project(self.tasks_dir, CFG)
+        self.assertTrue(any("TASK-030" in w and "TASK-030-новое-имя.md" in w
+                            for w in report["warnings"]),
+                        f"нет предупреждения об устаревшей ссылке: {report['warnings']}")
+        self.assertGreater(report["repairable"], 0)
+
+
 class ValidatorSeesMismatchTest(RepairCase):
     """Расхождение статуса раньше было невидимым — теперь про него говорят."""
 

@@ -114,6 +114,22 @@ def add_entry(board_path: Path, pipeline: Pipeline, to_section: str, entry: str)
     return {"ok": True, "section": to_section}
 
 
+def relink_entry(board_path: Path, task_id: str, new_file: str) -> dict:
+    """Переписать ссылку на файл в строке задачи, не трогая её место на доске.
+
+    Файл переименовали, а строка доски осталась со старым именем: задача
+    живая, но по ссылке её не найти. Правим только ссылку — заголовок,
+    хвост строки и позиция в разделе остаются как были.
+    """
+    lines = board_path.read_text(encoding="utf-8").splitlines()
+    idx = _find_entry_line(lines, task_id)
+    if idx is None:
+        return {"ok": False, "error": f"{task_id} не найден на доске"}
+    lines[idx] = re.sub(r"\]\([^)]+\)", f"]({new_file})", lines[idx], count=1)
+    board_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"ok": True, "task": task_id, "file": new_file}
+
+
 def move_task(
     tasks_dir: Path,
     cfg: dict,
