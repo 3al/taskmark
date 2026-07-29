@@ -155,17 +155,6 @@ export default function App() {
     refresh()
   }
 
-  // Тумблер DnD: сохраняем в глобальный конфиг (переживает перезагрузку)
-  const toggleDnd = async () => {
-    const next = !dndFullBoard
-    setDndFullBoard(next)
-    try {
-      await api.saveConfig({ dnd_full_board: next })
-    } catch (e) {
-      setError(e.message)
-    }
-  }
-
   // --- DnD ---
 
   // Жизненный цикл проекта: порядок колонок, цвета и подписи статусов.
@@ -367,12 +356,10 @@ export default function App() {
         active={projects.active}
         canCreate={!!features.create_task}
         hasLogs={!!features.logs}
-        dndFullBoard={dndFullBoard}
         hasCustomOrder={!!columnOrder}
         onSwitchProject={switchProject}
         onNewTask={() => setShowNewTask(true)}
         onShowLogs={() => setShowLogs(true)}
-        onToggleDnd={toggleDnd}
         onRefresh={refresh}
         onResetColumns={() => saveColumnOrder(null)}
         onOpenSettings={() => setShowSettings(true)}

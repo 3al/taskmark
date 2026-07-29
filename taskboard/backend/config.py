@@ -23,7 +23,7 @@ DEFAULTS: dict = {
     # Технический раздел доски для строк, у которых не осталось файла задачи:
     # починка не удаляет чужие записи, а сносит их сюда. Колонкой не показывается
     "lost_section": "Потерянные",
-    "dnd_full_board": False,
+    "dnd_full_board": True,
     # Жизненный цикл задачи: порядок статусов и цели действий скиллов.
     # Разбор и дефолты оформления — в backend/statuses.py
     "pipeline": ["backlog", "queued", "development", "review", "testing", "completed"],

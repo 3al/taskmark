@@ -282,7 +282,7 @@ def api_board() -> dict:
         "actions": pipeline.actions(),
         "queue_section": pipeline.section_of(pipeline.action("pick") or "") or "Queue",
         "queued_status": pipeline.action("pick"),
-        "dnd_full_board": cfg.get("dnd_full_board", False),
+        "dnd_full_board": cfg.get("dnd_full_board", True),
     }
     return board
 

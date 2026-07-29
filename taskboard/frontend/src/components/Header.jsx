@@ -55,10 +55,10 @@ function projectDir(tasksDir) {
   return tasksDir.replace(/[\\/]tasks[\\/]?$/i, '') || tasksDir
 }
 
-// Шапка: переключатель проектов, кнопки действий, тумблер DnD
+// Шапка: переключатель проектов, кнопки действий
 export default function Header({
-  projects, active, canCreate, hasLogs, dndFullBoard, hasCustomOrder,
-  onSwitchProject, onNewTask, onShowLogs, onToggleDnd, onRefresh, onResetColumns, onOpenSettings,
+  projects, active, canCreate, hasLogs, hasCustomOrder,
+  onSwitchProject, onNewTask, onShowLogs, onRefresh, onResetColumns, onOpenSettings,
   onOpenHelp, query, onQuery, matches,
 }) {
   const [adding, setAdding] = useState(false)
@@ -204,10 +204,6 @@ export default function Header({
             ↺ колонки
           </button>
         )}
-        <label className="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer select-none" title="Разрешить перетаскивание по всем статусам">
-          <input type="checkbox" checked={dndFullBoard} onChange={onToggleDnd} className="accent-sky-500" />
-          DnD по всей доске
-        </label>
         {hasLogs && <button className={btn} onClick={onShowLogs}>Логи</button>}
         <button className={btn} onClick={() => onOpenHelp()} title="Помощь: как работать с доской">?</button>
         <button className={btn} onClick={onOpenSettings} title="Настройки">⚙</button>
