@@ -46,9 +46,23 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
     setCustomPresets(d.custom || [])
   }
 
+  // Подсказки эпика — кастомный тёмный список (как у пресетов критериев), а не
+  // нативный datalist: браузер рисует его белым, и он выбивается из темы.
+  // Свободный ввод сохраняется: список лишь подсказывает известные ключи
+  const [epicFocus, setEpicFocus] = useState(false)
+  // Ключ эпика, выбранного из списка: в поле лежит «ключ · название» (читается
+  // и служит подсказкой само), а на бэкенд уходит только ключ
+  const [epicPicked, setEpicPicked] = useState(null)
+  const epicLabel = (e) => (e.name ? `${e.key} · ${e.name}` : e.key)
+
   const epicKey = form.epic.trim()
-  const knownEpic = epics.find((e) => e.key.toLowerCase() === epicKey.toLowerCase())
+  const knownEpic = epicPicked
+    ? epics.find((e) => e.key === epicPicked)
+    : epics.find((e) => e.key.toLowerCase() === epicKey.toLowerCase())
   const needsEpicName = !!epicKey && !knownEpic
+  const needle = (epicPicked ? epicPicked : epicKey).toLowerCase()
+  const epicSuggestions = epics.filter((e) =>
+    e.key.toLowerCase().includes(needle) || (e.name || '').toLowerCase().includes(needle))
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value })
 
@@ -61,6 +75,8 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
     setError(null)
     try {
       const payload = { ...form, title: form.title.trim() }
+      // В поле может лежать «ключ · название» — на бэкенд уходит только ключ
+      if (knownEpic) payload.epic = knownEpic.key
       // section имеет смысл только для бэклога
       if (payload.target !== 'backlog') delete payload.section
       const result = await api.createTask(payload)
@@ -163,31 +179,47 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
           </div>
           <input className={field} placeholder="Заблокировано задачей (TASK-NNN, опционально)" value={form.blocked_by} onChange={set('blocked_by')} />
 
+          {/* min-w-0 у обоих полей: у инпута есть интринсическая ширина, и без
+              неё появление второго поля схлопывает первое до полусантиметра */}
           <div className="flex gap-3">
-            <input
-              className={field}
-              list="epic-keys"
-              placeholder="Эпик — Jira-ключ (опционально)"
-              value={form.epic}
-              onChange={set('epic')}
-            />
-            <datalist id="epic-keys">
-              {epics.map((e) => (
-                <option key={e.key} value={e.key}>{e.name}</option>
-              ))}
-            </datalist>
-            {needsEpicName && (
+            <div className="relative flex-1 min-w-0">
               <input
                 className={field}
+                placeholder="Эпик — Jira-ключ (опционально)"
+                value={form.epic}
+                onChange={(e) => { setEpicPicked(null); set('epic')(e) }}
+                onFocus={() => setEpicFocus(true)}
+                onBlur={() => setEpicFocus(false)}
+              />
+              {epicFocus && !knownEpic && epicSuggestions.length > 0 && (
+                <div className="absolute z-20 mt-1 w-full max-h-40 overflow-y-auto bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl">
+                  {epicSuggestions.map((e) => (
+                    <button
+                      key={e.key}
+                      type="button"
+                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-zinc-700"
+                      onMouseDown={() => {
+                        setEpicPicked(e.key)
+                        setForm({ ...form, epic: epicLabel(e) })
+                        setEpicFocus(false)
+                      }}
+                    >
+                      <span className="font-mono text-zinc-300">{e.key}</span>
+                      {e.name && <span className="text-zinc-500"> · {e.name}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {needsEpicName && (
+              <input
+                className={`${field} flex-1 min-w-0`}
                 placeholder="Название нового эпика"
                 value={form.epic_name}
                 onChange={set('epic_name')}
               />
             )}
           </div>
-          {knownEpic && (
-            <div className="text-[11px] text-zinc-500 -mt-1">Эпик: {knownEpic.name || knownEpic.key}</div>
-          )}
 
           <div className="flex gap-3">
             <label className="flex-1 text-xs text-zinc-500">

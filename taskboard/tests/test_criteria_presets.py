@@ -125,5 +125,48 @@ class CriteriaPresetsUiTest(unittest.TestCase):
         self.assertNotIn("h-24", self.src, "поле описания осталось прежней высоты")
 
 
+class EpicSuggestionsUiTest(unittest.TestCase):
+    """Поле эпика: подсказки в стиле приложения, а не нативный datalist (TASK-061).
+
+    Нативный <datalist> рисуется браузером белым и выбивается из тёмной темы;
+    кастомный список — как у пресетов критериев. Свободный ввод нового ключа
+    сохраняется: список только подсказывает известные эпики.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.src = MODAL.read_text(encoding="utf-8")
+
+    def test_no_native_datalist(self) -> None:
+        self.assertNotIn("<datalist", self.src, "белая браузерная подсказка")
+        self.assertNotIn('list="epic-keys"', self.src)
+
+    def test_custom_suggestion_list(self) -> None:
+        # Отфильтрованные по вводу эпики, кликабельные строки тёмного списка
+        self.assertIn("epicSuggestions", self.src)
+        self.assertIn("onMouseDown", self.src,
+                      "клик по подсказке должен успеть до blur поля")
+
+    def test_suggestion_shows_key_and_name(self) -> None:
+        self.assertRegex(self.src, r"epicSuggestions\.map")
+
+    def test_selected_epic_fills_key_and_name(self) -> None:
+        """Выбор из списка пишет в поле «ключ · название» — оно же и подсказка."""
+        self.assertIn("epicLabel", self.src)
+
+    def test_no_separate_hint_line_below(self) -> None:
+        """Подсказка «Эпик: …» под формой дёргала верстку — её больше нет."""
+        self.assertNotIn("Эпик: {knownEpic.name", self.src)
+
+    def test_epic_row_fields_can_shrink(self) -> None:
+        """Инпут имеет интринсическую ширину: без min-w-0 появление второго поля
+        в строке схлопывает поле эпика до полусантиметра."""
+        self.assertIn("min-w-0", self.src)
+
+    def test_submit_sends_key_not_label(self) -> None:
+        """В поле может лежать «ключ · название», на бэкенд уходит только ключ."""
+        self.assertIn("epicPicked", self.src)
+
+
 if __name__ == "__main__":
     unittest.main()
