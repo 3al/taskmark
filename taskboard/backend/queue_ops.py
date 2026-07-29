@@ -138,6 +138,7 @@ def move_task(
     position: int | None = None,
     after_task_id: str | None = None,
     group: str | None = None,
+    touch_status: bool = True,
 ) -> dict:
     """
     Переместить задачу в другой раздел доски (и обновить frontmatter).
@@ -149,6 +150,9 @@ def move_task(
                «хвост подраздела»: не перескакивает через заголовки ###).
     group — имя подраздела ### для вставки в ПУСТОЙ подраздел
                (встаёт сразу после его заголовка).
+    touch_status — править ли status: во frontmatter под новый раздел.
+               DnD и скрипты правят оба конца связки, а починка доски
+               (board_repair) переносит строку ПОД файл — его не трогает.
     """
     board_path = tasks_dir / cfg.get("board_file", "board.md")
     pipeline = load_pipeline(cfg)
@@ -219,7 +223,7 @@ def move_task(
 
     # Обновить frontmatter статус
     status = _status_for_section(cfg, to_section)
-    if status:
+    if touch_status and status:
         set_task_status(tasks_dir, task_id, status)
 
     return {"ok": True, "task": task_id, "section": to_section, "status": status}

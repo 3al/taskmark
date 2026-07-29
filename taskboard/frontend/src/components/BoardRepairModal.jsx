@@ -39,7 +39,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
   useEffect(() => { load() }, [])
 
   const total = plan
-    ? plan.add.length + plan.status.length + plan.lost.length + (plan.relink?.length ?? 0)
+    ? plan.add.length + (plan.move?.length ?? 0) + plan.lost.length + (plan.relink?.length ?? 0)
     : 0
 
   const apply = async () => {
@@ -77,14 +77,14 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
           <div className="text-sm text-zinc-300/90 bg-zinc-950/50 border border-zinc-800
             rounded-lg px-4 py-3">
             Статус задачи хранится в двух местах — разделе доски и поле <code>status:</code>
-            {' '}в файле. Починка сводит их вместе, считая <strong>доску источником правды</strong>.
-            Ничего не удаляется.
+            {' '}в файле. Починка сводит их вместе, считая <strong>файлы задач источником
+            правды</strong>: доска подстраивается под них. Ничего не удаляется.
           </div>
           {error && <div className="text-sm text-rose-400">{error}</div>}
           {plan === null && <div className="text-sm text-zinc-500">Загружаю…</div>}
           {done && (
             <div className="text-sm text-emerald-300">
-              Готово: на доску возвращено {done.added}, статусов выправлено {done.restatused},
+              Готово: на доску возвращено {done.added}, строк перенесено {done.moved ?? 0},
               {' '}записей без файла убрано {done.lost}
               {done.relinked > 0 && <>, ссылок исправлено {done.relinked}</>}
               {done.failed?.length > 0 && (
@@ -111,15 +111,15 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
           />
 
           <Group
-            title="Выправить статус в файле"
-            hint="строка на доске и frontmatter разошлись — прав раздел доски"
+            title="Перенести в раздел статуса файла"
+            hint="строка лежит не в том разделе — прав файл, строка переедет, файл не тронем"
             tone="text-amber-300"
-            items={plan?.status}
+            items={plan?.move}
             render={(i) => (
               <>
                 <span className="text-zinc-500">{i.id}</span> · {i.file}
                 <span className="text-zinc-500"> : </span>
-                <span className="text-rose-300/80">{i.from || 'пусто'}</span>
+                <span className="text-rose-300/80">{i.from}</span>
                 <span className="text-zinc-500"> → </span>
                 <span className="text-emerald-300/80">{i.to}</span>
               </>
@@ -144,12 +144,12 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
 
           <Group
             title="Убрать с доски записи без файла"
-            hint="файл не найден — строка уедет в технический раздел, из колонок исчезнет"
+            hint="файла нет или запись чужая (id совпал, задача не та) — строка уедет в технический раздел, из колонок исчезнет"
             tone="text-rose-300"
             items={plan?.lost}
             render={(i) => (
               <>
-                <span className="text-zinc-500">{i.id}</span> · {i.file}
+                <span className="text-zinc-500">{i.id}</span> · {i.title || i.file}
                 <span className="text-zinc-500"> (из «{i.section}»)</span>
               </>
             )}

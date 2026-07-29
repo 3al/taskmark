@@ -6,10 +6,10 @@ import re
 from pathlib import Path
 
 from backend.board_parser import parse_board
+from backend.board_repair import _section_for_status, row_matches_file, task_files
 from backend.config import is_lost_section
 from backend.scaffold import detect_harnesses, environment_issues, harness_choice
 from backend.statuses import load_pipeline
-from backend.task_parser import parse_frontmatter
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
 
@@ -139,45 +139,43 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
                          "message": _issue_message(issue),
                          "names": issue["names"]})
 
-    # Мягкие предупреждения: битые ссылки, расхождение статусов и файлы вне доски.
-    # Всё это чинится одной кнопкой — см. backend/board_repair.py; по флагу
-    # repairable UI решает, показывать ли её на баннере
+    # Мягкие предупреждения: битые ссылки, чужие записи, расхождение раздела
+    # со статусом файла и файлы вне доски. Всё это чинится одной кнопкой —
+    # см. backend/board_repair.py; по флагу repairable UI решает, показывать
+    # ли её на баннере
     repairable = 0
     on_board: set[str] = set()
-    # Файл ищем по id, а не по ссылке из строки: ссылка могла устареть
-    # после переименования, и тогда жалоба «файл не найден» — ложная
-    files_by_id: dict[str, str] = {}
-    for f in sorted(tasks_dir.glob("TASK-*.md")):
-        m = _TASK_ID_RE.match(f.name)
-        if m:
-            files_by_id.setdefault(m.group(1), f.name)
+    files = task_files(tasks_dir)
     for column in board["columns"]:
         # Записи в техническом разделе уже разобраны починкой: файла у них нет
         # по определению, и повторять про них — держать баннер вечно
         if is_lost_section(column["title"], cfg):
             continue
-        target = pipeline.status_for_section(column["title"])
         for group in column["groups"]:
             for task in group["tasks"]:
-                on_board.add(task["id"])
-                real_file = files_by_id.get(task["id"])
-                if real_file is None:
+                info = files.get(task["id"])
+                if info is None:
                     warnings.append(f"{task['id']}: файл {task['file']} не найден")
                     repairable += 1
                     continue
-                if task["file"] != real_file:
+                if not row_matches_file(task, info):
+                    warnings.append(
+                        f"{task['id']}: запись «{task['title']}» не похожа на файл "
+                        f"{info['path'].name} — возможно, строка с чужой доски")
+                    repairable += 1
+                    continue
+                on_board.add(task["id"])
+                if task["file"] != info["path"].name:
                     warnings.append(
                         f"{task['id']}: ссылка ведёт на {task['file']}, "
-                        f"файл переименован в {real_file}")
+                        f"файл переименован в {info['path'].name}")
                     repairable += 1
-                if not target:
-                    continue
-                meta, _ = parse_frontmatter((tasks_dir / real_file).read_text(encoding="utf-8"))
-                current = (meta.get("status") or "").strip()
-                if current != target:
+                expected = _section_for_status(pipeline, info["status"])
+                if expected and expected.strip().lower() != column["title"].strip().lower():
                     warnings.append(
-                        f"{task['id']}: статус в файле ({current or 'пусто'}) "
-                        f"не совпадает с разделом доски ({target})")
+                        f"{task['id']}: строка в разделе «{column['title']}», "
+                        f"а статус в файле ({info['status'] or 'пусто'}) "
+                        f"ведёт в «{expected}»")
                     repairable += 1
 
     for f in sorted(tasks_dir.glob("TASK-*.md")):

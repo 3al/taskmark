@@ -1,9 +1,20 @@
 """Тесты починки рассинхрона доски и файлов задач (TASK-056).
 
 Доска и frontmatter — два конца одной связки, и агент нередко правит один,
-забывая второй. Починка чинит связку по одному правилу: **доска — источник
-правды**. Файл, которого нет на доске, попадает на неё; строка, у которой нет
-файла, уезжает в технический раздел; расхождение статуса выправляется в файле.
+забывая второй. Починка чинит связку по одному правилу: **файлы задач —
+источник правды**. Доска может врать (её копируют между проектами, правят
+руками), а файл задачи — единственное, что реально существует.
+
+Отсюда следы починки:
+
+- файл без строки возвращается на доску в раздел своего `status:`;
+- строка в чужом разделе переезжает в раздел статуса из файла (файл не
+  трогаем — он правда);
+- строка, которой не соответствует никакой файл, уезжает в технический
+  раздел — включая **чужие** строки со скопированной доски: id совпал,
+  но ни имя файла, ни заголовок — нет, значит это не наша задача;
+- ссылка на переименованный файл переписывается (только если заголовок
+  подтверждает, что задача та же).
 
 Правки идут по чужим данным, поэтому план (`plan_repair`) отделён от применения
 (`apply_repair`): пользователь сначала видит список, потом соглашается.
@@ -141,26 +152,84 @@ class MissingOnBoardTest(RepairCase):
 
 
 class StatusMismatchTest(RepairCase):
-    """Строка на доске и status: в файле разошлись — прав раздел доски."""
+    """Строка лежит не в том разделе — прав файл, строка переезжает."""
 
     def setUp(self) -> None:
         super().setUp()
         self.task_file("TASK-010", "Задача", "backlog", name="TASK-010-задача.md")
         self.add_entry("Testing", "- TASK-010 · [Задача](TASK-010-задача.md) · k3 · 2026-07-29")
 
-    def test_plan_reports_mismatch(self):
+    def test_plan_reports_move(self):
         plan = plan_repair(self.tasks_dir, CFG)
-        self.assertEqual(len(plan["status"]), 1)
-        item = plan["status"][0]
+        self.assertEqual(len(plan["move"]), 1)
+        item = plan["move"][0]
         self.assertEqual(item["id"], "TASK-010")
-        self.assertEqual(item["from"], "backlog")
-        self.assertEqual(item["to"], "testing")
+        self.assertEqual(item["from"], "Testing")
+        self.assertEqual(item["to"], "Backlog")
 
-    def test_apply_fixes_frontmatter_not_board(self):
+    def test_apply_moves_row_not_file(self):
         apply_repair(self.tasks_dir, CFG)
-        self.assertEqual(parse_task(self.tasks_dir, "TASK-010")["meta"]["status"], "testing")
-        self.assertEqual(self.sections_of()["Testing"], ["TASK-010"],
-                         "строку на доске трогать не должны — она источник правды")
+        self.assertEqual(self.sections_of()["Backlog"], ["TASK-010"])
+        self.assertNotIn("TASK-010", self.sections_of().get("Testing", []))
+        self.assertEqual(parse_task(self.tasks_dir, "TASK-010")["meta"]["status"], "backlog",
+                         "файл — источник правды: его status трогать нельзя")
+
+
+class ForeignRowTest(RepairCase):
+    """Доска скопирована с другого проекта: id совпадают, задачи чужие.
+
+    Главный сценарий второго возврата TASK-056: чужая строка TASK-001 не
+    должна ни привязаться к нашему файлу, ни изменить его — ей место
+    в техническом разделе, а нашему файлу — своя строка на доске.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.task_file("TASK-001", "Наша задача", "development",
+                       name="TASK-001-наша-задача.md")
+        self.add_entry("Done", "- TASK-001 · [Чужая задача](TASK-001-чужая.md) · кто-то · 2026-01-01")
+
+    def test_plan_sends_foreign_row_to_lost(self):
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual([i["id"] for i in plan["lost"]], ["TASK-001"])
+        self.assertEqual(plan["relink"], [],
+                         "чужой заголовок — это не переименование")
+        self.assertEqual(len(plan["add"]), 1,
+                         "наш файл остался без строки — её надо добавить")
+
+    def test_apply_keeps_our_file_untouched(self):
+        apply_repair(self.tasks_dir, CFG)
+        meta = parse_task(self.tasks_dir, "TASK-001")["meta"]
+        self.assertEqual(meta["status"], "development",
+                         "статус нашего файла не должен подстраиваться под чужую строку")
+        sections = self.sections_of()
+        self.assertNotIn("TASK-001", sections.get("Done", []))
+        self.assertIn("TASK-001", sections.get("Потерянные", []))
+        self.assertIn("TASK-001", sections.get("Development", []),
+                      "наш файл получает свою строку в разделе своего статуса")
+
+    def test_repair_converges_with_foreign_rows(self):
+        apply_repair(self.tasks_dir, CFG)
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual((plan["add"], plan["move"], plan["lost"], plan["relink"]),
+                         ([], [], [], []))
+        self.assertEqual(validate_project(self.tasks_dir, CFG)["warnings"], [])
+
+    def test_same_title_means_rename_not_foreign(self):
+        """Заголовок совпал — это наша задача с битой ссылкой, а не чужая."""
+        content = self.board.read_text(encoding="utf-8")
+        content = content.replace("[Чужая задача]", "[Наша задача]")
+        self.board.write_text(content, encoding="utf-8")
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual(plan["lost"], [])
+        self.assertEqual(len(plan["relink"]), 1)
+
+    def test_foreign_row_in_lost_section_stays_there(self):
+        """Чужая строка в свалке не воскресает restore'ом под наш файл."""
+        apply_repair(self.tasks_dir, CFG)  # чужая строка уже в свалке
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual(plan["add"], [], "наша строка уже на доске, добавлять нечего")
+        self.assertEqual(plan["lost"], [])
 
 
 class LostEntryTest(RepairCase):
@@ -215,19 +284,21 @@ class RepairIsIdempotentTest(RepairCase):
                        "- TASK-020 · [Пропавшая](TASK-020-пропавшая.md) · k3 · 2026-07-29")
 
         result = apply_repair(self.tasks_dir, CFG)
-        self.assertEqual((result["added"], result["restatused"], result["lost"]), (1, 1, 1))
+        self.assertEqual((result["added"], result["moved"], result["lost"]), (1, 1, 1))
 
         report = validate_project(self.tasks_dir, CFG)
         self.assertEqual(report["warnings"], [])
 
         plan = plan_repair(self.tasks_dir, CFG)
-        self.assertEqual((plan["add"], plan["status"], plan["lost"]), ([], [], []))
+        self.assertEqual((plan["add"], plan["move"], plan["lost"], plan["relink"]),
+                         ([], [], [], []))
 
     def test_clean_project_yields_empty_plan(self):
         self.task_file("TASK-005", "Чистая", "todo", name="TASK-005-чистая.md")
         self.add_entry("To Do", "- TASK-005 · [Чистая](TASK-005-чистая.md) · k3 · 2026-07-29")
         plan = plan_repair(self.tasks_dir, CFG)
-        self.assertEqual((plan["add"], plan["status"], plan["lost"]), ([], [], []))
+        self.assertEqual((plan["add"], plan["move"], plan["lost"], plan["relink"]),
+                         ([], [], [], []))
 
 
 class StaleLinkTest(RepairCase):
@@ -269,7 +340,7 @@ class StaleLinkTest(RepairCase):
         """Одного применения хватает: ни качелей lost↔restore, ни остатка."""
         apply_repair(self.tasks_dir, CFG)
         plan = plan_repair(self.tasks_dir, CFG)
-        self.assertEqual((plan["add"], plan["status"], plan["lost"], plan["relink"]),
+        self.assertEqual((plan["add"], plan["move"], plan["lost"], plan["relink"]),
                          ([], [], [], []))
         self.assertEqual(validate_project(self.tasks_dir, CFG)["warnings"], [])
 
@@ -299,14 +370,23 @@ class StaleLinkTest(RepairCase):
 
 
 class ValidatorSeesMismatchTest(RepairCase):
-    """Расхождение статуса раньше было невидимым — теперь про него говорят."""
+    """Строка не в том разделе — про это говорят заранее, а не молча."""
 
-    def test_status_mismatch_is_a_warning(self):
+    def test_row_in_wrong_section_is_a_warning(self):
         self.task_file("TASK-010", "Задача", "backlog", name="TASK-010-задача.md")
         self.add_entry("Testing", "- TASK-010 · [Задача](TASK-010-задача.md) · k3 · 2026-07-29")
         report = validate_project(self.tasks_dir, CFG)
         self.assertTrue(any("TASK-010" in w and "статус" in w for w in report["warnings"]),
-                        f"нет предупреждения о расхождении статуса: {report['warnings']}")
+                        f"нет предупреждения о расхождении раздела и статуса: {report['warnings']}")
+
+    def test_foreign_row_is_a_warning(self):
+        self.task_file("TASK-001", "Наша задача", "development",
+                       name="TASK-001-наша-задача.md")
+        self.add_entry("Done", "- TASK-001 · [Чужая задача](TASK-001-чужая.md) · кто-то · 2026-01-01")
+        report = validate_project(self.tasks_dir, CFG)
+        self.assertTrue(any("TASK-001" in w for w in report["warnings"]),
+                        f"нет предупреждения о чужой записи: {report['warnings']}")
+        self.assertGreater(report["repairable"], 0)
 
 
 if __name__ == "__main__":
