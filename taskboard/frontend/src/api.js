@@ -46,6 +46,11 @@ export const api = {
   pipeline: () => request('/api/pipeline'),
   pipelineSources: () => request('/api/pipeline/sources'),
   epics: () => request('/api/epics'),
+  criteriaPresets: () => request('/api/criteria-presets'),
+  saveCriteriaPreset: (text) =>
+    request('/api/criteria-presets', { method: 'POST', body: JSON.stringify({ text }) }),
+  deleteCriteriaPreset: (text) =>
+    request('/api/criteria-presets', { method: 'DELETE', body: JSON.stringify({ text }) }),
   saveConfig: (updates, moves) =>
     request('/api/config', { method: 'POST', body: JSON.stringify({ updates, moves }) }),
   previewConfig: (updates) =>

@@ -136,3 +136,49 @@ def save_project_config(tasks_dir: Path, updates: dict) -> dict:
     except Exception:
         pass
     return load_project_config(tasks_dir)
+
+
+# Встроенные пресеты критериев приёмки для формы новой задачи: дефолт виден
+# заранее, а не подставляется молча при создании
+DEFAULT_CRITERIA_PRESETS = (
+    "TDD: RED -> GREEN -> ALL TESTS PASS",
+    "SMOKE TEST",
+    "Ручная проверка",
+)
+
+
+def criteria_presets() -> list[str]:
+    """Пресеты критериев: встроенные, затем сохранённые пользователем.
+
+    Пользовательские лежат в глобальном конфиге (ключ criteria_presets) —
+    пресет, добавленный в одном проекте, доступен во всех.
+    """
+    extra = load_global_config().get("criteria_presets") or []
+    out: list[str] = []
+    for preset in (*DEFAULT_CRITERIA_PRESETS, *extra):
+        if preset not in out:
+            out.append(preset)
+    return out
+
+
+def add_criteria_preset(text: str) -> list[str]:
+    """Сохранить новый пресет в глобальный конфиг. Вернуть полный список."""
+    text = text.strip()
+    presets = criteria_presets()
+    if not text or text in presets:
+        return presets
+    extra = load_global_config().get("criteria_presets") or []
+    save_global_config({"criteria_presets": [*extra, text]})
+    return criteria_presets()
+
+
+def custom_criteria_presets() -> list[str]:
+    """Только пользовательские пресеты — им одним положен крестик удаления."""
+    return list(load_global_config().get("criteria_presets") or [])
+
+
+def remove_criteria_preset(text: str) -> list[str]:
+    """Удалить пользовательский пресет. Встроенные не трогаем: это поставка."""
+    extra = [p for p in custom_criteria_presets() if p != text.strip()]
+    save_global_config({"criteria_presets": extra})
+    return criteria_presets()

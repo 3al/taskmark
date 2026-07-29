@@ -15,7 +15,9 @@ from pydantic import BaseModel
 from backend import help_docs, lifecycle, registry
 from backend.board_parser import parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
-from backend.config import (PROJECT_KEYS, load_global_config, load_project_config,
+from backend.config import (PROJECT_KEYS, add_criteria_preset, criteria_presets,
+                            custom_criteria_presets, load_global_config,
+                            load_project_config, remove_criteria_preset,
                             save_global_config, save_project_config)
 from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
@@ -82,6 +84,10 @@ class ConfigIn(BaseModel):
     updates: dict
     # Куда переносить задачи выключаемых статусов: {статус: новый статус}
     moves: dict | None = None
+
+
+class CriteriaPresetIn(BaseModel):
+    text: str
 
 
 class ScaffoldIn(BaseModel):
@@ -293,6 +299,31 @@ def api_epics() -> dict:
     """Реестр эпиков проекта — подсказки при создании задачи."""
     tasks_dir, _cfg = _ctx()
     return {"items": list_epics(tasks_dir)}
+
+
+@app.get("/api/criteria-presets")
+def api_criteria_presets() -> dict:
+    """Пресеты критериев приёмки: встроенные + сохранённые пользователем.
+
+    custom — подмножество пользовательских: только они удаляемы.
+    """
+    return {"presets": criteria_presets(), "custom": custom_criteria_presets()}
+
+
+@app.post("/api/criteria-presets")
+def api_add_criteria_preset(body: CriteriaPresetIn) -> dict:
+    """Сохранить новый пресет глобально — он доступен из всех проектов."""
+    if not body.text.strip():
+        raise HTTPException(400, "Пустой пресет")
+    return {"presets": add_criteria_preset(body.text),
+            "custom": custom_criteria_presets()}
+
+
+@app.delete("/api/criteria-presets")
+def api_remove_criteria_preset(body: CriteriaPresetIn) -> dict:
+    """Удалить пользовательский пресет (встроенные остаются)."""
+    remove_criteria_preset(body.text)
+    return {"presets": criteria_presets(), "custom": custom_criteria_presets()}
 
 
 @app.get("/api/task/{task_id}")
