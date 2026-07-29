@@ -405,10 +405,16 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             # Кнопка на баннере разворачивает часть в папку, которой могло ещё
             # не быть: без .gitignore её содержимое утечёт в git проекта
             if part in ("skills", "commands") and c:
-                agent_dir = (_deployed_skills(project_root, cfg) if part == "skills"
-                             else _deployed_commands(project_root)).parent
-                if _write_if_absent(agent_dir / ".gitignore", AGENTIC_GITIGNORE):
-                    created.append(f"{agent_dir.name}/.gitignore")
+                if part == "commands":
+                    outcome = _ensure_commands_ignored(project_root)
+                    if outcome == "created":
+                        created.append(".opencode/.gitignore")
+                    elif outcome == "appended":
+                        replaced.append(".opencode/.gitignore (дописано: commands/)")
+                else:
+                    agent_dir = _deployed_skills(project_root, cfg).parent
+                    if _write_if_absent(agent_dir / ".gitignore", AGENTIC_GITIGNORE):
+                        created.append(f"{agent_dir.name}/.gitignore")
         return {"created": created, "skipped": skipped, "replaced": replaced,
                 "diverged": diverged, "rules": {"appended": [], "already_present": []}}
 
@@ -445,8 +451,11 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         replaced += r
         skipped += s
         diverged += d
-        if _write_if_absent(project_root / ".opencode" / ".gitignore", AGENTIC_GITIGNORE):
+        outcome = _ensure_commands_ignored(project_root)
+        if outcome == "created":
             created.append(".opencode/.gitignore")
+        elif outcome == "appended":
+            replaced.append(".opencode/.gitignore (дописано: commands/)")
         else:
             skipped.append(".opencode/.gitignore")
 
@@ -492,6 +501,30 @@ def _write_if_absent(dst: Path, text: str) -> bool:
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(text, encoding="utf-8")
     return True
+
+
+# Записи .gitignore, которые уже покрывают папку commands
+_COMMANDS_COVERING = {"*", "**", "commands", "commands/", "/commands", "/commands/"}
+
+
+def _ensure_commands_ignored(project_root: Path) -> str:
+    """Гарантировать, что .opencode/.gitignore игнорирует папку commands.
+
+    Вернуть "created" | "appended" | "present". Существующий файл может быть
+    пользовательским, поэтому не перезаписываем его шаблоном, а дописываем
+    недостающую запись в конец — иначе развёрнутые команды утекают в git.
+    """
+    path = project_root / ".opencode" / ".gitignore"
+    if _write_if_absent(path, AGENTIC_GITIGNORE):
+        return "created"
+    text = path.read_text(encoding="utf-8")
+    entries = {line.strip() for line in text.splitlines()}
+    if entries & _COMMANDS_COVERING:
+        return "present"
+    if text and not text.endswith("\n"):
+        text += "\n"
+    path.write_text(text + "commands/\n", encoding="utf-8")
+    return "appended"
 
 
 # --- Выбор сред (харнессов) ---

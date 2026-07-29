@@ -118,6 +118,53 @@ class EnvironmentPartsTest(unittest.TestCase):
         scaffold_project(self.tasks_dir, self.cfg, {"parts": ["commands"]})
         self.assertNotIn("no_commands", self._codes())
 
+    # --- .opencode/.gitignore обязан покрывать commands (TASK-049) ---
+
+    def test_foreign_opencode_gitignore_gets_commands_entry(self) -> None:
+        """Чужой .opencode/.gitignore без записи про commands — дописываем, а не молчим.
+
+        Раньше файл создавался только при отсутствии: существующий
+        (пользовательский) пропускался, и развёрнутые команды утекали в git.
+        """
+        self._use(OPENCODE_ONLY)
+        self._bare_structure()
+        gitignore = self.root / ".opencode" / ".gitignore"
+        gitignore.parent.mkdir(parents=True)
+        gitignore.write_text("# своё\nopencode.local.json\n", encoding="utf-8")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["commands"]})
+
+        text = gitignore.read_text(encoding="utf-8")
+        self.assertIn("opencode.local.json", text, "чужие записи не трогаем")
+        self.assertRegex(text, r"(?m)^commands/$")
+
+    def test_full_deploy_appends_commands_to_foreign_gitignore(self) -> None:
+        """То же при полном развёртывании, а не только по кнопке части."""
+        self._use(OPENCODE_ONLY)
+        self._bare_structure()
+        gitignore = self.root / ".opencode" / ".gitignore"
+        gitignore.parent.mkdir(parents=True)
+        gitignore.write_text("# своё\n", encoding="utf-8")
+
+        self._deploy(OPENCODE_ONLY)
+
+        self.assertRegex(gitignore.read_text(encoding="utf-8"), r"(?m)^commands/$")
+
+    def test_opencode_gitignore_untouched_when_commands_covered(self) -> None:
+        """Папка уже покрыта (наш `*` или своя запись) — файл не меняется."""
+        for content in ("# шаблон\n*\n", "# своё\ncommands/\n"):
+            with self.subTest(content=content):
+                self.setUp()
+                self._use(OPENCODE_ONLY)
+                self._bare_structure()
+                gitignore = self.root / ".opencode" / ".gitignore"
+                gitignore.parent.mkdir(parents=True)
+                gitignore.write_text(content, encoding="utf-8")
+
+                scaffold_project(self.tasks_dir, self.cfg, {"parts": ["commands"]})
+
+                self.assertEqual(gitignore.read_text(encoding="utf-8"), content)
+
     def test_deployed_but_modified_is_outdated_not_missing(self) -> None:
         """Правленные целиком скиллы — устаревание, а не отсутствие части."""
         self._deploy(BOTH)
