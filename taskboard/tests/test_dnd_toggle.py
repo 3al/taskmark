@@ -1,9 +1,5 @@
 """Галка «DnD по всей доске»: живёт только в настройках и включена по умолчанию
-(TASK-051).
-
-Дубль тумблера в шапке доски соревновался с настройками за одно и то же поле
-конфига, а выключенный дефолт заставлял каждого нового пользователя сначала
-идти и включать очевидное поведение.
+(TASK-051), сортировка внутри колонки не блокируется (TASK-068).
 
 Запуск из корня репозитория:
     taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v
@@ -70,6 +66,37 @@ class HelpSyncTest(unittest.TestCase):
         text = (DOCS / "04-lifecycle.md").read_text(encoding="utf-8")
         self.assertIn("настройк", text.lower(),
                       "раздел жизненного цикла не указывает, где галка DnD")
+
+
+class SameColumnReorderTest(unittest.TestCase):
+    """Сортировка внутри одной колонки безопасна всегда (TASK-068).
+
+    dndFullBoard регулирует только кросс-колоночные перемещения.
+    Перетаскивание карточки внутри той же колонки — это reorder, а не move,
+    и не должно блокироваться при выключенном DnD.
+    """
+
+    def _src(self) -> str:
+        return (FRONTEND / "statuses.js").read_text(encoding="utf-8")
+
+    def test_same_column_returns_true(self) -> None:
+        """from === to должен вернуть true — без оглядки на dndFullBoard."""
+        src = self._src()
+        fn_start = src.index("export function isDropAllowed")
+        fn_end = src.index("\n}", fn_start) + 2
+        fn_body = src[fn_start:fn_end]
+        same_col_line = [l for l in fn_body.splitlines() if "from === to" in l][0]
+        self.assertIn("return true", same_col_line,
+                      "same-column reorder всё ещё зависит от dndFullBoard")
+
+    def test_comment_says_same_column_always_allowed(self) -> None:
+        """Комментарий должен отражать, что сортировка внутри колонки разрешена."""
+        src = self._src()
+        fn_start = src.index("export function isDropAllowed")
+        # Берём 300 символов перед функцией — это комментарий
+        dnd_comment = src[max(0, fn_start - 300):fn_start]
+        self.assertIn("внутри колонки", dnd_comment,
+                      "комментарий не уточняет, что сортировка внутри колонки разрешена")
 
 
 if __name__ == "__main__":

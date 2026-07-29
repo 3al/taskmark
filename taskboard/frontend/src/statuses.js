@@ -99,11 +99,11 @@ export function defaultColumnOrder() {
 
 // Правила перетаскивания мышью. Ограничения здесь мягкие и нужны только против
 // случайного дропа: агент двигает задачи скриптом, где запретов нет вовсе.
-// По умолчанию — перестановка внутри очереди и обмен с разделом приёма задач,
-// с тумблером dnd_full_board — любое перемещение.
+// Сортировка внутри колонки разрешена всегда; dndFullBoard регулирует
+// только кросс-колоночные перемещения.
 export function isDropAllowed(from, to, dndFullBoard, pickStatus, createStatus) {
   if (!from || !to) return false
-  if (from === to) return dndFullBoard || to === pickStatus
+  if (from === to) return true
   if (dndFullBoard) return true
   const pair = new Set([from, to])
   return pair.has(createStatus) && pair.has(pickStatus)
