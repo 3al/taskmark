@@ -75,6 +75,29 @@ class EpicsRegistryTest(unittest.TestCase):
         register_epic(self.tasks, "E056-18500", "Инвентаризация")
         self.assertEqual("Инвентаризация", epic_name(self.tasks, "E056-18500"))
 
+    def test_mnemonic_key_is_recognised(self) -> None:
+        """Ключ не обязан заканчиваться цифрами: бывают «E001-STALL», «STALL-001».
+
+        Раньше такая запись реестра молча не считалась эпиком — ключ на карточке
+        был, а имя пропадало без единого сообщения.
+        """
+        self.file.write_text(
+            "## Список эпиков\n\n"
+            "## E001-STALL — Почему задача стоит\n\n"
+            "## STALL-001 — Мнемонический с цифрами\n",
+            encoding="utf-8")
+        keys = {e["key"]: e["name"] for e in list_epics(self.tasks)}
+        self.assertEqual(keys.get("E001-STALL"), "Почему задача стоит")
+        self.assertEqual(keys.get("STALL-001"), "Мнемонический с цифрами")
+
+    def test_registry_headings_are_not_epics(self) -> None:
+        """Заголовки самого реестра не должны попадать в список эпиков."""
+        self.file.write_text(
+            "# Epics\n\n## Формат записи\n\n## Как найти задачи эпика\n\n"
+            "## Список эпиков\n\n## E056-18500 — Инвентаризация\n",
+            encoding="utf-8")
+        self.assertEqual([e["key"] for e in list_epics(self.tasks)], ["E056-18500"])
+
     def test_epic_name_unknown_key(self) -> None:
         """Ключ есть в задаче, но эпика нет в реестре — показываем один ключ."""
         self.assertEqual("", epic_name(self.tasks, "E404-1"))
