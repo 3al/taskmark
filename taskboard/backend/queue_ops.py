@@ -130,6 +130,27 @@ def relink_entry(board_path: Path, task_id: str, new_file: str) -> dict:
     return {"ok": True, "task": task_id, "file": new_file}
 
 
+def retitle_entry(board_path: Path, task_id: str, new_title: str) -> dict:
+    """Переписать заголовок в строке задачи, не трогая ссылку и место на доске.
+
+    Ссылка у строки точная, а заголовок чужой или устаревший (задачу
+    переименовали в файле). Файл — источник правды: строка повторяет
+    заголовок из его frontmatter.
+    """
+    lines = board_path.read_text(encoding="utf-8").splitlines()
+    idx = _find_entry_line(lines, task_id)
+    if idx is None:
+        return {"ok": False, "error": f"{task_id} не найден на доске"}
+    line = lines[idx]
+    start = line.find("[")
+    end = line.find("](", start)
+    if start == -1 or end == -1:
+        return {"ok": False, "error": f"у {task_id} не найдена ссылка в строке"}
+    lines[idx] = line[:start + 1] + new_title + line[end:]
+    board_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"ok": True, "task": task_id, "title": new_title}
+
+
 def move_task(
     tasks_dir: Path,
     cfg: dict,

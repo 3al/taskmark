@@ -170,6 +170,11 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
                         f"{task['id']}: ссылка ведёт на {task['file']}, "
                         f"файл переименован в {info['path'].name}")
                     repairable += 1
+                elif info["title"] and task["title"].strip() != info["title"]:
+                    warnings.append(
+                        f"{task['id']}: заголовок в строке «{task['title'].strip()}» "
+                        f"не совпадает с заголовком файла «{info['title']}»")
+                    repairable += 1
                 expected = _section_for_status(pipeline, info["status"])
                 if expected and expected.strip().lower() != column["title"].strip().lower():
                     warnings.append(

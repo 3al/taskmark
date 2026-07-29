@@ -39,7 +39,8 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
   useEffect(() => { load() }, [])
 
   const total = plan
-    ? plan.add.length + (plan.move?.length ?? 0) + plan.lost.length + (plan.relink?.length ?? 0)
+    ? plan.add.length + (plan.move?.length ?? 0) + plan.lost.length
+      + (plan.relink?.length ?? 0) + (plan.retitle?.length ?? 0)
     : 0
 
   const apply = async () => {
@@ -87,6 +88,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
               Готово: на доску возвращено {done.added}, строк перенесено {done.moved ?? 0},
               {' '}записей без файла убрано {done.lost}
               {done.relinked > 0 && <>, ссылок исправлено {done.relinked}</>}
+              {done.retitled > 0 && <>, заголовков обновлено {done.retitled}</>}
               {done.failed?.length > 0 && (
                 <div className="text-rose-300 mt-1">Не удалось: {done.failed.join('; ')}</div>
               )}
@@ -118,6 +120,22 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             render={(i) => (
               <>
                 <span className="text-zinc-500">{i.id}</span> · {i.file}
+                <span className="text-zinc-500"> : </span>
+                <span className="text-rose-300/80">{i.from}</span>
+                <span className="text-zinc-500"> → </span>
+                <span className="text-emerald-300/80">{i.to}</span>
+              </>
+            )}
+          />
+
+          <Group
+            title="Обновить заголовок строки"
+            hint="ссылка верная, а заголовок чужой или устаревший — строка повторит заголовок из файла"
+            tone="text-teal-300"
+            items={plan?.retitle}
+            render={(i) => (
+              <>
+                <span className="text-zinc-500">{i.id}</span>
                 <span className="text-zinc-500"> : </span>
                 <span className="text-rose-300/80">{i.from}</span>
                 <span className="text-zinc-500"> → </span>

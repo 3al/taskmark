@@ -20,6 +20,8 @@ frontmatter, — и агент, правящий один конец без вт
 - `relink` — файл переименовали, а строка осталась со старой ссылкой:
              переписывается на актуальное имя (только если заголовок
              подтверждает, что задача та же)
+- `retitle` — ссылка у строки точная, а заголовок чужой или устаревший:
+             строка повторяет заголовок из frontmatter файла
 
 Ничего не удаляется: чужие данные нам не принадлежат, и «сирота» на доске
 может оказаться файлом, который просто не подтянули из чужой ветки.
@@ -35,7 +37,8 @@ from pathlib import Path
 
 from backend.board_parser import parse_board
 from backend.config import is_lost_section, lost_section
-from backend.queue_ops import add_entry, ensure_plain_section, move_task, relink_entry
+from backend.queue_ops import (add_entry, ensure_plain_section, move_task,
+                               relink_entry, retitle_entry)
 from backend.statuses import Pipeline, load_pipeline
 from backend.task_parser import parse_frontmatter
 
@@ -131,7 +134,7 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
     """Что разошлось между доской и файлами. Ничего не меняет."""
     board_path = tasks_dir / cfg.get("board_file", "board.md")
     if not board_path.is_file():
-        return {"add": [], "move": [], "lost": [], "relink": []}
+        return {"add": [], "move": [], "lost": [], "relink": [], "retitle": []}
 
     pipeline = load_pipeline(cfg)
     board = parse_board(board_path, pipeline)
@@ -143,9 +146,11 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
     move: list[dict] = []
     lost: list[dict] = []
     relink: list[dict] = []
+    retitle: list[dict] = []
 
-    # Строки доски: без своего файла — в свалку, со своим — сверяем ссылку
-    # и раздел. «Свой» определяется не одним id, а связкой id+имя/заголовок
+    # Строки доски: без своего файла — в свалку, со своим — сверяем ссылку,
+    # заголовок и раздел. «Свой» определяется не одним id, а связкой
+    # id+имя/заголовок
     for task_id, entry in on_board.items():
         info = files.get(task_id)
         if info is None or not row_matches_file(entry, info):
@@ -155,6 +160,11 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
         if entry["file"] != info["path"].name:
             relink.append({"id": task_id, "section": entry["section"],
                            "from": entry["file"], "to": info["path"].name})
+        elif info["title"] and entry["title"].strip() != info["title"]:
+            # Ссылка точная, а заголовок нет: чужой текст легализовала прошлая
+            # починка или задачу переименовали в файле — файл правда
+            retitle.append({"id": task_id, "section": entry["section"],
+                            "from": entry["title"].strip(), "to": info["title"]})
         target_section = _section_for_status(pipeline, info["status"])
         if target_section and not _same_section(entry["section"], target_section):
             move.append({"id": task_id, "file": info["path"].name,
@@ -178,7 +188,8 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
                     "status": info["status"], "section": section,
                     "restore": restore})
 
-    return {"add": add, "move": move, "lost": lost, "relink": relink}
+    return {"add": add, "move": move, "lost": lost, "relink": relink,
+            "retitle": retitle}
 
 
 def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
@@ -199,6 +210,11 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
 
     for item in plan["relink"]:
         result = relink_entry(board_path, item["id"], item["to"])
+        if not result.get("ok"):
+            failed.append(f"{item['id']}: {result.get('error')}")
+
+    for item in plan["retitle"]:
+        result = retitle_entry(board_path, item["id"], item["to"])
         if not result.get("ok"):
             failed.append(f"{item['id']}: {result.get('error')}")
 
@@ -227,4 +243,5 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
             "moved": len(plan["move"]),
             "lost": len(plan["lost"]),
             "relinked": len(plan["relink"]),
+            "retitled": len(plan["retitle"]),
             "failed": failed}

@@ -369,6 +369,66 @@ class StaleLinkTest(RepairCase):
         self.assertGreater(report["repairable"], 0)
 
 
+class RetitleTest(RepairCase):
+    """Ссылка у строки точная, а заголовок чужой или устаревший.
+
+    Третий возврат TASK-056: relink прошлой версии переписал ссылки чужих
+    строк на локальные файлы, и критерий «ссылка совпала → строка своя»
+    их легализовал — доска врала заголовками, а валидатор молчал.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.task_file("TASK-040", "Настоящая задача", "done",
+                       name="TASK-040-настоящая.md")
+        self.add_entry("Done",
+                       "- TASK-040 · [Чужое имя](TASK-040-настоящая.md) · k3 · 2026-07-29")
+
+    def test_plan_reports_retitle_not_lost(self):
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual(plan["lost"], [], "ссылка точная — строка своя, не сирота")
+        self.assertEqual(plan["relink"], [])
+        self.assertEqual(len(plan["retitle"]), 1)
+        item = plan["retitle"][0]
+        self.assertEqual(item["id"], "TASK-040")
+        self.assertEqual(item["from"], "Чужое имя")
+        self.assertEqual(item["to"], "Настоящая задача")
+
+    def test_apply_rewrites_title_only(self):
+        result = apply_repair(self.tasks_dir, CFG)
+        self.assertEqual(result["retitled"], 1)
+        content = self.board.read_text(encoding="utf-8")
+        self.assertIn("[Настоящая задача](TASK-040-настоящая.md)", content)
+        self.assertNotIn("Чужое имя", content)
+        self.assertEqual(self.sections_of()["Done"], ["TASK-040"],
+                         "место строки не меняется — правится только заголовок")
+        self.assertEqual(parse_task(self.tasks_dir, "TASK-040")["meta"]["title"],
+                         "Настоящая задача")
+
+    def test_repair_converges(self):
+        apply_repair(self.tasks_dir, CFG)
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual((plan["add"], plan["move"], plan["lost"],
+                          plan["relink"], plan["retitle"]), ([], [], [], [], []))
+        self.assertEqual(validate_project(self.tasks_dir, CFG)["warnings"], [])
+
+    def test_validator_warns_about_title_mismatch(self):
+        report = validate_project(self.tasks_dir, CFG)
+        self.assertTrue(any("TASK-040" in w and "заголовок" in w
+                            for w in report["warnings"]),
+                        f"нет предупреждения о чужом заголовке: {report['warnings']}")
+        self.assertGreater(report["repairable"], 0)
+
+    def test_empty_frontmatter_title_skips_retitle(self):
+        """Нет заголовка в файле — нечем доказать расхождение, оставляем как есть."""
+        (self.tasks_dir / "TASK-041-без-заголовка.md").write_text(
+            "---\nid: TASK-041\nstatus: done\n---\n", encoding="utf-8")
+        self.add_entry("Done",
+                       "- TASK-041 · [Какое-то имя](TASK-041-без-заголовка.md) · k3 · 2026-07-29")
+        plan = plan_repair(self.tasks_dir, CFG)
+        self.assertEqual([i["id"] for i in plan["retitle"]], ["TASK-040"])
+
+
 class ValidatorSeesMismatchTest(RepairCase):
     """Строка не в том разделе — про это говорят заранее, а не молча."""
 
