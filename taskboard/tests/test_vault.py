@@ -131,6 +131,21 @@ class VaultTest(unittest.TestCase):
             path.write_text(path.read_text(encoding="utf-8") + "\nмоя правка\n", encoding="utf-8")
         self.assertEqual(self._codes(), [])
 
+    def test_refresh_only_named_vault_file(self) -> None:
+        """Кнопка рядом с diff обновляет один файл волта, а не всю папку (TASK-048)."""
+        self._deploy(vault=True)
+        structure = self.root / "vault" / "SYS" / "structure.md"
+        note = self.root / "vault" / "SYS" / "templates" / "code-note.md"
+        structure.write_text("устарело\n", encoding="utf-8")
+        note.write_text("тоже устарело\n", encoding="utf-8")
+
+        scaffold_project(self.tasks_dir, self.cfg,
+                         {"parts": ["vault"], "names": ["SYS/structure.md"]})
+
+        self.assertNotEqual(structure.read_text(encoding="utf-8"), "устарело\n")
+        self.assertEqual(note.read_text(encoding="utf-8"), "тоже устарело\n",
+                         "точечное обновление задело соседний файл волта")
+
     def test_vault_notes_untouched(self) -> None:
         """Заметки пользователя — не наша поставка, их не трогаем и не считаем."""
         self._deploy(vault=True)

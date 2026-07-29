@@ -240,6 +240,40 @@ class TasksWatcherRecoveryTest(unittest.TestCase):
             finally:
                 w.shutdown()
 
+    def test_watches_vault_system_files(self) -> None:
+        """Поставляемая часть волта (`vault/SYS/`) — такой же источник баннеров.
+
+        Обновили `structure.md` кнопкой — баннер устаревания обязан погаснуть
+        сам, а не после F5. Заметки пользователя в доменных папках при этом
+        доску не дёргают: их правят постоянно, и к поставке они не относятся.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_dir = root / "tasks"
+            tasks_dir.mkdir()
+            structure = root / "vault" / "SYS" / "structure.md"
+            structure.parent.mkdir(parents=True)
+            structure.write_text("исходные правила волта", encoding="utf-8")
+            note = root / "vault" / "warehouse" / "my-note.md"
+            note.parent.mkdir(parents=True)
+
+            w = TasksWatcher(debounce_sec=0.05, monitor_sec=0.2)
+            q = w.subscribe()
+            w.watch(tasks_dir)
+            try:
+                structure.write_text("правила волта устарели", encoding="utf-8")
+                self.assertTrue(wait_for(lambda: not q.empty()),
+                                "правка правил волта не дошла до подписчика")
+
+                time.sleep(0.3)  # окно дебаунса и хвостовое событие
+                while not q.empty():
+                    q.get()
+                note.write_text("моя заметка", encoding="utf-8")
+                self.assertFalse(wait_for(lambda: not q.empty(), 1.0),
+                                 "заметка пользователя дёрнула доску")
+            finally:
+                w.shutdown()
+
     def test_watches_rules_files_in_project_root(self) -> None:
         """Секция правил живёт в AGENTS.md/CLAUDE.md — её правки тоже живые.
 

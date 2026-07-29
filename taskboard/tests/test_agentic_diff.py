@@ -125,6 +125,21 @@ class AgenticDetailsTest(unittest.TestCase):
                          "точечное обновление задело соседний скилл")
         self.assertNotIn("fix-task", " ".join(created + skipped))
 
+    def test_diff_uses_project_vault_mode_for_commands(self) -> None:
+        """Эталон команды считается по конфигу проекта, как и в списке расхождений.
+
+        Иначе окно противоречит баннеру: список говорит «отличается», а diff
+        рядом — «файлы совпадают».
+        """
+        cmd = self.root / ".opencode" / "commands" / "start-task.md"
+        cmd.write_text(cmd.read_text(encoding="utf-8") + "\nхвост\n", encoding="utf-8")
+        listed = [i for i in agentic_stale_details(self.root, self.cfg)
+                  if i["part"] == "commands"]
+        result = agentic_diff(self.root, "commands", "start-task", self.cfg)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(bool(listed), result["state"] != "same",
+                         "список расхождений и diff разошлись в оценке")
+
     def test_scaffold_passes_names_through(self) -> None:
         first, second = self._skill("start-task"), self._skill("fix-task")
         first.write_text("устарел", encoding="utf-8")
@@ -135,6 +150,55 @@ class AgenticDetailsTest(unittest.TestCase):
 
         self.assertTrue(any("start-task" in r for r in result["replaced"]))
         self.assertEqual(second.read_text(encoding="utf-8"), "тоже устарел")
+
+
+class VaultDiffTest(unittest.TestCase):
+    """Волт — такая же часть поставки: у его файлов тоже должен открываться diff (TASK-048)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "project"
+        self.tasks = self.root / "tasks"
+        self.cfg = dict(DEFAULTS, vault=True)
+        scaffold_project(self.tasks, self.cfg, {
+            "skills": True, "commands": True,
+            "rules_agents": False, "rules_claude": False, "vault": True,
+        })
+        self.structure = self.root / "vault" / "SYS" / "structure.md"
+
+    def test_stale_details_name_opens_in_diff(self) -> None:
+        """Имя из списка расхождений — рабочий ключ для diff, а не «неизвестный элемент»."""
+        self.structure.write_text(self.structure.read_text(encoding="utf-8") + "хвост\n",
+                                  encoding="utf-8")
+        items = [i for i in agentic_stale_details(self.root, self.cfg) if i["part"] == "vault"]
+        self.assertEqual([i["name"] for i in items], ["SYS/structure.md"], items)
+
+        result = agentic_diff(self.root, "vault", items[0]["name"], self.cfg)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["state"], "modified")
+        self.assertEqual((result["added"], result["removed"]), (0, 1), result["diff"])
+
+    def test_diff_for_missing_vault_file_is_all_additions(self) -> None:
+        self.structure.unlink()
+        result = agentic_diff(self.root, "vault", "SYS/structure.md", self.cfg)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["state"], "missing")
+        self.assertGreater(result["added"], 0)
+
+    def test_fresh_vault_file_has_empty_diff(self) -> None:
+        result = agentic_diff(self.root, "vault", "SYS/templates/code-note.md", self.cfg)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["diff"], "")
+
+    def test_unknown_vault_name_is_still_an_error(self) -> None:
+        result = agentic_diff(self.root, "vault", "SYS/нет-такого.md", self.cfg)
+        self.assertFalse(result["ok"])
+
+    def test_user_files_are_not_diffable(self) -> None:
+        """Таксономию и README наполняет пользователь — их с эталоном не сверяют."""
+        result = agentic_diff(self.root, "vault", "SYS/taxonomy.md", self.cfg)
+        self.assertFalse(result["ok"])
 
 
 if __name__ == "__main__":

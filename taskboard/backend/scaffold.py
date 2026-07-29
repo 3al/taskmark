@@ -6,7 +6,7 @@ import difflib
 import re
 import shutil
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from backend.epics import EPICS_FILE
 from backend.statuses import load_pipeline
@@ -38,6 +38,12 @@ VAULT_TEMPLATE_FILES = ("SYS/structure.md",
                         "SYS/templates/business-note.md",
                         "SYS/templates/code-note.md")
 VAULT_DATA_FILES = ("SYS/README.md", "SYS/taxonomy.md")
+
+# Служебные папки волта (верхний уровень поставляемых путей): только они
+# наблюдаются на изменения — заметки пользователя в доменных папках правятся
+# постоянно, и дёргать ими доску незачем
+VAULT_SYSTEM_DIRS = tuple(dict.fromkeys(
+    PurePosixPath(rel).parts[0] for rel in VAULT_TEMPLATE_FILES + VAULT_DATA_FILES))
 
 # Маркер наличия секции правил в агентском файле
 RULES_MARKER = "TASK MANAGEMENT"
@@ -699,10 +705,13 @@ def agentic_paths(project_root: Path) -> list[Path]:
     лежат часто меняющиеся настройки самих агентов — это был бы шум.
     Обе возможные папки скиллов: наблюдаем за тем, что реально лежит на диске,
     независимо от текущего выбора сред.
+    Волт — только служебная часть (`vault/SYS`): она сверяется с поставкой и
+    рождает баннеры, а заметки в доменных папках — данные пользователя.
     """
     candidates = (project_root / ".claude" / "skills",
                   project_root / ".opencode" / "skills",
-                  _deployed_commands(project_root))
+                  _deployed_commands(project_root),
+                  *(project_root / VAULT_DIR / name for name in VAULT_SYSTEM_DIRS))
     return [p for p in candidates if p.is_dir()]
 
 
@@ -829,7 +838,7 @@ def agentic_stale_details(project_root: Path, cfg: dict | None = None) -> list[d
 
 
 def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = None) -> dict:
-    """Unified diff «развёрнутое → эталон» для скилла, команды или секции правил.
+    """Unified diff «развёрнутое → эталон» для скилла, команды, файла волта или секции правил.
 
     Направление выбрано так, чтобы «+» читалось как «появится после обновления».
     Эталон берётся с учётом волт-режима проекта (иначе у проектов без волта
@@ -838,7 +847,11 @@ def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = No
     if part == "skills":
         targets = _skill_targets(project_root, cfg=cfg)
     elif part == "commands":
-        targets = _command_targets(project_root)
+        # cfg обязателен и здесь: без него режим волта определяется по файлам,
+        # и diff начинает спорить со списком расхождений, который считан по конфигу
+        targets = _command_targets(project_root, cfg=cfg)
+    elif part == "vault":
+        targets = _vault_targets(project_root)
     else:
         targets = _rules_targets(project_root, cfg or {})
     target = next((t for t in targets if t[0] == name), None)
