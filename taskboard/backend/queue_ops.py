@@ -76,6 +76,44 @@ def ensure_section(board_path: Path, pipeline: Pipeline, status: str) -> bool:
     return True
 
 
+def ensure_plain_section(board_path: Path, title: str) -> None:
+    """Создать раздел ## title в конце доски, если его нет.
+
+    Для разделов вне пайплайна (технических): места по соседям у них нет,
+    порядок статусов про них ничего не знает.
+    """
+    content = board_path.read_text(encoding="utf-8")
+    if re.search(rf"^##\s+{re.escape(title)}\s*$", content, flags=re.MULTILINE | re.IGNORECASE):
+        return
+    board_path.write_text(content.rstrip() + f"\n\n## {title}\n\n", encoding="utf-8")
+
+
+def add_entry(board_path: Path, pipeline: Pipeline, to_section: str, entry: str) -> dict:
+    """Дописать готовую строку задачи в конец раздела доски.
+
+    В отличие от move_task, задачи на доске ещё нет — переносить нечего;
+    frontmatter не трогаем, его правит вызывающая сторона.
+    """
+    lines = board_path.read_text(encoding="utf-8").splitlines()
+    bounds = _section_bounds(lines, to_section)
+    if bounds is None:
+        status = pipeline.status_for_section(to_section)
+        if status and ensure_section(board_path, pipeline, status):
+            lines = board_path.read_text(encoding="utf-8").splitlines()
+            bounds = _section_bounds(lines, to_section)
+        if bounds is None:
+            return {"ok": False, "error": f"Раздел {to_section} не найден"}
+
+    start, end = bounds
+    task_lines = [i for i in range(start + 1, end)
+                  if re.match(r"^\s*-\s*(?:~~)?\s*TASK-\d+\s*·", lines[i])]
+    insert_at = (task_lines[-1] + 1) if task_lines else start + 1
+    _drop_empty_placeholder(lines, start, end)
+    lines.insert(insert_at, entry)
+    board_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"ok": True, "section": to_section}
+
+
 def move_task(
     tasks_dir: Path,
     cfg: dict,

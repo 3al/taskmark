@@ -20,6 +20,9 @@ DEFAULTS: dict = {
     "logs_dir": "logs",
     "queue_section": "Queue",
     "queued_status": "queued",
+    # Технический раздел доски для строк, у которых не осталось файла задачи:
+    # починка не удаляет чужие записи, а сносит их сюда. Колонкой не показывается
+    "lost_section": "Потерянные",
     "dnd_full_board": False,
     # Жизненный цикл задачи: порядок статусов и цели действий скиллов.
     # Разбор и дефолты оформления — в backend/statuses.py
@@ -32,7 +35,17 @@ DEFAULTS: dict = {
 # проекта свой, а порт и тема — свойства инструмента, а не репозитория
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "board_file", "create_script",
                 "status_script", "logs_dir", "queue_section", "queued_status",
-                "dnd_full_board", "harnesses", "vault"}
+                "lost_section", "dnd_full_board", "harnesses", "vault"}
+
+
+def lost_section(cfg: dict) -> str:
+    """Имя технического раздела доски для записей без файла задачи."""
+    return cfg.get("lost_section") or DEFAULTS["lost_section"]
+
+
+def is_lost_section(title: str, cfg: dict) -> bool:
+    """Это тот самый технический раздел? (сравнение как у разделов доски)"""
+    return title.strip().lower() == lost_section(cfg).strip().lower()
 
 
 def _read_json(path: Path) -> dict:

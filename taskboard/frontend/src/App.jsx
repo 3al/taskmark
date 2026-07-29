@@ -10,6 +10,7 @@ import LogsPanel from './components/LogsPanel'
 import SettingsModal from './components/SettingsModal'
 import ScaffoldModal from './components/ScaffoldModal'
 import AgenticStaleModal from './components/AgenticStaleModal'
+import BoardRepairModal from './components/BoardRepairModal'
 import HelpModal from './components/HelpModal'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению прямоугольников
@@ -41,6 +42,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showScaffold, setShowScaffold] = useState(false)
   const [showAgentic, setShowAgentic] = useState(false)
+  const [showRepair, setShowRepair] = useState(false)
   // Помощь: null — закрыта, иначе раздел, на котором её открыли
   const [helpSection, setHelpSection] = useState(null)
   // Живой поиск: строка ввода и результат с бэкенда (id → попадания).
@@ -426,7 +428,26 @@ export default function App() {
           {report.warnings.slice(0, 5).map((w, i) => (
             <span key={`w${i}`} className="mr-4">• {w}</span>
           ))}
-          {report.warnings.length > 5 && <span>и ещё {report.warnings.length - 5}…</span>}
+          {report.warnings.length > 5 && <span className="mr-4">и ещё {report.warnings.length - 5}…</span>}
+          {/* Рассинхрон доски и файлов чинится разом — но только после
+              предпросмотра: правки идут по файлам задач */}
+          {report.repairable > 0 && (
+            <span className="inline-flex items-center gap-2">
+              <button
+                className="px-2 py-0.5 rounded bg-amber-700/50 hover:bg-amber-600/60 text-amber-100 transition"
+                onClick={() => setShowRepair(true)}
+              >
+                Починить доску
+              </button>
+              <button
+                className="text-amber-300/70 hover:text-amber-100 transition"
+                title="Что это значит"
+                onClick={() => openHelp('validation')}
+              >
+                ?
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -559,6 +580,12 @@ export default function App() {
         <AgenticStaleModal
           onClose={() => setShowAgentic(false)}
           onUpdated={refresh}
+        />
+      )}
+      {showRepair && (
+        <BoardRepairModal
+          onClose={() => setShowRepair(false)}
+          onRepaired={refresh}
         />
       )}
       {showScaffold && (

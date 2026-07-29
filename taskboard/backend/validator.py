@@ -6,8 +6,10 @@ import re
 from pathlib import Path
 
 from backend.board_parser import parse_board
+from backend.config import is_lost_section
 from backend.scaffold import detect_harnesses, environment_issues, harness_choice
 from backend.statuses import load_pipeline
+from backend.task_parser import parse_frontmatter
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
 
@@ -112,9 +114,11 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     if missing:
         warnings.append("Нет разделов доски для статусов пайплайна: " + ", ".join(missing))
 
-    # Разделы вне пайплайна не трогаем молча — показываем как есть и предупреждаем
+    # Разделы вне пайплайна не трогаем молча — показываем как есть и предупреждаем.
+    # Кроме технического раздела: его завела сама починка, жаловаться на него —
+    # значит выдавать новый баннер за устранение старых
     extra = [t for t in board["known_sections"]
-             if pipeline.status_for_section(t) is None]
+             if pipeline.status_for_section(t) is None and not is_lost_section(t, cfg)]
     if extra:
         warnings.append("Разделы вне пайплайна статусов: " + ", ".join(extra))
 
@@ -135,21 +139,43 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
                          "message": _issue_message(issue),
                          "names": issue["names"]})
 
-    # Мягкие предупреждения: битые ссылки и файлы вне доски
+    # Мягкие предупреждения: битые ссылки, расхождение статусов и файлы вне доски.
+    # Всё это чинится одной кнопкой — см. backend/board_repair.py; по флагу
+    # repairable UI решает, показывать ли её на баннере
+    repairable = 0
     on_board: set[str] = set()
     for column in board["columns"]:
+        # Записи в техническом разделе уже разобраны починкой: файла у них нет
+        # по определению, и повторять про них — держать баннер вечно
+        if is_lost_section(column["title"], cfg):
+            continue
+        target = pipeline.status_for_section(column["title"])
         for group in column["groups"]:
             for task in group["tasks"]:
                 on_board.add(task["id"])
-                if not (tasks_dir / task["file"]).is_file():
+                path = tasks_dir / task["file"]
+                if not path.is_file():
                     warnings.append(f"{task['id']}: файл {task['file']} не найден")
+                    repairable += 1
+                    continue
+                if not target:
+                    continue
+                meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+                current = (meta.get("status") or "").strip()
+                if current != target:
+                    warnings.append(
+                        f"{task['id']}: статус в файле ({current or 'пусто'}) "
+                        f"не совпадает с разделом доски ({target})")
+                    repairable += 1
 
     for f in sorted(tasks_dir.glob("TASK-*.md")):
         m = _TASK_ID_RE.match(f.name)
         if m and m.group(1) not in on_board:
             warnings.append(f"{f.name}: файла нет на доске")
+            repairable += 1
 
     report = _report(critical, degraded, warnings, features)
+    report["repairable"] = repairable
     # Выбор сред и предзаполнение диалога: по нему UI решает, спрашивать ли
     report["harnesses"] = {"choice": harness_choice(cfg),
                            "detected": detect_harnesses(tasks_dir.parent)}

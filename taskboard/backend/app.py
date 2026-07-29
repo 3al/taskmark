@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from backend import help_docs, lifecycle, registry
 from backend.board_parser import parse_board
+from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (PROJECT_KEYS, load_global_config, load_project_config,
                             save_global_config, save_project_config)
 from backend.create_task_runner import create_task
@@ -35,7 +36,8 @@ DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 # серверу, чтобы предупредить об устаревшем процессе
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
-                "harnesses": True, "pipeline_sources": True, "help": True}
+                "harnesses": True, "pipeline_sources": True, "help": True,
+                "board_repair": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -262,6 +264,9 @@ def api_board() -> dict:
     tasks_dir, cfg, report = _validate_or_400()
     pipeline = load_pipeline(cfg)
     board = parse_board(tasks_dir / cfg.get("board_file", "board.md"), pipeline)
+    # Технический раздел починки колонкой не показываем: он для записей,
+    # у которых не осталось файла, а не для работы
+    board["columns"] = visible_columns(board, cfg)
     annotate_epics(tasks_dir, board)
     board["report"] = report
     board["config"] = {
@@ -350,6 +355,20 @@ def api_ensure_queue() -> dict:
         raise HTTPException(400, "В пайплайне нет статуса очереди")
     ensure_section(board_path, pipeline, pick)
     return {"ok": True}
+
+
+@app.get("/api/board/repair")
+def api_board_repair_plan() -> dict:
+    """Что разошлось между доской и файлами задач (предпросмотр починки)."""
+    tasks_dir, cfg, _report = _validate_or_400()
+    return plan_repair(tasks_dir, cfg)
+
+
+@app.post("/api/board/repair")
+def api_board_repair_apply() -> dict:
+    """Применить починку: доска — источник правды, файлы подстраиваются."""
+    tasks_dir, cfg, _report = _validate_or_400()
+    return apply_repair(tasks_dir, cfg)
 
 
 @app.get("/api/pipeline")

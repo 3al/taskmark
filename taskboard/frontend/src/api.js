@@ -36,6 +36,8 @@ export const api = {
       body: JSON.stringify({ to_section: toSection, position, after_task_id: afterTaskId, group }),
     }),
   ensureQueue: () => request('/api/queue/ensure', { method: 'POST' }),
+  repairPlan: () => request('/api/board/repair'),
+  repairApply: () => request('/api/board/repair', { method: 'POST' }),
   scaffold: (options) => request('/api/scaffold', { method: 'POST', body: JSON.stringify(options) }),
   agenticStale: () => request('/api/agentic/stale'),
   agenticDiff: (part, name) =>
