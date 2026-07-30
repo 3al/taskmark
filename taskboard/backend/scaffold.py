@@ -403,18 +403,18 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             skipped += s
             diverged += d
             # Кнопка на баннере разворачивает часть в папку, которой могло ещё
-            # не быть: без .gitignore её содержимое утечёт в git проекта
-            if part in ("skills", "commands") and c:
-                if part == "commands":
-                    outcome = _ensure_commands_ignored(project_root)
-                    if outcome == "created":
-                        created.append(".opencode/.gitignore")
-                    elif outcome == "appended":
-                        replaced.append(".opencode/.gitignore (дописано: commands/)")
-                else:
-                    agent_dir = _deployed_skills(project_root, cfg).parent
-                    if _write_if_absent(agent_dir / ".gitignore", AGENTIC_GITIGNORE):
-                        created.append(f"{agent_dir.name}/.gitignore")
+            # не быть: без .gitignore её содержимое утечёт в git проекта.
+            # Проверяем независимо от того, создали ли что-то сейчас: часть
+            # может быть давно на месте, а игнор её так и не покрывать
+            if part in ("skills", "commands"):
+                target = (_deployed_skills(project_root, cfg) if part == "skills"
+                          else _deployed_commands(project_root))
+                outcome = _ensure_ignored(target.parent, target.name)
+                if outcome == "created":
+                    created.append(f"{target.parent.name}/.gitignore")
+                elif outcome == "appended":
+                    replaced.append(
+                        f"{target.parent.name}/.gitignore (дописано: {target.name}/)")
         return {"created": created, "skipped": skipped, "replaced": replaced,
                 "diverged": diverged, "rules": {"appended": [], "already_present": []}}
 
@@ -429,11 +429,15 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         skipped += s
         diverged += d
         # .gitignore кладём в ту агентскую папку, куда легли скиллы
-        agent_dir = _deployed_skills(project_root, cfg).parent
-        if _write_if_absent(agent_dir / ".gitignore", AGENTIC_GITIGNORE):
-            created.append(f"{agent_dir.name}/.gitignore")
+        skills_dir = _deployed_skills(project_root, cfg)
+        outcome = _ensure_ignored(skills_dir.parent, skills_dir.name)
+        if outcome == "created":
+            created.append(f"{skills_dir.parent.name}/.gitignore")
+        elif outcome == "appended":
+            replaced.append(
+                f"{skills_dir.parent.name}/.gitignore (дописано: {skills_dir.name}/)")
         else:
-            skipped.append(f"{agent_dir.name}/.gitignore")
+            skipped.append(f"{skills_dir.parent.name}/.gitignore")
 
     # Волт — часть поставки, а не только режим текстов: без структуры скиллы
     # ссылались бы на папку, которой никто не создаёт
@@ -451,13 +455,15 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         replaced += r
         skipped += s
         diverged += d
-        outcome = _ensure_commands_ignored(project_root)
+        commands_dir = _deployed_commands(project_root)
+        outcome = _ensure_ignored(commands_dir.parent, commands_dir.name)
         if outcome == "created":
-            created.append(".opencode/.gitignore")
+            created.append(f"{commands_dir.parent.name}/.gitignore")
         elif outcome == "appended":
-            replaced.append(".opencode/.gitignore (дописано: commands/)")
+            replaced.append(
+                f"{commands_dir.parent.name}/.gitignore (дописано: {commands_dir.name}/)")
         else:
-            skipped.append(".opencode/.gitignore")
+            skipped.append(f"{commands_dir.parent.name}/.gitignore")
 
     # Состав файлов правил задаёт выбор сред; отдельные ключи (rules_agents /
     # rules_claude, легаси-«rules» на оба) оставлены как явное «этот не надо»
@@ -503,27 +509,41 @@ def _write_if_absent(dst: Path, text: str) -> bool:
     return True
 
 
-# Записи .gitignore, которые уже покрывают папку commands
-_COMMANDS_COVERING = {"*", "**", "commands", "commands/", "/commands", "/commands/"}
+# Записи .gitignore, покрывающие в папке вообще всё
+_ANY_COVERING = ("*", "**", "*/", "**/")
 
 
-def _ensure_commands_ignored(project_root: Path) -> str:
-    """Гарантировать, что .opencode/.gitignore игнорирует папку commands.
+def _ignore_covers(text: str, folder: str) -> bool:
+    """Прячет ли этот .gitignore папку folder.
+
+    Разбор нарочно грубый — по точным записям: полноценные правила git
+    (вложенность, порядок, отрицания) нам не нужны, а ошибиться в сторону
+    «уже покрыто» нельзя — тогда папка утечёт в git. Отрицание `!folder/`
+    покрытием не считается: это ровно противоположное указание.
+    """
+    covering = set(_ANY_COVERING)
+    for name in (folder, f"/{folder}"):
+        covering |= {name, f"{name}/", f"{name}/*", f"{name}/**"}
+    return any(line.strip() in covering for line in text.splitlines())
+
+
+def _ensure_ignored(agent_dir: Path, folder: str) -> str:
+    """Гарантировать, что <agent_dir>/.gitignore прячет папку folder.
 
     Вернуть "created" | "appended" | "present". Существующий файл может быть
-    пользовательским, поэтому не перезаписываем его шаблоном, а дописываем
-    недостающую запись в конец — иначе развёрнутые команды утекают в git.
+    пользовательским (`.claude/.gitignore` со своими записями — обычное дело),
+    поэтому не перезаписываем его шаблоном, а дописываем недостающую запись
+    в конец — иначе развёрнутое окружение утекает в git проекта.
     """
-    path = project_root / ".opencode" / ".gitignore"
+    path = agent_dir / ".gitignore"
     if _write_if_absent(path, AGENTIC_GITIGNORE):
         return "created"
     text = path.read_text(encoding="utf-8")
-    entries = {line.strip() for line in text.splitlines()}
-    if entries & _COMMANDS_COVERING:
+    if _ignore_covers(text, folder):
         return "present"
     if text and not text.endswith("\n"):
         text += "\n"
-    path.write_text(text + "commands/\n", encoding="utf-8")
+    path.write_text(text + f"{folder}/\n", encoding="utf-8")
     return "appended"
 
 

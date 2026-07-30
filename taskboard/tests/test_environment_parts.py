@@ -165,6 +165,82 @@ class EnvironmentPartsTest(unittest.TestCase):
 
                 self.assertEqual(gitignore.read_text(encoding="utf-8"), content)
 
+    # --- То же правило для скиллов: развёрнутое не должно утекать в git ---
+
+    def test_foreign_claude_gitignore_gets_skills_entry(self) -> None:
+        """Свой `.claude/.gitignore` — обычное дело, и скиллы в нём не учтены.
+
+        Команды это уже умели, скиллы — нет: файл существовал, запись про
+        skills не появлялась, и развёрнутая папка уезжала в git пользователя.
+        """
+        self._use(CLAUDE_ONLY)
+        self._bare_structure()
+        gitignore = self.root / ".claude" / ".gitignore"
+        gitignore.parent.mkdir(parents=True)
+        gitignore.write_text("# своё\nsettings.local.json\n", encoding="utf-8")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["skills"]})
+
+        text = gitignore.read_text(encoding="utf-8")
+        self.assertIn("settings.local.json", text, "чужие записи не трогаем")
+        self.assertRegex(text, r"(?m)^skills/$")
+
+    def test_opencode_only_project_ignores_both_folders(self) -> None:
+        """Без Claude Code скиллы едут в `.opencode/skills` — рядом с командами.
+
+        Один и тот же чужой файл должен получить обе записи, а не только ту,
+        чью часть разворачивали последней.
+        """
+        self._use(OPENCODE_ONLY)
+        self._bare_structure()
+        gitignore = self.root / ".opencode" / ".gitignore"
+        gitignore.parent.mkdir(parents=True)
+        gitignore.write_text("# своё\n", encoding="utf-8")
+
+        self._deploy(OPENCODE_ONLY)
+
+        text = gitignore.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^commands/$")
+        self.assertRegex(text, r"(?m)^skills/$")
+
+    def test_ignore_is_fixed_even_when_nothing_was_deployed(self) -> None:
+        """Часть уже на месте, а игнора нет — кнопка обязана починить и это.
+
+        Проверка висела на «что-то создали»: у проекта с полным набором
+        скиллов и чужим .gitignore нажатие кнопки не меняло ничего.
+        """
+        self._deploy(CLAUDE_ONLY)
+        gitignore = self.root / ".claude" / ".gitignore"
+        gitignore.write_text("# своё\n", encoding="utf-8")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["skills"]})
+
+        self.assertRegex(gitignore.read_text(encoding="utf-8"), r"(?m)^skills/$")
+
+    def test_glob_pattern_counts_as_coverage(self) -> None:
+        """`commands/**` — то же покрытие: дубль записи не нужен."""
+        self._use(OPENCODE_ONLY)
+        self._bare_structure()
+        gitignore = self.root / ".opencode" / ".gitignore"
+        gitignore.parent.mkdir(parents=True)
+        gitignore.write_text("commands/**\n", encoding="utf-8")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["commands"]})
+
+        self.assertEqual(gitignore.read_text(encoding="utf-8"), "commands/**\n")
+
+    def test_unignore_is_not_coverage(self) -> None:
+        """`!commands/` — наоборот, снятие игнора: считать это покрытием нельзя."""
+        self._use(OPENCODE_ONLY)
+        self._bare_structure()
+        gitignore = self.root / ".opencode" / ".gitignore"
+        gitignore.parent.mkdir(parents=True)
+        gitignore.write_text("!commands/\n", encoding="utf-8")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["commands"]})
+
+        self.assertRegex(gitignore.read_text(encoding="utf-8"), r"(?m)^commands/$")
+
     def test_deployed_but_modified_is_outdated_not_missing(self) -> None:
         """Правленные целиком скиллы — устаревание, а не отсутствие части."""
         self._deploy(BOTH)
