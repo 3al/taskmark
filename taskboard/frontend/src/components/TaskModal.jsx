@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { api } from '../api'
 import { statusStyle } from '../statuses'
 import { highlight, rehypeHighlight } from '../highlight'
-import { rehypeNoteMeta } from '../markdown'
+import { mdComponents, rehypeNoteMeta } from '../markdown'
 import CopyButton from './CopyButton'
 
 // Типографика заголовка — одна и та же в просмотре и в правке: любой разнобой
@@ -110,12 +110,17 @@ export default function TaskModal({ taskId, query, onClose }) {
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
+      {/* Ширина по содержимому: обычная задача остаётся привычных 48rem, а
+          широкая таблица раздвигает окно до края экрана вместо того, чтобы
+          уезжать за него вместе со всем текстом */}
       <div
-        className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+        className="bg-zinc-900 border border-zinc-700 rounded-2xl w-fit min-w-[min(48rem,92vw)] max-w-[92vw] max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className={`flex items-start gap-3 px-5 py-4 border-b ${style.modalHeader}`}>
-          <div className="min-w-0 flex-1">
+          {/* Тот же предел, что и у текста в теле: длинное название — не повод
+              растягивать окно, оно переносится по словам */}
+          <div className="min-w-0 flex-1 max-w-[44rem]">
             {/* Рамка правки рисуется вплотную над строкой номера — на время
                 правки уводим её на пару пикселей вверх. Это transform: в поток
                 он не попадает, поэтому высота шапки не меняется */}
@@ -219,7 +224,8 @@ export default function TaskModal({ taskId, query, onClose }) {
           {error && <div className="text-rose-400">{error}</div>}
           {!task && !error && <div className="text-zinc-500">Загрузка…</div>}
           {task && (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
+                           components={mdComponents}>
               {body}
             </ReactMarkdown>
           )}

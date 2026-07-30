@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
+import { mdComponents } from '../markdown'
 
 // Ссылка на соседний раздел внутри документации: docs/help/02-board.md.
 // Пишем их файлами, а не спецсхемой, чтобы те же тексты оставались
@@ -96,6 +97,9 @@ export default function HelpModal({ section, onClose }) {
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                  // Таблицы в справке широкие — прокручиваются в своей обёртке,
+                  // как и в окне задачи
+                  ...mdComponents,
                   // Ссылка на соседний раздел переключает окно, а не уводит
                   // из приложения на несуществующий по этому адресу файл
                   a: ({ href, children, ...props }) => {

@@ -37,6 +37,15 @@ body {
 .md-body h5, .md-body h6 { @apply text-xs uppercase tracking-wide text-zinc-400 mt-3 mb-1; }
 /* Первый заголовок не отрывается от верха контейнера */
 .md-body > :first-child { @apply mt-0; }
+/* Текст живёт в колонке фиксированной ширины, и окно от него не растёт.
+   Ширина окна считается по содержимому, а «естественная» ширина абзаца —
+   это вся его строка без переносов: без этого предела любая длинная заметка
+   раздвигала бы окно во весь экран. Предел снят только с широких блоков
+   (.md-scroll-x) — ради них окно и растягивается */
+.md-body > * { max-width: 44rem; }
+.md-body > .md-scroll-x { max-width: 100%; }
+/* Длинный путь или URL переносится, а не вылезает из колонки */
+.md-body p, .md-body li { @apply break-words; }
 .md-body p { @apply my-2 text-zinc-300/80 leading-relaxed; }
 .md-body ul, .md-body ol { @apply my-2 pl-5 text-zinc-300/80; }
 .md-body ul { @apply list-disc; }
@@ -58,8 +67,17 @@ body {
   pl-3 pr-3 py-2 my-3 text-zinc-400 italic; }
 .md-body input[type='checkbox'] { @apply mr-1.5 accent-emerald-500; }
 .md-body hr { @apply border-zinc-800 my-4; }
+/* Обёртка широкого блока: просит ширину по содержимому — окно задачи растёт
+   под таблицу, — а упёршись в свой предел, прокручивается сама. Без неё
+   горизонтально ехало всё тело задачи вместе с текстом */
+.md-body .md-scroll-x { @apply overflow-x-auto max-w-full my-3; width: max-content; }
 .md-body table { @apply border-collapse my-3 rounded-lg overflow-hidden; }
+/* Отступ держит обёртка — иначе он задвоится */
+.md-body .md-scroll-x > table { @apply my-0; }
 .md-body th, .md-body td { @apply border border-zinc-700 px-2 py-1 text-sm; }
+/* Ячейки не сжимаются в столбик из одиночных букв: перенос по словам,
+   а недостаток места разбирает прокрутка обёртки */
+.md-body th, .md-body td { @apply whitespace-normal; }
 .md-body th { @apply bg-zinc-800/60 text-zinc-300 font-semibold text-left; }
 .md-body tbody tr:nth-child(even) { @apply bg-zinc-800/20; }
 
