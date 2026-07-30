@@ -64,6 +64,12 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
   const epicSuggestions = epics.filter((e) =>
     e.key.toLowerCase().includes(needle) || (e.name || '').toLowerCase().includes(needle))
 
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && !busy && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, busy])
+
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value })
 
   const submit = async () => {

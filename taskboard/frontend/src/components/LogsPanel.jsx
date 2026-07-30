@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import CopyButton from './CopyButton'
 
@@ -22,6 +22,12 @@ export default function LogsPanel({ onClose }) {
       setContent(`Ошибка: ${e.message}`)
     }
   }
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   return (
     <div

@@ -96,6 +96,12 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
     }
   }
 
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const PART_LABEL = { skills: 'Скилл', commands: 'Команда', rules: 'Правила', vault: 'Волт' }
   // Причину расхождения мы не знаем: либо шаблон обновился, либо файл правили
   // в проекте. Различить можно только храня базовую версию — её сейчас нет,

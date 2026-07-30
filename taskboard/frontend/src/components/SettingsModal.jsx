@@ -21,6 +21,12 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
   const [serverAction, setServerAction] = useState(null)
 
   // Ждём, пока сервер поднимется после перезапуска, затем перезагружаем страницу
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && !busy && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, busy])
+
   const restartServer = async () => {
     setServerAction('restart')
     try { await api.restartServer() } catch { /* сервер уже умер — это норма */ }

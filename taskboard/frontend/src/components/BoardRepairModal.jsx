@@ -28,6 +28,12 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(null)
 
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && !busy && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, busy])
+
   const load = async () => {
     try {
       setPlan(await api.repairPlan())

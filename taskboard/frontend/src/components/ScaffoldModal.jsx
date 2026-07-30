@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api'
 
 // Модалка развёртывания структуры tasks/ и агентского окружения.
@@ -31,6 +31,12 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
       setBusy(false)
     }
   }
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const checkbox = 'accent-sky-500'
   const row = 'flex items-start gap-2 text-sm cursor-pointer select-none'
