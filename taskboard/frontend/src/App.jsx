@@ -344,6 +344,15 @@ export default function App() {
     }
   }
 
+  // Порядок колонок отличается от пайплайна — показываем кнопку сброса.
+  // Сравниваем с defaultColumnOrder, а не просто `!!columnOrder`: пустой
+  // массив (явный null) и совпадающий с дефолтом порядок скрывают кнопку
+  const hasCustomOrder = useMemo(() => {
+    if (!columnOrder) return false
+    const def = defaultColumnOrder()
+    return columnOrder.length !== def.length || columnOrder.some((s, i) => s !== def[i])
+  }, [columnOrder])
+
   // --- Рендер ---
 
   const report = health?.report
@@ -356,7 +365,7 @@ export default function App() {
         active={projects.active}
         canCreate={!!features.create_task}
         hasLogs={!!features.logs}
-        hasCustomOrder={!!columnOrder}
+        hasCustomOrder={hasCustomOrder}
         onSwitchProject={switchProject}
         onNewTask={() => setShowNewTask(true)}
         onShowLogs={() => setShowLogs(true)}
