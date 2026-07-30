@@ -28,7 +28,7 @@ from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
 from backend.statuses import CATALOG, load_pipeline
-from backend.task_parser import parse_task
+from backend.task_parser import list_all_tasks, parse_task
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -285,6 +285,13 @@ def api_board() -> dict:
         "dnd_full_board": cfg.get("dnd_full_board", True),
     }
     return board
+
+
+@app.get("/api/tasks/list")
+def api_tasks_list() -> dict:
+    """Список всех задач проекта — подсказки для blocked_by."""
+    tasks_dir, _cfg = _ctx()
+    return {"items": list_all_tasks(tasks_dir)}
 
 
 @app.get("/api/search")

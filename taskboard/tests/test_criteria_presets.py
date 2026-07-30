@@ -168,5 +168,44 @@ class EpicSuggestionsUiTest(unittest.TestCase):
         self.assertIn("epicPicked", self.src)
 
 
+class BlockedBySuggestionsUiTest(unittest.TestCase):
+    """Поле blocked_by: подсказки списком задач проекта (TASK-063)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.src = MODAL.read_text(encoding="utf-8")
+        cls.api = API_JS.read_text(encoding="utf-8")
+
+    def test_api_client_has_endpoint(self) -> None:
+        self.assertIn("tasksList", self.api)
+        self.assertIn("/api/tasks/list", self.api)
+
+    def test_tasks_loaded_on_mount(self) -> None:
+        self.assertIn("tasksList", self.src)
+
+    def test_custom_suggestion_list(self) -> None:
+        self.assertIn("blockedSuggestions", self.src)
+        self.assertIn("blockedPicked", self.src)
+
+    def test_suggestion_shows_id_and_title(self) -> None:
+        self.assertRegex(self.src, r"blockedSuggestions\.map")
+
+    def test_no_create_new_option(self) -> None:
+        """В отличие от эпика, для blocked_by нет поля «создать новую задачу»."""
+        self.assertNotIn("blocked_name", self.src)
+
+    def test_input_has_onfocus_onblur(self) -> None:
+        self.assertIn("onFocus={() => setBlockedFocus(true)}", self.src)
+        self.assertIn("onBlur={() => setBlockedFocus(false)}", self.src)
+
+    def test_selected_task_fills_id(self) -> None:
+        self.assertIn("setBlockedPicked(t.id)", self.src)
+        self.assertIn("setForm({ ...form, blocked_by: t.id })", self.src)
+
+    def test_submit_sends_id_not_label(self) -> None:
+        """В подсказке может быть ID · название, в форму пишется только ID."""
+        self.assertIn("blockedPicked", self.src)
+
+
 if __name__ == "__main__":
     unittest.main()

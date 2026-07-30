@@ -48,6 +48,29 @@ def parse_task(tasks_dir: Path, task_id: str) -> dict | None:
     return {"id": task_id, "file": path.name, "meta": meta, "body": body}
 
 
+def list_all_tasks(tasks_dir: Path) -> list[dict]:
+    """Все задачи проекта: [{id, title}] — для подсказок blocked_by.
+
+    Сортировка по номеру задачи (TASK-001 < TASK-002 < TASK-010).
+    """
+    if not tasks_dir or not tasks_dir.is_dir():
+        return []
+    results: list[dict] = []
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        if not _TASK_FILE_RE.match(path.name):
+            continue
+        match_id = re.match(r"^(TASK-\d+)", path.name)
+        if not match_id:
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        meta, _body = parse_frontmatter(content)
+        results.append({"id": match_id.group(1), "title": meta.get("title", "")})
+    return results
+
+
 def set_task_status(tasks_dir: Path, task_id: str, status: str) -> bool:
     """Обновить status в frontmatter задачи. Возвращает успех."""
     path = find_task_file(tasks_dir, task_id)

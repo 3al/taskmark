@@ -46,6 +46,7 @@ export const api = {
   pipeline: () => request('/api/pipeline'),
   pipelineSources: () => request('/api/pipeline/sources'),
   epics: () => request('/api/epics'),
+  tasksList: () => request('/api/tasks/list'),
   criteriaPresets: () => request('/api/criteria-presets'),
   saveCriteriaPreset: (text) =>
     request('/api/criteria-presets', { method: 'POST', body: JSON.stringify({ text }) }),
