@@ -47,6 +47,8 @@ export const api = {
   pipelineSources: () => request('/api/pipeline/sources'),
   epics: () => request('/api/epics'),
   tasksList: () => request('/api/tasks/list'),
+  updateTask: (id, updates) =>
+    request(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
   criteriaPresets: () => request('/api/criteria-presets'),
   saveCriteriaPreset: (text) =>
     request('/api/criteria-presets', { method: 'POST', body: JSON.stringify({ text }) }),

@@ -91,3 +91,68 @@ def set_task_status(tasks_dir: Path, task_id: str, status: str) -> bool:
 
     path.write_text(header + content[end:], encoding="utf-8")
     return True
+
+
+def slugify(text: str) -> str:
+    """Преобразовать текст в slug для имени файла (как в create_task.py)."""
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s-]", "", text)
+    text = re.sub(r"[\s_]+", "-", text)
+    return text
+
+
+def normalize_title(text: str) -> str:
+    """Название в одну строку: любые пробелы и переносы схлопываются в пробел.
+
+    Заголовок живёт во frontmatter (одна строка `title:`) и в строке доски —
+    перевод строки внутри разорвал бы и то, и другое.
+    """
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def set_task_title(tasks_dir: Path, task_id: str, new_title: str) -> dict:
+    """Обновить title во frontmatter и переименовать файл задачи.
+
+    Возвращает {"ok": True, "title": "...", "file": "TASK-NNN-новый-slug.md"}
+    или {"ok": False, "error": "..."}.
+    """
+    new_title = normalize_title(new_title)
+    if not new_title:
+        return {"ok": False, "error": "Название не может быть пустым"}
+    # Строка доски — `[Заголовок](файл)`, и `](` внутри заголовка обрывает
+    # ссылку раньше времени: одиночные скобки безобидны, эта пара — нет
+    if "](" in new_title:
+        return {"ok": False, "error": "Название не может содержать «](»"}
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Задача не найдена: {task_id}"}
+    content = path.read_text(encoding="utf-8")
+    if not content.startswith("---"):
+        return {"ok": False, "error": "Нет frontmatter"}
+    end = content.find("\n---", 3)
+    if end < 0:
+        return {"ok": False, "error": "Нет закрывающего ---"}
+
+    header = content[:end]
+    # Замена — функцией: в названии может быть \1 или обратный слэш, и как
+    # шаблон подстановки re такую строку либо испортит, либо уронит
+    if re.search(r"^title:.*$", header, flags=re.MULTILINE):
+        header = re.sub(r"^title:.*$", lambda _m: f"title: {new_title}", header, flags=re.MULTILINE)
+    else:
+        header += f"\ntitle: {new_title}"
+
+    # Имя файла собирается как в create_task.py; название из одних знаков
+    # препинания даёт пустой slug — тогда остаётся голый номер задачи
+    slug = slugify(new_title).strip("-")
+    new_name = f"{task_id}-{slug}.md" if slug else f"{task_id}.md"
+    new_path = path.with_name(new_name)
+
+    if path != new_path and new_path.exists():
+        return {"ok": False, "error": f"Файл уже существует: {new_name}"}
+
+    path.write_text(header + content[end:], encoding="utf-8")
+
+    if path != new_path:
+        path.rename(new_path)
+
+    return {"ok": True, "title": new_title, "file": new_name}

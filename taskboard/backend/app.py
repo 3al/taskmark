@@ -23,12 +23,12 @@ from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import apply_config_migrations, pipeline_removals
 from backend.pipeline_sources import list_sources
-from backend.queue_ops import ensure_section, move_task
+from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
 from backend.statuses import CATALOG, load_pipeline
-from backend.task_parser import list_all_tasks, parse_task
+from backend.task_parser import list_all_tasks, parse_task, set_task_title
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -78,6 +78,10 @@ class TaskIn(BaseModel):
     target: str = "backlog"
     # Позиция в очереди при target=queue: start | end
     queue_position: str = "end"
+
+
+class TaskUpdateIn(BaseModel):
+    title: str | None = None
 
 
 class ConfigIn(BaseModel):
@@ -369,6 +373,34 @@ def api_create_task(body: TaskIn) -> dict:
         if not move.get("ok"):
             raise HTTPException(400, f"Задача создана, но не попала в очередь: {move.get('error')}")
         result["status"] = move.get("status")
+    return result
+
+
+@app.patch("/api/tasks/{task_id}")
+def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
+    """Обновить поля задачи: title — переименовывает файл и правит доску."""
+    tasks_dir, cfg, _report = _validate_or_400()
+    board_path = tasks_dir / cfg.get("board_file", "board.md")
+
+    result: dict = {"ok": True}
+
+    if body.title is not None:
+        renamed = set_task_title(tasks_dir, task_id, body.title)
+        if not renamed.get("ok"):
+            raise HTTPException(400, renamed.get("error", "Ошибка переименования"))
+
+        # Файл — источник правды: его переименовали, значит правка состоялась.
+        # Строки на доске может не быть (задачу с доски убрали) — сообщаем это
+        # флагом, а не ошибкой
+        title, new_file = renamed["title"], renamed["file"]
+        linked = relink_entry(board_path, task_id, new_file)
+        titled = retitle_entry(board_path, task_id, title)
+        result.update(
+            title=title,
+            file=new_file,
+            board=bool(linked.get("ok") and titled.get("ok")),
+        )
+
     return result
 
 
