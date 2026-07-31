@@ -160,7 +160,9 @@ export default function MarkdownEditor({
       ) : (
         <textarea
           ref={ref}
-          className="w-full font-mono text-[13px] leading-relaxed text-zinc-300
+          // Моноширинный мельче пропорционального при том же кегле: 13px тела
+          // задачи в поле читались хуже, чем в рендере
+          className="w-full font-mono text-[15px] leading-relaxed text-zinc-300
             bg-zinc-950/40 border border-zinc-700 rounded-lg px-3 py-2 resize-y
             outline-none focus:border-zinc-500"
           value={value}
