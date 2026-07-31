@@ -498,9 +498,15 @@ def queue(tasks_dir: Path, limit: int = 5) -> dict:
         m = _ENTRY_RE.match(lines[i])
         if not m:
             continue
+        # Признак простоя идёт вместе с очередью: без него агент не отличит
+        # стоящую задачу от свободной и возьмёт первую сверху
+        path = find_task_file(tasks_dir, m.group("id"))
+        state = stall_of(_read_meta(path)) if path else stall_of({})
         tasks.append({"position": len(tasks) + 1, "id": m.group("id"),
                       "title": m.group("title"), "file": m.group("file"),
-                      "meta": re.sub(r"^·\s*", "", m.group("tail").strip()).strip()})
+                      "meta": re.sub(r"^·\s*", "", m.group("tail").strip()).strip(),
+                      "stalled": state["stalled"],
+                      "blocked_by": state["blocked_by"], "paused": state["paused"]})
     out["total"] = len(tasks)
     out["tasks"] = tasks if limit <= 0 else tasks[:limit]
     return out
