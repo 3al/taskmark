@@ -18,6 +18,13 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   py tasks/set_status.py --list             # пайплайн статусов проекта (JSON)
   py tasks/set_status.py --targets TASK-004 # куда можно двинуть задачу (JSON)
 
+Заметку агента тоже пишет скрипт: время он берёт из системы (выставить его
+задним числом «на глаз» нельзя), строку ставит в конец секции, а снесённый
+заголовок «Заметки агента» возвращает на его место в шаблоне:
+
+  py tasks/set_status.py TASK-004 --note "корень бага в _apply_role_ui()" --agent "Claude Opus 5"
+  py tasks/set_status.py TASK-004 testing --note "готово к проверке" --agent "Claude Opus 5"
+
 Почему задача стоит (блокировки и пауза) — те же два конца, что у статуса,
 поэтому правятся тоже одним вызовом:
 
@@ -32,7 +39,9 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   task_id                 Идентификатор задачи (TASK-NNN)
   status                  Новый статус из пайплайна проекта (см. --list)
   --agent TEXT            Кто меняет статус: попадёт в хвост строки доски.
-                          Без него сохраняется прежний исполнитель, дата обновляется
+                          Без него сохраняется прежний исполнитель, дата обновляется.
+                          При --note — своя модель, обязательна
+  --note ТЕКСТ            Заметка агента: время системное, строка — в конец секции
   --position start|end    Куда вставить в целевом разделе (по умолчанию start)
   --block TASK-NNN        Задача ждёт другую (правит blocked_by и blocks у обеих)
   --unblock [TASK-NNN]    Снять блокировку; без значения — все
@@ -468,7 +477,168 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
 
     return {"ok": True, "task": task_id, "status": status, "section": section,
             "file": task_file.name, "from": prev, "skipped": skipped,
-            "stall_cleared": bool(cleared and cleared.get("cleared"))}
+            "stall_cleared": bool(cleared and cleared.get("cleared")),
+            # Смена статуса — единственный момент, когда файл задачи заведомо
+            # открывают: заодно показываем, что в нём разъехалось
+            "warnings": check_task_file(task_file)}
+
+
+# --- Заметки агента и структура файла задачи --------------------------------
+# Заметку пишет скрипт, а не агент руками: время он берёт из системы, поэтому
+# выставить его «на глаз» задним числом нельзя, а строка всегда встаёт в конец
+# секции — так лог остаётся хронологией, а не набором строк в случайном порядке.
+
+NOTES_SECTION = "Заметки агента"
+COMMITS_SECTION = "История коммитов"
+
+# Порядок секций файла задачи — эталон tasks/_TEMPLATE.md. «История доработок»
+# появляется только после возврата с ревью, поэтому необязательна
+TASK_SECTIONS = ("Описание", "Чеклист", "История доработок",
+                 NOTES_SECTION, COMMITS_SECTION)
+
+NOTE_RE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\*\* · [^·]+ · .+$")
+
+
+def _headings(lines: list[str]) -> list[str]:
+    """Заголовки второго уровня файла в порядке следования."""
+    out = []
+    for line in lines:
+        m = re.match(r"^##\s+(.*)$", line)
+        if m:
+            out.append(m.group(1).strip())
+    return out
+
+
+def check_task_file(path: Path) -> list[str]:
+    """Что разъехалось в файле задачи: секции, их порядок, хронология заметок.
+
+    Не запрет, а видимость: файл правят руками, и нарушения копятся молча —
+    снесённый заголовок секции, «История коммитов» посреди файла, заметки
+    вразнобой. Проверка идёт при каждой смене статуса, поэтому агент видит
+    список сразу, а не через пять задач.
+    """
+    try:
+        lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return []
+
+    warnings: list[str] = []
+    heads = _headings(lines)
+    lower = [h.lower() for h in heads]
+
+    # «История коммитов» появляется при первом коммите — её отсутствие законно,
+    # а вот секция заметок есть в шаблоне всегда: нет её — заголовок снесли
+    if NOTES_SECTION.lower() not in lower:
+        warnings.append(f"нет секции «{NOTES_SECTION}»: заголовки задачи — её структура, "
+                        f"их не сносят (эталон — tasks/_TEMPLATE.md)")
+
+    if lower and COMMITS_SECTION.lower() in lower and lower[-1] != COMMITS_SECTION.lower():
+        warnings.append(f"«{COMMITS_SECTION}» не последняя секция файла")
+
+    for name in TASK_SECTIONS:
+        if lower.count(name.lower()) > 1:
+            warnings.append(f"секция «{name}» встречается {lower.count(name.lower())} раза: "
+                            f"дописывать нужно в существующую, а не заводить вторую")
+
+    known = [h for h in heads if h.lower() in [s.lower() for s in TASK_SECTIONS]]
+    order = [s.lower() for s in TASK_SECTIONS]
+    positions = [order.index(h.lower()) for h in known]
+    if positions != sorted(positions):
+        warnings.append("секции идут не в порядке шаблона: "
+                        + " → ".join(s for s in TASK_SECTIONS if s.lower() in lower))
+
+    bounds = _section_bounds(lines, NOTES_SECTION)
+    if bounds:
+        start, end = bounds
+        stamps: list[str] = []
+        malformed = 0
+        in_comment = False
+        for i in range(start + 1, end):
+            line = lines[i].rstrip()
+            # Комментарии агенту читателю не видны; отступ — продолжение списка
+            if in_comment:
+                in_comment = "-->" not in line
+                continue
+            if line.lstrip().startswith("<!--"):
+                in_comment = "-->" not in line
+                continue
+            if not line.strip() or line.startswith((" ", "\t")):
+                continue
+            m = NOTE_RE.match(line)
+            if m:
+                stamps.append(m.group(1))
+            elif line.startswith("- "):
+                # Ругаемся только на попытку записать заметку: свободный текст
+                # старых задач (формат до перехода на строки списка) не наше дело
+                malformed += 1
+        if malformed:
+            warnings.append(f"строк не в формате заметки: {malformed} "
+                            f"(нужно `- **ГГГГ-ММ-ДД ЧЧ:ММ** · Модель · суть`)")
+        for prev, cur in zip(stamps, stamps[1:]):
+            if cur < prev:
+                warnings.append(f"заметки не в хронологии: {cur} после {prev} — "
+                                f"новая заметка пишется в конец секции (--note)")
+                break
+
+    return warnings
+
+
+def _insert_notes_section(lines: list[str]) -> list[str]:
+    """Вернуть снесённую секцию заметок на её место — перед историей коммитов."""
+    block = [f"## {NOTES_SECTION}", ""]
+    for i, line in enumerate(lines):
+        m = re.match(r"^##\s+(.*)$", line)
+        if m and m.group(1).strip().lower() == COMMITS_SECTION.lower():
+            return lines[:i] + block + lines[i:]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines + [""] + block
+
+
+def add_note(tasks_dir: Path, task_id: str, text: str,
+             agent: str | None = None) -> dict:
+    """Дописать заметку агента в конец секции «Заметки агента».
+
+    agent обязателен: модель — единственное, чего скрипт про агента не знает,
+    а копирование её из соседней строки как раз и делает историю ложной.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+
+    text = _one_line(text)
+    if not text:
+        return {"ok": False, "error": "Пустая заметка: нужен текст — --note \"суть\""}
+
+    agent = _one_line(agent)
+    if not agent:
+        return {"ok": False,
+                "error": "Не указана модель: добавьте --agent \"Модель\". Имя берётся "
+                         "из текущей сессии, а не из соседней строки заметок"}
+
+    note = f"- **{datetime.now().strftime('%Y-%m-%d %H:%M')}** · {agent} · {text}"
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if _section_bounds(lines, NOTES_SECTION) is None:
+        lines = _insert_notes_section(lines)
+    start, end = _section_bounds(lines, NOTES_SECTION) or (0, 0)
+
+    body = lines[start + 1:end]
+    while body and not body[-1].strip():
+        body.pop()
+    if body and body[0].strip():
+        body.insert(0, "")
+    elif not body:
+        body = [""]
+    body.append(note)
+    if end < len(lines):
+        body.append("")
+    lines[start + 1:end] = body
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"ok": True, "task": task_id, "file": path.name, "note": note,
+            "warnings": check_task_file(path)}
 
 
 def current_status(tasks_dir: Path, task_id: str) -> str | None:
@@ -814,8 +984,10 @@ def main() -> None:
                         help="Снять паузу")
     parser.add_argument("--stalled", action="store_true",
                         help="Что сейчас стоит и почему (JSON)")
+    parser.add_argument("--note", metavar="ТЕКСТ", default=None,
+                        help="Дописать заметку агента (время — системное, строка — в конец)")
     parser.add_argument("--agent", default=None,
-                        help="Кто меняет статус (попадёт в строку доски)")
+                        help="Кто меняет статус (попадёт в строку доски); при --note — модель")
     parser.add_argument("--position", choices=["start", "end"], default="start",
                         help="Позиция в целевом разделе (default: start)")
     parser.add_argument("--force", action="store_true",
@@ -869,6 +1041,22 @@ def main() -> None:
             apply(set_paused(tasks_dir, args.task_id, ""),
                   lambda r: f"[OK] {r['task']}: пауза снята")
 
+        if not args.status and args.note is None:
+            return
+
+    # Заметка не трогает ни статус, ни доску — идёт и сама по себе, и вместе
+    # со сменой статуса (финализация пишет заметку и двигает задачу за раз)
+    if args.note is not None:
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --note")
+        result = add_note(tasks_dir, args.task_id, args.note, agent=args.agent)
+        if not result.get("ok"):
+            print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[OK] {result['task']}: заметка записана в «{NOTES_SECTION}»")
+        print(result["note"])
+        for warning in result.get("warnings", []):
+            print(f"[!] {warning}")
         if not args.status:
             return
 
@@ -890,6 +1078,8 @@ def main() -> None:
     if result.get("skipped"):
         # Не запрет, а видимость: пайплайн описывает ожидаемый маршрут
         print(f"[i] минуя {', '.join(result['skipped'])}")
+    for warning in result.get("warnings", []):
+        print(f"[!] {warning}")
 
 
 if __name__ == "__main__":
