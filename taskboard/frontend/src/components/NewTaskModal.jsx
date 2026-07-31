@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { FORM_FIELD } from '../fields'
 import TaskPicker from './TaskPicker'
 
 // Модалка создания задачи (вызов create_task.py через API)
@@ -103,7 +104,8 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
     }
   }
 
-  const field = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500'
+  // Оформление полей — общее (fields.js): те же поля правятся в карточке задачи
+  const field = FORM_FIELD
   const radio = 'accent-sky-500'
 
   return (

@@ -318,6 +318,24 @@ class MarkdownEditorTest(unittest.TestCase):
         self.assertIn("while (to > from && /\\s/.test(text[to - 1])) to--", self.src,
                       "хвостовой пробел выделения попадёт внутрь разметки")
 
+    def test_field_looks_like_the_form(self) -> None:
+        """Поле правки и поля формы создания — одно и то же по виду.
+
+        Разное оформление у полей, делающих одно и то же, читается как разный
+        смысл; поэтому классы живут в `fields.js`, а не копируются.
+        """
+        self.assertIn("FORM_FIELD", self.src, "поле правки оформлено само по себе")
+        # Моноширинный остаётся только на кнопках панели (` и #) — там это знак,
+        # а не текст
+        field = self.src.split("<textarea")[-1].split("/>")[0]
+        self.assertNotIn("font-mono", field,
+                         "моноширинный в поле: markdown его не требует, а рядом с "
+                         "рендером он читается мельче")
+        fields = (SRC / "fields.js").read_text(encoding="utf-8")
+        self.assertIn("FORM_FIELD", fields, "общего класса поля формы нет")
+        form = (SRC / "components" / "NewTaskModal.jsx").read_text(encoding="utf-8")
+        self.assertIn("FORM_FIELD", form, "форма создания задачи живёт своей копией стиля")
+
     def test_panel_does_not_reformat_text(self) -> None:
         """Панель вставляет разметку по требованию и ничего не делает сама.
 

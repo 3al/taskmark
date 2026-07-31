@@ -8,6 +8,13 @@
 // Поле в строке интерфейса: компактное, встаёт рядом с подписью и кнопками.
 // Поля форм оформляет сама форма и передаёт классы компоненту — там своя
 // геометрия (колонка крупных полей), и подгонять её под строку нечего
+// Крупное поле формы: колонка полей в окне создания задачи и правка текста
+// задачи в карточке. Подложка светлее фона окна (`zinc-800`) — так поле видно
+// как поле, а текст на ней не приходится приглушать
+export const FORM_FIELD =
+  'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm ' +
+  'focus:outline-none focus:border-zinc-400'
+
 export const INLINE_FIELD =
   'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs ' +
   'focus:outline-none focus:border-zinc-400 placeholder:text-zinc-600'

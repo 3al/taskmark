@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { mdComponents, rehypeNoteMeta } from '../markdown'
+import { FORM_FIELD } from '../fields'
 
 // Минималистичный редактор markdown: сырой текст + короткая панель разметки +
 // предпросмотр. Правится **исходный текст файла**, и ничего не переформатируется
@@ -160,12 +161,10 @@ export default function MarkdownEditor({
       ) : (
         <textarea
           ref={ref}
-          // Кегль крупнее тела задачи: моноширинный при равном размере читается
-          // мельче. Цвет — тот же `zinc-300/80`, что у абзацев в рендере (index.css):
-          // сплошной zinc-300 на тёмной подложке поля бил по глазам
-          className="w-full font-mono text-[15px] leading-relaxed text-zinc-300/80
-            bg-zinc-950/40 border border-zinc-700 rounded-lg px-3 py-2 resize-y
-            outline-none focus:border-zinc-500"
+          // Оформление — общее с полями формы создания задачи (fields.js):
+          // светлая подложка, обычный шрифт, тот же кегль. Моноширинный markdown
+          // не требует, а рядом с рендером он читался мельче и жёстче
+          className={`${FORM_FIELD} leading-relaxed resize-y`}
           value={value}
           rows={rows}
           onChange={(e) => onChange(e.target.value)}
