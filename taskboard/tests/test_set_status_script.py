@@ -266,6 +266,66 @@ class SetStatusTest(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(self._section_of(), "Cancelled")
 
+    # --- Очередь: агент спрашивает её у скрипта, а не помнит (TASK-062) ---
+
+    def test_queue_returns_pick_section_in_order(self) -> None:
+        """Очередь — раздел `actions.pick` в порядке следования сверху вниз."""
+        self._add_task("TASK-001", "Первая", section="### Новый функционал")
+        self._add_task("TASK-002", "Вторая", section="### Новый функционал")
+        self.mod.set_status(self.tasks, "TASK-001", "queued")
+        self.mod.set_status(self.tasks, "TASK-002", "queued", position="end")
+
+        queue = self.mod.queue(self.tasks)
+
+        self.assertEqual("queued", queue["status"])
+        self.assertEqual("Queue", queue["section"])
+        self.assertEqual(["TASK-001", "TASK-002"], [t["id"] for t in queue["tasks"]])
+        self.assertEqual("Первая", queue["tasks"][0]["title"])
+
+    def test_queue_reflects_board_right_now(self) -> None:
+        """Ради этого всё и затевалось: доска поменялась — ответ другой."""
+        self._add_task("TASK-001", "Первая", section="### Новый функционал")
+        self._add_task("TASK-002", "Вторая", section="### Новый функционал")
+        self.mod.set_status(self.tasks, "TASK-001", "queued")
+        self.assertEqual(["TASK-001"], [t["id"] for t in self.mod.queue(self.tasks)["tasks"]])
+
+        self.mod.set_status(self.tasks, "TASK-002", "queued")  # встаёт первой
+        self.assertEqual(["TASK-002", "TASK-001"],
+                         [t["id"] for t in self.mod.queue(self.tasks)["tasks"]])
+
+    def test_empty_queue_is_not_an_error(self) -> None:
+        """Пустая очередь — законный ответ: скиллы по нему спрашивают пользователя."""
+        queue = self.mod.queue(self.tasks)
+        self.assertEqual([], queue["tasks"])
+        self.assertEqual("Queue", queue["section"])
+
+    def test_queue_limit(self) -> None:
+        """Агенту нужна верхушка, а не весь бэклог — по умолчанию отдаём срез."""
+        for i in range(1, 8):
+            self._add_task(f"TASK-00{i}", f"Задача {i}", section="### Новый функционал")
+            self.mod.set_status(self.tasks, f"TASK-00{i}", "queued", position="end")
+        self.assertEqual(3, len(self.mod.queue(self.tasks, limit=3)["tasks"]))
+        self.assertEqual(7, len(self.mod.queue(self.tasks, limit=0)["tasks"]),
+                         "limit=0 — вся очередь")
+
+    def test_queue_survives_brackets_in_title(self) -> None:
+        """Заголовки со скобками разбираются так же, как на доске (TASK-057)."""
+        self._add_task("TASK-009", "[BE] Счетчик", section="### Новый функционал")
+        self.mod.set_status(self.tasks, "TASK-009", "queued")
+        queue = self.mod.queue(self.tasks)
+        self.assertEqual(["TASK-009"], [t["id"] for t in queue["tasks"]])
+        self.assertEqual("[BE] Счетчик", queue["tasks"][0]["title"])
+
+    def test_cli_queue_prints_json(self) -> None:
+        self._add_task("TASK-001", "Первая", section="### Новый функционал")
+        self.mod.set_status(self.tasks, "TASK-001", "queued")
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--queue", "--tasks-dir", str(self.tasks)],
+            capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        data = json.loads(proc.stdout)
+        self.assertEqual(["TASK-001"], [t["id"] for t in data["tasks"]])
+
     # --- Идемпотентность и ошибки ---
 
     def test_idempotent(self) -> None:

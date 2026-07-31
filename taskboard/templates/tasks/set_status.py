@@ -233,9 +233,17 @@ def _section_bounds(lines: list[str], name: str) -> tuple[int, int] | None:
     return (start, len(lines)) if start is not None else None
 
 
+# Строка задачи на доске: - TASK-NNN · [Заголовок](файл.md) · агент · дата.
+# Заголовок ленивый: человек ставит в него скобки («[BE] Счетчик»), и конец
+# ссылки — первое `](`, а не первая `]`
+_ENTRY_RE = re.compile(
+    r"^\s*-\s*(?:~~)?\s*(?P<id>TASK-\d+)\s*·\s*"
+    r"\[(?P<title>.+?)\]\((?P<file>[^)]+)\)(?P<tail>.*)$")
+
+
 def _retail(entry: str, agent: str | None, date: str) -> str:
     """Заменить хвост записи на «· агент · дата», сохранив прежнего агента."""
-    m = re.match(r"^(\s*-\s*(?:~~)?\s*TASK-\d+\s*·\s*\[[^\]]*\]\([^)]*\))(.*)$", entry)
+    m = re.match(r"^(\s*-\s*(?:~~)?\s*TASK-\d+\s*·\s*\[.+?\]\([^)]*\))(.*)$", entry)
     if not m:
         return entry
     head, tail = m.group(1), m.group(2).strip()
@@ -412,6 +420,47 @@ def current_status(tasks_dir: Path, task_id: str) -> str | None:
     return m.group(1) if m else None
 
 
+def queue(tasks_dir: Path, limit: int = 5) -> dict:
+    """Живая очередь: раздел `actions.pick` доски прямо сейчас.
+
+    Нужна, чтобы агент не называл очередь по памяти: доску правят через UI и
+    другие агенты, и снимок, прочитанный в начале сессии, устаревает молча.
+    Чтение всей доски ради этого — лишние тысячи токенов, поэтому здесь
+    компактный срез: верхушка очереди в порядке следования.
+
+    limit — сколько задач вернуть (0 — всю очередь).
+    """
+    tasks_dir = Path(tasks_dir)
+    cfg = load_config(tasks_dir)
+    pipeline = pipeline_of(cfg)
+    status = actions_of(cfg, pipeline).get("pick")
+    section = section_for_status(cfg, status) if status else None
+    out: dict = {"status": status, "section": section, "total": 0, "tasks": []}
+    if not section:
+        return out
+
+    board = tasks_dir / cfg.get("board_file", "board.md")
+    if not board.is_file():
+        return out
+    lines = board.read_text(encoding="utf-8").splitlines()
+    bounds = _section_bounds(lines, section)
+    if not bounds:
+        return out
+
+    start, end = bounds
+    tasks: list[dict] = []
+    for i in range(start + 1, end):
+        m = _ENTRY_RE.match(lines[i])
+        if not m:
+            continue
+        tasks.append({"position": len(tasks) + 1, "id": m.group("id"),
+                      "title": m.group("title"), "file": m.group("file"),
+                      "meta": re.sub(r"^·\s*", "", m.group("tail").strip()).strip()})
+    out["total"] = len(tasks)
+    out["tasks"] = tasks if limit <= 0 else tasks[:limit]
+    return out
+
+
 def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
     """Пайплайн проекта и — для задачи — законные цели перехода.
 
@@ -443,6 +492,10 @@ def main() -> None:
                         help="Показать пайплайн статусов проекта (JSON)")
     parser.add_argument("--targets", metavar="TASK-NNN", default=None,
                         help="Законные цели перехода для задачи (JSON)")
+    parser.add_argument("--queue", action="store_true",
+                        help="Живая очередь доски прямо сейчас (JSON)")
+    parser.add_argument("--limit", type=int, default=5,
+                        help="Сколько задач очереди показать, 0 — все (default: 5)")
     parser.add_argument("--agent", default=None,
                         help="Кто меняет статус (попадёт в строку доски)")
     parser.add_argument("--position", choices=["start", "end"], default="start",
@@ -453,12 +506,16 @@ def main() -> None:
 
     tasks_dir = Path(args.tasks_dir) if args.tasks_dir else Path(__file__).parent
 
+    if args.queue:
+        print(json.dumps(queue(tasks_dir, args.limit), ensure_ascii=False, indent=2))
+        return
+
     if args.list or args.targets:
         print(json.dumps(describe(tasks_dir, args.targets), ensure_ascii=False, indent=2))
         return
 
     if not args.task_id or not args.status:
-        parser.error("нужны TASK-NNN и статус (либо --list / --targets)")
+        parser.error("нужны TASK-NNN и статус (либо --list / --targets / --queue)")
 
     result = set_status(tasks_dir, args.task_id, args.status,
                         agent=args.agent, position=args.position)

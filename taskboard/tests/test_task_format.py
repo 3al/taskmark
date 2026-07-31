@@ -109,38 +109,51 @@ class TaskTemplateTest(unittest.TestCase):
 
 
 class StartTaskQueueTest(unittest.TestCase):
-    """Очередь читается в момент старта, а не из памяти сессии (TASK-062).
+    """Очередь спрашивают у скрипта, а не помнят (TASK-062).
 
-    Правила проекта велят прочитать board.md в начале сессии, но к моменту
-    «возьми задачу» доска могла обновиться через UI или другого агента.
-    Скилл старта обязан перечитывать очередь, иначе агент предлагает задачи
-    по устаревшему снимку.
+    Первая итерация задачи велела «перечитать board.md». Не сработало:
+    напоминание про чтение файла проигрывает контексту, который «вроде бы
+    уже есть», и агент назвал устаревшую очередь в отчёте о финализации.
+    Работает другая форма — та же, что для статусов: **обязательный вызов
+    команды**. Поэтому скиллы и правила требуют `--queue`, а не чтения файла.
     """
 
-    def _skill(self) -> str:
-        return (AGENTIC / ".claude" / "skills" / "start-task" / "SKILL.md").read_text(
+    def _skill(self, name: str) -> str:
+        return (AGENTIC / ".claude" / "skills" / name / "SKILL.md").read_text(
             encoding="utf-8")
 
-    def test_skill_rereads_board_before_pick(self) -> None:
-        skill = self._skill()
-        self.assertIn("перечитай `tasks/board.md`", skill,
-                      "скилл старта не требует свежего чтения очереди")
+    def _rules_queue_section(self) -> str:
+        rules = (AGENTIC / "rules_section.md").read_text(encoding="utf-8")
+        return rules.split("## Живая очередь")[-1].split("\n## ")[0]
+
+    def test_start_task_asks_script_for_queue(self) -> None:
+        skill = self._skill("start-task")
+        self.assertIn("--queue", skill, "скилл старта не спрашивает очередь у скрипта")
         self.assertIn("устар", skill.lower(),
                       "не объяснено, почему прочитанное в начале сессии не годится")
 
-    def test_skill_important_notes_queue_freshness(self) -> None:
-        skill = self._skill()
-        important = skill.split("## Важно")[-1]
-        self.assertIn("перечитай", important.lower(),
+    def test_start_task_important_notes_queue_freshness(self) -> None:
+        important = self._skill("start-task").split("## Важно")[-1]
+        self.assertIn("--queue", important,
                       "инвариант свежей очереди не закреплён в разделе «Важно»")
 
-    def test_rules_demand_queue_reread(self) -> None:
-        """Секция «Живая очередь» в правилах говорит о том же: иначе скилл
-        и правила противоречат друг другу."""
-        rules = (AGENTIC / "rules_section.md").read_text(encoding="utf-8")
-        queue = rules.split("## Живая очередь")[-1].split("\n## ")[0]
-        self.assertIn("перечитай", queue.lower(),
-                      "правила не требуют перечитывать доску перед предложением задачи")
+    def test_finalize_task_asks_script_before_naming_next(self) -> None:
+        """Именно здесь всё и сломалось: отчёт о финализации назвал очередь по памяти."""
+        skill = self._skill("finalize-task")
+        self.assertIn("--queue", skill,
+                      "скилл финализации позволяет назвать следующую задачу по памяти")
+
+    def test_rules_demand_asking_the_script(self) -> None:
+        """Правила говорят то же, иначе скилл и правила противоречат друг другу."""
+        queue = self._rules_queue_section()
+        self.assertIn("--queue", queue,
+                      "правила не требуют спрашивать очередь у скрипта")
+
+    def test_rules_ban_naming_queue_from_memory(self) -> None:
+        """Запрет распространяется на любое упоминание очереди, а не только на выбор."""
+        queue = self._rules_queue_section().lower()
+        self.assertIn("по памяти", queue,
+                      "в правилах нет прямого запрета называть очередь по памяти")
 
 
 class AgentNotesFormatTest(unittest.TestCase):
