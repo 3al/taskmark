@@ -15,9 +15,12 @@ const STALL_STRIPE = {
   blocked: 'bg-rose-500/70',
   paused: 'bg-amber-400/70',
   both: 'bg-gradient-to-b from-rose-500/70 from-50% to-amber-400/70 to-50%',
+  // Блокеры завершены: пометка ещё стоит, но держать нечему — приглушаем
+  stale: 'bg-zinc-500/60',
 }
 
 function stripeKind(task) {
+  if (task.stall_stale) return 'stale'
   const blocked = task.blocked_by?.length > 0
   if (blocked && task.paused) return 'both'
   if (blocked) return 'blocked'
@@ -65,9 +68,15 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         <div className="flex items-center gap-1.5 text-xs font-mono text-zinc-500">
           <span className="shrink-0">{task.id}</span>
           {task.struck && <span className="text-zinc-600 normal-case shrink-0">superseded</span>}
+          {/* Значок — эмодзи: его цвет рисует шрифт, и text-* на него не
+              действует. Чтобы приглушённая пометка выглядела приглушённой
+              целиком, обесцвечиваем фильтром */}
           {task.blocked_by?.length > 0 && (
-            <span className="shrink-0 text-rose-400/90 normal-case"
-                  title={`Ждёт: ${task.blocked_by.join(', ')}`}>
+            <span className={`shrink-0 normal-case ${task.stall_stale
+              ? 'text-zinc-500 grayscale opacity-80' : 'text-rose-400/90'}`}
+                  title={task.stall_stale
+                    ? `Блокеры завершены, пометку можно снять: ${task.blocked_by.join(', ')}`
+                    : `Ждёт: ${task.blocked_by.join(', ')}`}>
               ⛔{task.blocked_by[0]}
               {/* «+N» жмётся к номеру блокера (узкий пробел, приглушённый цвет):
                   обычный пробел ставил его ровно посередине между блокировкой и
@@ -81,8 +90,11 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
               эпика, а у значка без номера постоянное место читается лучше, чем
               позиция, зависящая от того, есть ли рядом блокировка */}
           {task.paused && (
-            <span className="ml-auto shrink-0 text-amber-300/90 normal-case"
-                  title={`Пауза: ${task.paused}`}>
+            <span className={`ml-auto shrink-0 normal-case ${task.stall_stale
+              ? 'text-zinc-500 grayscale opacity-80' : 'text-amber-300/90'}`}
+                  title={task.stall_stale
+                    ? `Пометку можно снять: ${task.paused}`
+                    : `Пауза: ${task.paused}`}>
               ⏸
             </span>
           )}

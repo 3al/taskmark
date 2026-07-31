@@ -27,7 +27,8 @@ from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_e
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
-from backend.stall import (annotate_stall, set_blocked_by, set_paused,
+from backend.stall import (annotate_stall, blocker_candidates, can_stall,
+                           move_confirmation, set_blocked_by, set_paused,
                            stall_details, stalled_tasks)
 from backend.statuses import CATALOG, load_pipeline
 from backend.task_parser import list_all_tasks, parse_task, set_task_title
@@ -64,6 +65,9 @@ class MoveIn(BaseModel):
     position: int | None = None
     after_task_id: str | None = None
     group: str | None = None
+    # Перенос стоящей задачи в работу подтверждается явно: без признака API
+    # отказывает и называет причину — правило одно для всех клиентов
+    confirm: bool = False
 
 
 class TaskIn(BaseModel):
@@ -286,7 +290,7 @@ def api_board() -> dict:
     annotate_epics(tasks_dir, board)
     # Причина простоя есть только во frontmatter — карточке она нужна, чтобы
     # маркер «стоит» рисовался без открытия задачи
-    annotate_stall(tasks_dir, board)
+    annotate_stall(tasks_dir, board, pipeline)
     board["report"] = report
     board["config"] = {
         # Фронт рисует колонки, порядок, цвета и правила DnD по пайплайну;
@@ -301,9 +305,17 @@ def api_board() -> dict:
 
 
 @app.get("/api/tasks/list")
-def api_tasks_list() -> dict:
-    """Список всех задач проекта — подсказки для blocked_by."""
-    tasks_dir, _cfg = _ctx()
+def api_tasks_list(blocker_for: str = "") -> dict:
+    """Список задач проекта — подсказки для blocked_by.
+
+    С `blocker_for=TASK-NNN` отдаёт только тех, кем эту задачу вообще можно
+    заблокировать: без себя, завершённых, отменённых, уже проставленных и
+    всех, кто (пусть и через цепочку) ждёт её саму. Считает бэкенд — фронт
+    не знает ни графа зависимостей, ни статусов чужих задач.
+    """
+    tasks_dir, cfg = _ctx()
+    if blocker_for:
+        return {"items": blocker_candidates(tasks_dir, cfg, blocker_for)}
     return {"items": list_all_tasks(tasks_dir)}
 
 
@@ -348,7 +360,7 @@ def api_remove_criteria_preset(body: CriteriaPresetIn) -> dict:
 
 @app.get("/api/task/{task_id}")
 def api_task(task_id: str) -> dict:
-    tasks_dir, _cfg = _ctx()
+    tasks_dir, cfg = _ctx()
     task = parse_task(tasks_dir, task_id)
     if not task:
         raise HTTPException(404, f"Задача не найдена: {task_id}")
@@ -358,7 +370,11 @@ def api_task(task_id: str) -> dict:
     # разбор «~», списков и пустых значений жил в одном месте. Блокеры идут
     # с заголовком и статусом: по одному номеру не понять, далеко ли до
     # разблокировки, а фронт файлов задач не читает
-    task["stall"] = stall_details(tasks_dir, task["meta"])
+    pipeline = load_pipeline(cfg)
+    task["stall"] = stall_details(tasks_dir, task["meta"], pipeline)
+    # Можно ли вообще ставить простой в этом статусе: в терминальном UI просто
+    # не показывает кнопки — подпись про недоступное действие только шумит
+    task["stall"]["can_set"] = can_stall(pipeline, task["meta"].get("status", ""))["ok"]
     return task
 
 
@@ -426,6 +442,19 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
             board=bool(linked.get("ok") and titled.get("ok")),
         )
 
+    if body.blocked_by is not None or body.paused is not None:
+        # Простой ставится не в любом статусе: у завершённой или отменённой
+        # задачи «ждёт» — мусор в данных. Правило спрашиваем у бэкенда, чтобы
+        # UI, API и set_status.py не разъехались в трактовках
+        task = parse_task(tasks_dir, task_id)
+        status = (task or {}).get("meta", {}).get("status", "")
+        verdict = can_stall(load_pipeline(cfg), status)
+        # Снятие простоя разрешено всегда: убрать мусор нужно и там, где
+        # поставить его уже нельзя
+        setting = bool(body.blocked_by) or bool((body.paused or "").strip())
+        if setting and not verdict["ok"]:
+            raise HTTPException(400, verdict["reason"])
+
     if body.blocked_by is not None:
         # Список задаётся целиком: у блокеров синхронно правится `blocks`,
         # снятые блокировки со второго конца убираются
@@ -448,6 +477,19 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
 @app.post("/api/tasks/{task_id}/move")
 def api_move(task_id: str, body: MoveIn) -> dict:
     tasks_dir, cfg, _report = _validate_or_400()
+    pipeline = load_pipeline(cfg)
+
+    # Стоящую задачу берут в работу — это и есть то, от чего защищает
+    # блокировка. Отказываем, пока клиент не подтвердил явно: тогда правило
+    # соблюдает любой клиент, а не только доска (она спрашивает у пользователя
+    # и повторяет вызов с confirm)
+    target = pipeline.status_for_section(body.to_section) or ""
+    if not body.confirm:
+        verdict = move_confirmation(tasks_dir, pipeline, task_id, target)
+        if verdict["confirm"]:
+            raise HTTPException(400, {"code": "stall_confirm",
+                                      "message": verdict["reason"]})
+
     result = move_task(tasks_dir, cfg, task_id, body.to_section, body.position,
                        body.after_task_id, body.group)
     if not result.get("ok"):

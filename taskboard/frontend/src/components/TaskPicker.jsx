@@ -16,7 +16,7 @@ import { INLINE_FIELD } from '../fields'
 // (или null), и место вызова решает, что делать с «не выбрано».
 export default function TaskPicker({
   value, onChange, placeholder = 'TASK-NNN', exclude = [], autoFocus = false,
-  className = '', inputClassName = INLINE_FIELD, onEnter,
+  className = '', inputClassName = INLINE_FIELD, blockerFor = '', onEnter,
 }) {
   const [tasks, setTasks] = useState([])
   // Два разных состояния, и путать их нельзя: `focus` — курсор действительно в
@@ -28,8 +28,11 @@ export default function TaskPicker({
   const [active, setActive] = useState(0)
 
   useEffect(() => {
-    api.tasksList().then((d) => setTasks(d.items || [])).catch(() => { /* старый сервер */ })
-  }, [])
+    // Кем можно заблокировать — решает бэкенд: он знает и статусы задач, и
+    // граф зависимостей, в котором прячутся циклы
+    api.tasksList(blockerFor).then((d) => setTasks(d.items || []))
+      .catch(() => { /* старый сервер */ })
+  }, [blockerFor])
 
   const text = (value || '').trim()
   const needle = text.toLowerCase()
@@ -114,6 +117,8 @@ export default function TaskPicker({
             >
               <span className="font-mono text-zinc-300">{t.id}</span>
               {t.title && <span className="text-zinc-500"> · {t.title}</span>}
+              {/* Статус кандидата: по нему видно, стоит ли вообще ждать */}
+              {t.label && <span className="text-zinc-600"> · {t.label}</span>}
             </button>
           ))}
         </div>

@@ -458,7 +458,9 @@ class ScriptStallTest(StallProject):
                          % next(self.tasks.glob("TASK-013*.md")).name, encoding="utf-8")
 
         self.run_script("TASK-013", "--pause", "ждём стенд")
-        result = module.set_status(self.tasks, "TASK-013", "development")
+        # Взять стоящую задачу в работу можно только явно (TASK-079), но сама
+        # пауза при этом остаётся: снимает её человек, а не смена статуса
+        result = module.set_status(self.tasks, "TASK-013", "development", force=True)
 
         self.assertTrue(result["ok"], result)
         self.assertEqual("ждём стенд", self.meta("TASK-013")["paused"])

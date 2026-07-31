@@ -88,28 +88,102 @@ def task_stall(tasks_dir: Path, task_id: str) -> dict | None:
     return stall_of(_meta_of(path)) if path else None
 
 
-def resolve_ids(tasks_dir: Path, ids) -> list[dict]:
-    """Развернуть номера задач в `[{id, title, status, found}]`.
+def is_terminal(pipeline, status: str) -> bool:
+    """Конец маршрута: терминальный статус или съезд.
+
+    Имена не подставляем — пайплайн настраивается, и в чужом проекте терминал
+    может называться как угодно. Признак уже вычисляется: у последнего статуса
+    маршрута и у съездов нет ожидаемого следующего шага.
+    """
+    if not status or pipeline is None or not pipeline.has(status):
+        return False
+    return pipeline.next_expected(status) is None
+
+
+def can_stall(pipeline, status: str) -> dict:
+    """Можно ли поставить простой на задачу в этом статусе: `{ok, reason}`.
+
+    Стоять может задача, у которой есть следующий шаг маршрута. Для
+    завершённой или отменённой «ждёт» — не правда пользователя, а мусор:
+    работа окончена, ждать нечего.
+
+    Незнакомый статус не запрещаем: пайплайн могли поменять, а задача с
+    прежним статусом осталась — мешать работать с ней не за что.
+    """
+    if not is_terminal(pipeline, status):
+        return {"ok": True, "reason": ""}
+    meta = pipeline.get(status) or {}
+    label = meta.get("label") or status
+    what = "снята с маршрута" if meta.get("offramp") else "завершена"
+    return {"ok": False,
+            "reason": f"Задача {what} (статус «{label}») — простой не имеет смысла"}
+
+
+def stall_reason(task_id: str, state: dict) -> str:
+    """Человеческое «чего ждёт задача» — для вопросов и отказов."""
+    parts = []
+    if state.get("blocked_by"):
+        parts.append(f"ждёт {', '.join(state['blocked_by'])}")
+    if state.get("paused"):
+        parts.append(f"на паузе: {state['paused']}")
+    return f"{task_id} " + " и ".join(parts) if parts else ""
+
+
+def move_confirmation(tasks_dir: Path, pipeline, task_id: str, target: str) -> dict:
+    """Нужно ли подтверждение переноса стоящей задачи: `{confirm, reason}`.
+
+    Аномален ровно один переход — **взять в работу**: блокировка это и значит,
+    «не начинай, пока та не готова». Ждать внутри ревью, тестирования или
+    релиза законно (две задачи проверяются только вместе), назад по маршруту —
+    тем более, а в терминальном простой снимается сам.
+    """
+    state = task_stall(tasks_dir, task_id)
+    if not state or not state["stalled"]:
+        return {"confirm": False, "reason": ""}
+    actions = pipeline.actions() if pipeline else {}
+    if target not in (actions.get("start"), actions.get("return")):
+        return {"confirm": False, "reason": ""}
+    return {"confirm": True, "reason": stall_reason(task_id.strip().upper(), state)}
+
+
+def resolve_ids(tasks_dir: Path, ids, pipeline=None) -> list[dict]:
+    """Развернуть номера задач в `[{id, title, status, label, found, resolved}]`.
 
     Номера мало: «TASK-013» ничего не говорит о том, далеко ли до разблокировки.
     Ненайденную задачу не выбрасываем — помечаем `found: False`, иначе ссылка
     на несуществующее просто исчезнет из интерфейса.
+
+    `resolved` — блокер сам дошёл до конца маршрута и больше не держит. Снимать
+    пометку автоматически не станем: она стоит в чужом файле, и правка по
+    касательной («двинули A — молча изменили B») удивляет сильнее, чем помощь.
     """
     tasks_dir = Path(tasks_dir)
     out: list[dict] = []
     for task_id in parse_ids(ids):
         path = find_task_file(tasks_dir, task_id)
         meta = _meta_of(path) if path else {}
+        status = meta.get("status", "")
+        label = (pipeline.get(status) or {}).get("label", "") if pipeline and status else ""
         out.append({"id": task_id, "title": meta.get("title", ""),
-                    "status": meta.get("status", ""), "found": path is not None})
+                    "status": status, "label": label or status,
+                    "found": path is not None,
+                    "resolved": bool(path) and is_terminal(pipeline, status)})
     return out
 
 
-def stall_details(tasks_dir: Path, meta: dict) -> dict:
+def stall_details(tasks_dir: Path, meta: dict, pipeline=None) -> dict:
     """Состояние простоя с развёрнутыми ссылками — для открытой карточки."""
     state = stall_of(meta)
-    state["blocked_by_tasks"] = resolve_ids(tasks_dir, state["blocked_by"])
-    state["blocks_tasks"] = resolve_ids(tasks_dir, state["blocks"])
+    state["blocked_by_tasks"] = resolve_ids(tasks_dir, state["blocked_by"], pipeline)
+    state["blocks_tasks"] = resolve_ids(tasks_dir, state["blocks"], pipeline)
+    # Пометка стоит, а держать её нечему — интерфейс приглушает маркер и
+    # предлагает снять. Две причины: все блокеры дошли до конца маршрута или
+    # сама задача завершена (у закрытой работы «ждёт» смысла не имеет)
+    blocked = state["blocked_by_tasks"]
+    all_resolved = bool(blocked) and all(b["resolved"] for b in blocked) \
+        and not state["paused"]
+    state["stale"] = bool(state["stalled"]) and (
+        all_resolved or is_terminal(pipeline, meta.get("status", "")))
     return state
 
 
@@ -190,6 +264,74 @@ def set_paused(tasks_dir: Path, task_id: str, reason: str) -> dict:
     reason = _one_line(reason)
     set_meta_fields(path, {PAUSED: reason or EMPTY})
     return {"ok": True, "task": task_id.upper(), "paused": reason}
+
+
+def clear_stall(tasks_dir: Path, task_id: str) -> dict:
+    """Снять с задачи и блокировки, и паузу. Возвращает, что было снято.
+
+    Зовётся при переезде в терминальный статус: задача закрыта, и «ждёт» про
+    неё — уже не правда, а ровно те данные, которые API отказался бы создать.
+    """
+    state = task_stall(tasks_dir, task_id)
+    if state is None or not state["stalled"]:
+        return {"ok": True, "cleared": False, "blocked_by": [], "paused": ""}
+    if state["blocked_by"]:
+        set_blocked_by(tasks_dir, task_id, [])
+    if state["paused"]:
+        set_paused(tasks_dir, task_id, "")
+    return {"ok": True, "cleared": True,
+            "blocked_by": state["blocked_by"], "paused": state["paused"]}
+
+
+def blocker_candidates(tasks_dir: Path, cfg: dict, task_id: str) -> list[dict]:
+    """Кем можно заблокировать задачу: `[{id, title, status, label}]`.
+
+    Половина вариантов «всех задач проекта» — заведомо мусор, и показывать их
+    незачем: завершённые и отменённые блокеры мертвы в момент создания, а
+    задача, которая (пусть и через цепочку) ждёт текущую, замкнула бы круг —
+    обе стоят и не двинется никто.
+
+    Считает бэкенд: фронт не знает ни графа зависимостей, ни статусов задач.
+    """
+    from backend.statuses import load_pipeline
+
+    pipeline = load_pipeline(cfg or {})
+    tasks = _all_tasks(tasks_dir)
+    task_id = (task_id or "").strip().upper()
+    current = tasks.get(task_id)
+    if current is None:
+        return []
+
+    # Кто (транзитивно) ждёт текущую задачу. Граф строим по `blocked_by` — это
+    # авторское поле, оно есть всегда; обратные ссылки `blocks` в проекте, где
+    # блокировки проставляли руками, могут быть не заполнены, и обход по ним
+    # пропустил бы цикл
+    waiting_for: dict[str, list[str]] = {}
+    for other, info in tasks.items():
+        for blocker in info["stall"]["blocked_by"]:
+            waiting_for.setdefault(blocker, []).append(other)
+
+    dependents: set[str] = set()
+    queue = [task_id]
+    while queue:
+        for dep in waiting_for.get(queue.pop(), []):
+            if dep not in dependents:
+                dependents.add(dep)
+                queue.append(dep)
+
+    exclude = {task_id} | set(current["stall"]["blocked_by"]) | dependents
+
+    out: list[dict] = []
+    for candidate, info in tasks.items():
+        if candidate in exclude:
+            continue
+        status = info["meta"].get("status", "")
+        if is_terminal(pipeline, status):
+            continue
+        out.append({"id": candidate, "title": info["meta"].get("title", ""),
+                    "status": status,
+                    "label": (pipeline.get(status) or {}).get("label", status)})
+    return out
 
 
 def _all_tasks(tasks_dir: Path) -> dict[str, dict]:
@@ -301,7 +443,7 @@ def stall_issues(tasks_dir: Path, cfg: dict | None = None) -> list[str]:
     return issues
 
 
-def annotate_stall(tasks_dir: Path, board: dict) -> dict:
+def annotate_stall(tasks_dir: Path, board: dict, pipeline=None) -> dict:
     """Проставить карточкам доски состояние простоя.
 
     В строке board.md его нет — как и эпика, берём из frontmatter файлов задач.
@@ -315,12 +457,28 @@ def annotate_stall(tasks_dir: Path, board: dict) -> dict:
                 path = tasks_dir / task.get("file", "")
                 if not path.is_file():
                     continue
-                state = stall_of(_meta_of(path))
+                meta = _meta_of(path)
+                state = stall_of(meta)
                 if not state["stalled"]:
                     continue
                 task["stalled"] = True
+                # Держать пометку нечему: задача сама завершена или все её
+                # блокеры дошли до конца маршрута. Маркер приглушается, но
+                # остаётся — снимает человек
+                if pipeline is not None:
+                    stale = is_terminal(pipeline, meta.get("status", ""))
+                    if not stale and state["blocked_by"] and not state["paused"]:
+                        stale = all(is_terminal(pipeline, _status_of(tasks_dir, b))
+                                    for b in state["blocked_by"])
+                    if stale:
+                        task["stall_stale"] = True
                 if state["blocked_by"]:
                     task["blocked_by"] = state["blocked_by"]
                 if state["paused"]:
                     task["paused"] = state["paused"]
     return board
+
+
+def _status_of(tasks_dir: Path, task_id: str) -> str:
+    path = find_task_file(Path(tasks_dir), task_id)
+    return _meta_of(path).get("status", "") if path else ""

@@ -277,14 +277,22 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
               <div className="mt-2 space-y-1">
                 {stall?.blocked_by_tasks?.map((b) => (
                   <div key={b.id} className="flex items-center gap-2 text-xs">
-                    <span className="text-rose-400/90 shrink-0">⛔ ждёт</span>
+                    {/* Блокер дошёл до конца маршрута — держать нечему.
+                        Приглушаем и говорим прямо, но снимает человек:
+                        пометка стоит в этой задаче, а решение за ним */}
+                    <span className={`shrink-0 ${b.resolved || stall?.stale
+                      ? 'text-zinc-500 grayscale opacity-80' : 'text-rose-400/90'}`}>
+                      ⛔ ждёт
+                    </span>
                     {/* Номер блокера — в цвет маркера на превью: на доске и в
                         карточке это одно и то же, разный цвет читался бы как
                         разные вещи. Блокировка красная, пауза жёлтая — иначе
                         два разных состояния сливаются в одно пятно */}
                     <button
                       onClick={() => onOpenTask?.(b.id)}
-                      className="font-mono text-rose-400/90 hover:text-rose-300 shrink-0"
+                      className={`font-mono shrink-0 ${b.resolved
+                        ? 'text-zinc-400 hover:text-zinc-200'
+                        : 'text-rose-400/90 hover:text-rose-300'}`}
                       title="Открыть блокирующую задачу"
                     >
                       {b.id}
@@ -296,6 +304,12 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
                       </span>
                     ) : (
                       <span className="text-rose-400/80 shrink-0">задача не найдена</span>
+                    )}
+                    {/* Держать нечему: блокер завершён или сама задача закрыта.
+                        Отдельной строкой вне обрезки — у длинного заголовка
+                        блокера пометку срезало многоточием */}
+                    {(b.resolved || stall?.stale) && (
+                      <span className="shrink-0 text-emerald-400/80">— можно снимать</span>
                     )}
                     <button
                       onClick={() => dropBlocker(b.id)}
@@ -310,8 +324,16 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
 
                 {stall?.paused && (
                   <div className="flex items-center gap-2 text-xs">
-                    <span className="text-amber-300/80 shrink-0">⏸ пауза</span>
-                    <span className="text-zinc-400 truncate" title={stall.paused}>{stall.paused}</span>
+                    <span className={`shrink-0 ${stall.stale
+                      ? 'text-zinc-500 grayscale opacity-80' : 'text-amber-300/80'}`}>
+                      ⏸ пауза
+                    </span>
+                    <span className="text-zinc-400 truncate" title={stall.paused}>
+                      {stall.paused}
+                    </span>
+                    {stall.stale && (
+                      <span className="shrink-0 text-emerald-400/80">— можно снимать</span>
+                    )}
                     <button
                       onClick={() => patchStall({ paused: '' })}
                       disabled={stallBusy}
@@ -351,13 +373,15 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
                 {stallForm === 'block' && (
                   <div className="flex items-center gap-2 pb-4">
                     <span className="text-xs text-zinc-500 shrink-0">Ждёт:</span>
+                    {/* Кандидатов считает бэкенд: без завершённых, отменённых
+                        и тех, кто сам ждёт эту задачу (иначе цикл) */}
                     <TaskPicker
                       className="flex-1 min-w-0"
                       inputClassName={INLINE_FIELD}
                       value={blockId}
                       onChange={(v, found) => { setBlockId(v); setBlockTask(found) }}
                       onEnter={addBlocker}
-                      exclude={[taskId, ...(stall?.blocked_by || [])]}
+                      blockerFor={taskId}
                       placeholder="TASK-NNN"
                       autoFocus
                     />
@@ -378,7 +402,9 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
                   </div>
                 )}
 
-                {!stallForm && (
+                {/* В терминальном статусе простой не ставится вовсе — кнопок
+                    просто нет: подпись про недоступное действие только шумит */}
+                {!stallForm && stall?.can_set && (
                   <div className="flex items-center gap-3 text-[11px] text-zinc-500">
                     <button className="hover:text-zinc-300 transition"
                             onClick={() => setStallForm('block')}>

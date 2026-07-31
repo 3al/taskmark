@@ -73,6 +73,14 @@ export default function App() {
   // Помощь открывается там, где возник вопрос: сразу на нужном разделе
   const openHelp = (section = null) => setHelpSection(section || 'start')
 
+  // Esc закрывает вопрос о переносе — как и любое другое окно доски
+  useEffect(() => {
+    if (!pendingMove) return
+    const onKey = (e) => e.key === 'Escape' && setPendingMove(null)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pendingMove])
+
   // Ввод опережает сеть: запрос уходит после паузы, иначе каждая буква — запрос
   useEffect(() => {
     const needle = query.trim()
@@ -342,14 +350,23 @@ export default function App() {
   }
 
   // clearStall — задачу берут в работу, значит простой обычно уже неактуален:
-  // оставленная пометка врала бы про то, чего задача не ждёт
-  const applyMove = async ({ taskId, sectionTitle, position, afterTaskId, group },
-                           clearStall = false) => {
+  // оставленная пометка врала бы про то, чего задача не ждёт.
+  // confirm — признак «пользователь подтвердил»: правило проверяет сервер, и
+  // без признака он откажет (доска не единственный клиент)
+  const applyMove = async (move, clearStall = false, confirm = false) => {
+    const { taskId, sectionTitle, position, afterTaskId, group } = move
     try {
       if (clearStall) await api.updateTask(taskId, { blocked_by: [], paused: '' })
-      await api.moveTask(taskId, sectionTitle, position, afterTaskId, group)
+      await api.moveTask(taskId, sectionTitle, position, afterTaskId, group, confirm)
       refresh()
     } catch (e) {
+      // Доска могла не знать о простое (карточку изменили в другом окне) —
+      // тогда сервер отказывает, и вопрос задаём по его причине
+      if (e.code === 'stall_confirm') {
+        setPendingMove({ ...move, task: findTask(taskId)?.task, toTitle: sectionTitle,
+                         serverReason: e.message })
+        return
+      }
       setError(e.message)
     }
   }
@@ -619,6 +636,10 @@ export default function App() {
               Задача стоит
             </div>
             <div className="px-5 py-4 space-y-2 text-sm text-zinc-300/90">
+              {/* Причина от сервера точнее нашей: доска могла устареть */}
+              {pendingMove.serverReason ? (
+                <div>{pendingMove.serverReason}</div>
+              ) : (
               <div>
                 <span className="font-mono text-zinc-400">{pendingMove.taskId}</span>
                 {pendingMove.task?.blocked_by?.length > 0 && (
@@ -632,6 +653,7 @@ export default function App() {
                     : {pendingMove.task.paused}</>
                 )}
               </div>
+              )}
               <div className="text-zinc-500">
                 Всё равно взять в работу — перенести в «{pendingMove.toTitle}»?
               </div>
@@ -642,15 +664,16 @@ export default function App() {
                 Отмена
               </button>
               <button
-                onClick={() => { const m = pendingMove; setPendingMove(null); applyMove(m) }}
+                onClick={() => { const m = pendingMove; setPendingMove(null); applyMove(m, false, true) }}
                 className="px-4 py-2 text-sm rounded-lg border border-zinc-700 text-zinc-300
                   hover:border-zinc-500 hover:bg-zinc-800 transition"
               >
                 Перенести
               </button>
               <button
-                onClick={() => { const m = pendingMove; setPendingMove(null); applyMove(m, true) }}
-                className="px-4 py-2 text-sm rounded-lg bg-amber-600 hover:bg-amber-500 font-medium"
+                onClick={() => { const m = pendingMove; setPendingMove(null); applyMove(m, true, true) }}
+                className="px-4 py-2 text-sm rounded-lg border border-amber-800
+                  bg-amber-950/40 text-amber-200 hover:bg-amber-900/50 transition"
                 title="Снять блокировки и паузу, затем перенести"
               >
                 Снять простой и перенести

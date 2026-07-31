@@ -68,9 +68,11 @@ class StallDetailsTest(unittest.TestCase):
         state = self.details("TASK-014")
 
         self.assertTrue(state["stalled"])
-        self.assertEqual([{"id": "TASK-013", "title": "Первая",
-                           "status": "development", "found": True}],
-                         state["blocked_by_tasks"])
+        blocker = state["blocked_by_tasks"][0]
+        self.assertEqual("TASK-013", blocker["id"])
+        self.assertEqual("Первая", blocker["title"])
+        self.assertEqual("development", blocker["status"])
+        self.assertTrue(blocker["found"])
 
     def test_missing_blocker_is_marked(self) -> None:
         set_blocked_by(self.tasks, "TASK-014", ["TASK-404"])

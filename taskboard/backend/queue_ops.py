@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.stall import clear_stall, is_terminal
 from backend.statuses import Pipeline, load_pipeline
 from backend.task_parser import set_task_status
 
@@ -244,10 +245,18 @@ def move_task(
 
     # Обновить frontmatter статус
     status = _status_for_section(cfg, to_section)
+    result = {"ok": True, "task": task_id, "section": to_section, "status": status}
     if touch_status and status:
         set_task_status(tasks_dir, task_id, status)
+        # Задача доехала до конца маршрута — «ждёт» про неё больше не правда.
+        # Снимаем простой вместе с обратными ссылками у блокеров: иначе в
+        # файлах осталось бы ровно то, что API отказался бы создать
+        if is_terminal(load_pipeline(cfg), status):
+            cleared = clear_stall(tasks_dir, task_id)
+            if cleared["cleared"]:
+                result["stall_cleared"] = cleared
 
-    return {"ok": True, "task": task_id, "section": to_section, "status": status}
+    return result
 
 
 def _drop_empty_placeholder(lines: list[str], start: int, end: int) -> None:

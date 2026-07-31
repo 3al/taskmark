@@ -7,11 +7,20 @@ async function request(url, options = {}) {
   })
   if (!res.ok) {
     let detail = res.statusText
+    let payload = null
     try {
       const data = await res.json()
+      payload = data.detail
       detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)
     } catch { /* игнорируем */ }
-    throw new Error(detail)
+    const error = new Error(detail)
+    // Структурированный отказ (например, «нужно подтверждение переноса»)
+    // должен доезжать до места вызова, а не превращаться в текст ошибки
+    if (payload && typeof payload === 'object') {
+      error.code = payload.code
+      error.message = payload.message || detail
+    }
+    throw error
   }
   return res.json()
 }
@@ -30,10 +39,13 @@ export const api = {
     request('/api/projects/activate', { method: 'POST', body: JSON.stringify({ name }) }),
   removeProject: (name) => request(`/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   createTask: (payload) => request('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }),
-  moveTask: (id, toSection, position = null, afterTaskId = null, group = null) =>
+  // confirm — стоящую задачу берут в работу: без признака сервер откажет
+  moveTask: (id, toSection, position = null, afterTaskId = null, group = null,
+             confirm = false) =>
     request(`/api/tasks/${id}/move`, {
       method: 'POST',
-      body: JSON.stringify({ to_section: toSection, position, after_task_id: afterTaskId, group }),
+      body: JSON.stringify({ to_section: toSection, position,
+                             after_task_id: afterTaskId, group, confirm }),
     }),
   ensureQueue: () => request('/api/queue/ensure', { method: 'POST' }),
   repairPlan: () => request('/api/board/repair'),
@@ -46,7 +58,9 @@ export const api = {
   pipeline: () => request('/api/pipeline'),
   pipelineSources: () => request('/api/pipeline/sources'),
   epics: () => request('/api/epics'),
-  tasksList: () => request('/api/tasks/list'),
+  // blockerFor — кем можно заблокировать эту задачу (список считает бэкенд)
+  tasksList: (blockerFor = '') =>
+    request(`/api/tasks/list${blockerFor ? `?blocker_for=${encodeURIComponent(blockerFor)}` : ''}`),
   updateTask: (id, updates) =>
     request(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
   criteriaPresets: () => request('/api/criteria-presets'),

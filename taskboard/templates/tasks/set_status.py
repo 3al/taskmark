@@ -331,12 +331,16 @@ def _tidy_section(lines: list[str], name: str) -> None:
 
 
 def set_status(tasks_dir: Path, task_id: str, status: str,
-               agent: str | None = None, position: str = "start") -> dict:
+               agent: str | None = None, position: str = "start",
+               force: bool = False) -> dict:
     """
     Перевести задачу в новый статус: frontmatter + раздел board.md.
 
     Возвращает {"ok": True, "section": ...} либо {"ok": False, "error": ...}.
     Операция идемпотентна: повторный вызов с тем же статусом ничего не ломает.
+
+    force — взять в работу стоящую задачу: блокировка ровно от этого и
+    защищает, поэтому без явного признака такой перевод не выполняется.
     """
     tasks_dir = Path(tasks_dir)
     cfg = load_config(tasks_dir)
@@ -347,6 +351,24 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
         return {"ok": False,
                 "error": f"Статус {status} не входит в пайплайн проекта. "
                          f"Допустимо: {', '.join(known)}"}
+
+    # Стоящую задачу берут в работу — единственный аномальный переход: ждать
+    # внутри ревью или тестирования законно, назад по маршруту тем более, а в
+    # терминальном простой снимется сам. Зеркало backend/stall.py
+    task_path = find_task_file(tasks_dir, task_id)
+    actions = actions_of(cfg, pipeline)
+    if task_path is not None and not force and status in (actions.get("start"),
+                                                          actions.get("return")):
+        state = stall_of(_read_meta(task_path))
+        if state["stalled"]:
+            parts = []
+            if state["blocked_by"]:
+                parts.append(f"ждёт {', '.join(state['blocked_by'])}")
+            if state["paused"]:
+                parts.append(f"на паузе: {state['paused']}")
+            return {"ok": False,
+                    "error": f"{task_id} {' и '.join(parts)}. "
+                             f"Всё равно взять в работу — повторите с --force"}
 
     section = section_for_status(cfg, status)
     if not section:
@@ -426,8 +448,12 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
         skipped = [s["key"] for s in between
                    if not s.get("offramp") and not s.get("reentry")]
 
+    # Доехали до конца маршрута — «ждёт» про закрытую задачу больше не правда
+    cleared = clear_stall(tasks_dir, task_id) if is_terminal(pipeline, status) else None
+
     return {"ok": True, "task": task_id, "status": status, "section": section,
-            "file": task_file.name, "from": prev, "skipped": skipped}
+            "file": task_file.name, "from": prev, "skipped": skipped,
+            "stall_cleared": bool(cleared and cleared.get("cleared"))}
 
 
 def current_status(tasks_dir: Path, task_id: str) -> str | None:
@@ -549,6 +575,36 @@ def _set_fields(path: Path, updates: dict) -> bool:
     return True
 
 
+def is_terminal(pipeline: list[dict], status: str) -> bool:
+    """Конец маршрута: терминальный статус или съезд.
+
+    Имена не подставляем: пайплайн настраивается, и терминал может называться
+    как угодно. Признак структурный — нет ожидаемого следующего шага.
+    """
+    if not status:
+        return False
+    keys = [s["key"] for s in pipeline]
+    if status not in keys:
+        return False
+    return directions(pipeline, status)["next"] is None
+
+
+def can_stall(pipeline: list[dict], status: str) -> dict:
+    """Можно ли ставить простой на задачу в этом статусе: `{ok, reason}`.
+
+    Стоять может задача, у которой есть следующий шаг маршрута: для
+    завершённой или отменённой «ждёт» — не правда, а мусор в данных.
+    Зеркало backend/stall.py: правила должны совпадать.
+    """
+    if not is_terminal(pipeline, status):
+        return {"ok": True, "reason": ""}
+    meta = next((s for s in pipeline if s["key"] == status), {})
+    label = meta.get("label", status)
+    what = "снята с маршрута" if meta.get("offramp") else "завершена"
+    return {"ok": False,
+            "reason": f"Задача {what} (статус «{label}») — простой не имеет смысла"}
+
+
 def stall_of(meta: dict) -> dict:
     """Производное состояние «стоит» по frontmatter задачи."""
     blocked_by = parse_ids(meta.get("blocked_by"))
@@ -605,11 +661,20 @@ def set_blocked_by(tasks_dir: Path, task_id: str, ids) -> dict:
     return {"ok": True, "task": task_id, "blocked_by": ids, "missing": missing}
 
 
+def _stall_allowed(tasks_dir: Path, path: Path) -> dict:
+    """Разрешено ли ставить простой на задачу в её текущем статусе."""
+    cfg = load_config(Path(tasks_dir))
+    return can_stall(pipeline_of(cfg), _read_meta(path).get("status", ""))
+
+
 def block(tasks_dir: Path, task_id: str, blocker: str) -> dict:
     """Добавить блокера к задаче."""
     path = find_task_file(Path(tasks_dir), task_id)
     if path is None:
         return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    verdict = _stall_allowed(tasks_dir, path)
+    if not verdict["ok"]:
+        return {"ok": False, "error": verdict["reason"]}
     current = parse_ids(_read_meta(path).get("blocked_by"))
     return set_blocked_by(tasks_dir, task_id, current + parse_ids(blocker))
 
@@ -634,8 +699,29 @@ def set_paused(tasks_dir: Path, task_id: str, reason: str) -> dict:
     if path is None:
         return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
     reason = _one_line(reason)
+    # Снятие разрешено всегда: убрать мусор нужно и там, где поставить нельзя
+    if reason:
+        verdict = _stall_allowed(tasks_dir, path)
+        if not verdict["ok"]:
+            return {"ok": False, "error": verdict["reason"]}
     _set_fields(path, {"paused": reason or EMPTY})
     return {"ok": True, "task": task_id.strip().upper(), "paused": reason}
+
+
+def clear_stall(tasks_dir: Path, task_id: str) -> dict:
+    """Снять с задачи и блокировки, и паузу (при переезде в конец маршрута)."""
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"ok": False, "cleared": False}
+    state = stall_of(_read_meta(path))
+    if not state["stalled"]:
+        return {"ok": True, "cleared": False}
+    if state["blocked_by"]:
+        set_blocked_by(tasks_dir, task_id, [])
+    if state["paused"]:
+        set_paused(tasks_dir, task_id, "")
+    return {"ok": True, "cleared": True,
+            "blocked_by": state["blocked_by"], "paused": state["paused"]}
 
 
 def stalled(tasks_dir: Path) -> dict:
@@ -711,6 +797,8 @@ def main() -> None:
                         help="Кто меняет статус (попадёт в строку доски)")
     parser.add_argument("--position", choices=["start", "end"], default="start",
                         help="Позиция в целевом разделе (default: start)")
+    parser.add_argument("--force", action="store_true",
+                        help="Взять в работу стоящую задачу (блокировка/пауза)")
     parser.add_argument("--tasks-dir", default=None,
                         help="Папка задач (default: папка этого скрипта)")
     args = parser.parse_args()
@@ -766,13 +854,15 @@ def main() -> None:
                      "(либо --list / --targets / --queue / --stalled / --block / --pause)")
 
     result = set_status(tasks_dir, args.task_id, args.status,
-                        agent=args.agent, position=args.position)
+                        agent=args.agent, position=args.position, force=args.force)
 
     if not result.get("ok"):
         print(f"[ERROR] {result.get('error')}", file=sys.stderr)
         sys.exit(1)
 
     print(f"[OK] {result['task']} → {result['status']} (раздел «{result['section']}»)")
+    if result.get("stall_cleared"):
+        print("[i] простой снят: задача дошла до конца маршрута")
     if result.get("skipped"):
         # Не запрет, а видимость: пайплайн описывает ожидаемый маршрут
         print(f"[i] минуя {', '.join(result['skipped'])}")
