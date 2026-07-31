@@ -27,6 +27,7 @@ from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_e
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
+from backend.stall import annotate_stall, set_blocked_by, set_paused, stall_of, stalled_tasks
 from backend.statuses import CATALOG, load_pipeline
 from backend.task_parser import list_all_tasks, parse_task, set_task_title
 from backend.validator import validate_project
@@ -39,7 +40,7 @@ DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
-                "board_repair": True}
+                "board_repair": True, "stall": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -82,6 +83,10 @@ class TaskIn(BaseModel):
 
 class TaskUpdateIn(BaseModel):
     title: str | None = None
+    # Простой задачи: список блокеров целиком (строкой или списком) и причина
+    # паузы. Пустое значение снимает: [] — все блокировки, "" — паузу
+    blocked_by: list[str] | str | None = None
+    paused: str | None = None
 
 
 class ConfigIn(BaseModel):
@@ -278,6 +283,9 @@ def api_board() -> dict:
     # у которых не осталось файла, а не для работы
     board["columns"] = visible_columns(board, cfg)
     annotate_epics(tasks_dir, board)
+    # Причина простоя есть только во frontmatter — карточке она нужна, чтобы
+    # маркер «стоит» рисовался без открытия задачи
+    annotate_stall(tasks_dir, board)
     board["report"] = report
     board["config"] = {
         # Фронт рисует колонки, порядок, цвета и правила DnD по пайплайну;
@@ -345,7 +353,17 @@ def api_task(task_id: str) -> dict:
         raise HTTPException(404, f"Задача не найдена: {task_id}")
     # Во frontmatter лежит ключ, а имя эпика — только в реестре
     task["epic_name"] = epic_name(tasks_dir, task["meta"].get("epic", ""))
+    # Состояние простоя — производное от полей, считаем его на бэкенде,
+    # чтобы разбор «~», списков и пустых значений жил в одном месте
+    task["stall"] = stall_of(task["meta"])
     return task
+
+
+@app.get("/api/tasks/stalled")
+def api_stalled() -> dict:
+    """Что сейчас стоит и почему — срез простоя по всем задачам проекта."""
+    tasks_dir, _cfg = _ctx()
+    return stalled_tasks(tasks_dir)
 
 
 @app.post("/api/tasks")
@@ -378,7 +396,11 @@ def api_create_task(body: TaskIn) -> dict:
 
 @app.patch("/api/tasks/{task_id}")
 def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
-    """Обновить поля задачи: title — переименовывает файл и правит доску."""
+    """Обновить поля задачи.
+
+    title — переименовывает файл и правит доску; blocked_by и paused — причины
+    простоя во frontmatter (статус и раздел доски при этом не меняются).
+    """
     tasks_dir, cfg, _report = _validate_or_400()
     board_path = tasks_dir / cfg.get("board_file", "board.md")
 
@@ -400,6 +422,22 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
             file=new_file,
             board=bool(linked.get("ok") and titled.get("ok")),
         )
+
+    if body.blocked_by is not None:
+        # Список задаётся целиком: у блокеров синхронно правится `blocks`,
+        # снятые блокировки со второго конца убираются
+        blocked = set_blocked_by(tasks_dir, task_id, body.blocked_by)
+        if not blocked.get("ok"):
+            raise HTTPException(400, blocked.get("error", "Ошибка простановки блокировки"))
+        result["blocked_by"] = blocked["blocked_by"]
+        if blocked["missing"]:
+            result["missing"] = blocked["missing"]
+
+    if body.paused is not None:
+        paused = set_paused(tasks_dir, task_id, body.paused)
+        if not paused.get("ok"):
+            raise HTTPException(400, paused.get("error", "Ошибка простановки паузы"))
+        result["paused"] = paused["paused"]
 
     return result
 

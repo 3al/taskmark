@@ -5,6 +5,8 @@ epic: ~
 status: backlog
 created: YYYY-MM-DD HH:MM
 blocked_by: ~
+blocks: ~
+paused: ~
 ---
 
 ## Описание

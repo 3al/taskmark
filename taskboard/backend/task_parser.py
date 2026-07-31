@@ -71,12 +71,17 @@ def list_all_tasks(tasks_dir: Path) -> list[dict]:
     return results
 
 
-def set_task_status(tasks_dir: Path, task_id: str, status: str) -> bool:
-    """Обновить status в frontmatter задачи. Возвращает успех."""
-    path = find_task_file(tasks_dir, task_id)
-    if path is None:
+def set_meta_fields(path: Path, updates: dict[str, str]) -> bool:
+    """Записать поля frontmatter файла задачи. Возвращает успех.
+
+    Поля, которых в шапке нет, дописываются в конец: задачи, заведённые до
+    появления поля, не должны требовать ручной правки. Тело файла не трогаем.
+    """
+    path = Path(path)
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
         return False
-    content = path.read_text(encoding="utf-8")
     if not content.startswith("---"):
         return False
     end = content.find("\n---", 3)
@@ -84,13 +89,26 @@ def set_task_status(tasks_dir: Path, task_id: str, status: str) -> bool:
         return False
 
     header = content[:end]
-    if re.search(r"^status:.*$", header, flags=re.MULTILINE):
-        header = re.sub(r"^status:.*$", f"status: {status}", header, flags=re.MULTILINE)
-    else:
-        header += f"\nstatus: {status}"
+    for key, value in updates.items():
+        line = f"{key}: {value}"
+        pattern = rf"^{re.escape(key)}:.*$"
+        if re.search(pattern, header, flags=re.MULTILINE):
+            # Замена функцией: в значении может быть \1 или обратный слэш —
+            # как шаблон подстановки re такую строку либо испортит, либо уронит
+            header = re.sub(pattern, lambda _m, ln=line: ln, header, flags=re.MULTILINE)
+        else:
+            header = header.rstrip("\n") + f"\n{line}"
 
     path.write_text(header + content[end:], encoding="utf-8")
     return True
+
+
+def set_task_status(tasks_dir: Path, task_id: str, status: str) -> bool:
+    """Обновить status в frontmatter задачи. Возвращает успех."""
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return False
+    return set_meta_fields(path, {"status": status})
 
 
 def slugify(text: str) -> str:

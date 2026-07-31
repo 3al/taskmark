@@ -413,6 +413,21 @@ created: {created_date}{blocked_by_line}
     board_file.write_text(updated, encoding="utf-8")
     print(f"[OK] Обновлен board.md (секция: {section})")
 
+    # У зависимости два конца: раз новая задача ждёт другую, у той должна
+    # появиться обратная ссылка blocks. Правит их set_status.py — он лежит
+    # рядом; нет его (старая поставка) — остаётся одна сторона, и о ней
+    # скажет валидатор
+    if blocked_by:
+        try:
+            sys.path.insert(0, str(tasks_dir))
+            from set_status import set_blocked_by
+
+            result = set_blocked_by(tasks_dir, f"TASK-{task_num:03d}", blocked_by)
+            for missing in result.get("missing", []):
+                print(f"[WARN] Блокер не найден в проекте: {missing}")
+        except Exception as exc:
+            print(f"[WARN] Обратная ссылка blocks не проставлена: {exc}")
+
     print(f"\n[OK] Задача успешно создана!\n")
     print(f"  ID: TASK-{task_num:03d}")
     print(f"  Файл: tasks/{filename}")

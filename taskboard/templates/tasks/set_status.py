@@ -17,12 +17,27 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   py tasks/set_status.py --list             # пайплайн статусов проекта (JSON)
   py tasks/set_status.py --targets TASK-004 # куда можно двинуть задачу (JSON)
 
+Почему задача стоит (блокировки и пауза) — те же два конца, что у статуса,
+поэтому правятся тоже одним вызовом:
+
+  py tasks/set_status.py TASK-014 --block TASK-013     # TASK-014 ждёт TASK-013
+  py tasks/set_status.py TASK-014 --unblock TASK-013   # снять одну блокировку
+  py tasks/set_status.py TASK-014 --unblock            # снять все
+  py tasks/set_status.py TASK-014 --pause "ждём ответ контрагента"
+  py tasks/set_status.py TASK-014 --resume
+  py tasks/set_status.py --stalled                     # что стоит и почему (JSON)
+
 Параметры:
   task_id                 Идентификатор задачи (TASK-NNN)
   status                  Новый статус из пайплайна проекта (см. --list)
   --agent TEXT            Кто меняет статус: попадёт в хвост строки доски.
                           Без него сохраняется прежний исполнитель, дата обновляется
   --position start|end    Куда вставить в целевом разделе (по умолчанию start)
+  --block TASK-NNN        Задача ждёт другую (правит blocked_by и blocks у обеих)
+  --unblock [TASK-NNN]    Снять блокировку; без значения — все
+  --pause ПРИЧИНА         Пауза с причиной; статус задачи при этом не меняется
+  --resume                Снять паузу
+  --stalled               Срез простоя: что стоит и почему (JSON)
   --tasks-dir PATH        Папка задач (по умолчанию — папка этого скрипта)
 """
 
@@ -465,6 +480,188 @@ def queue(tasks_dir: Path, limit: int = 5) -> dict:
     return out
 
 
+# --- Простой задачи: блокировки и пауза -------------------------------------
+# Зеркало backend/stall.py: скрипт автономен и работает без сервера, поэтому
+# правила живут в двух местах и должны меняться синхронно.
+
+EMPTY = "~"
+
+
+def parse_ids(value) -> list[str]:
+    """Список задач из значения поля: «~», пусто и None — это «нет»."""
+    if isinstance(value, (list, tuple, set)):
+        value = ", ".join(str(v) for v in value)
+    out: list[str] = []
+    for part in re.split(r"[,\s]+", str(value or "")):
+        part = part.strip().upper()
+        if not part or part == EMPTY or part in out:
+            continue
+        out.append(part)
+    return out
+
+
+def format_ids(ids) -> str:
+    """Значение поля из списка задач (пустой список — «~»)."""
+    ids = parse_ids(ids)
+    return ", ".join(ids) if ids else EMPTY
+
+
+def _one_line(text) -> str:
+    """Причина паузы живёт одной строкой frontmatter — перенос её разорвал бы."""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    return "" if text == EMPTY else text
+
+
+def _read_meta(path: Path) -> dict:
+    """Frontmatter файла задачи (key: value до закрывающего ---)."""
+    content = path.read_text(encoding="utf-8-sig")
+    if not content.startswith("---"):
+        return {}
+    end = content.find("\n---", 3)
+    if end < 0:
+        return {}
+    meta = {}
+    for line in content[3:end].splitlines():
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta
+
+
+def _set_fields(path: Path, updates: dict) -> bool:
+    """Записать поля frontmatter; отсутствующие дописать в конец шапки."""
+    content = path.read_text(encoding="utf-8")
+    if not content.startswith("---"):
+        return False
+    end = content.find("\n---", 3)
+    if end < 0:
+        return False
+
+    header = content[:end]
+    for key, value in updates.items():
+        line = f"{key}: {value}"
+        pattern = rf"^{re.escape(key)}:.*$"
+        if re.search(pattern, header, flags=re.MULTILINE):
+            header = re.sub(pattern, lambda _m, ln=line: ln, header, flags=re.MULTILINE)
+        else:
+            header = header.rstrip("\n") + f"\n{line}"
+    path.write_text(header + content[end:], encoding="utf-8")
+    return True
+
+
+def stall_of(meta: dict) -> dict:
+    """Производное состояние «стоит» по frontmatter задачи."""
+    blocked_by = parse_ids(meta.get("blocked_by"))
+    paused = _one_line(meta.get("paused"))
+    return {"blocked_by": blocked_by, "blocks": parse_ids(meta.get("blocks")),
+            "paused": paused, "stalled": bool(blocked_by or paused)}
+
+
+def _edit_list_field(path: Path, field: str, task_id: str, add: bool) -> None:
+    ids = parse_ids(_read_meta(path).get(field))
+    if add and task_id not in ids:
+        ids.append(task_id)
+    elif not add and task_id in ids:
+        ids.remove(task_id)
+    else:
+        return
+    _set_fields(path, {field: format_ids(ids)})
+
+
+def set_blocked_by(tasks_dir: Path, task_id: str, ids) -> dict:
+    """Задать блокеров задачи, синхронно правя `blocks` у них.
+
+    Два конца зависимости — та же ловушка, что статус в файле и на доске:
+    правка одного руками разъезжается молча. Поэтому правим оба сразу.
+    """
+    tasks_dir = Path(tasks_dir)
+    task_id = task_id.strip().upper()
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+
+    ids = parse_ids(ids)
+    if task_id in ids:
+        return {"ok": False, "error": "Задача не может блокировать сама себя"}
+
+    old = parse_ids(_read_meta(path).get("blocked_by"))
+    _set_fields(path, {"blocked_by": format_ids(ids)})
+
+    missing = []
+    for blocker in ids:
+        blocker_path = find_task_file(tasks_dir, blocker)
+        if blocker_path is None:
+            missing.append(blocker)
+            continue
+        _edit_list_field(blocker_path, "blocks", task_id, add=True)
+
+    for blocker in old:
+        if blocker in ids:
+            continue
+        blocker_path = find_task_file(tasks_dir, blocker)
+        if blocker_path is not None:
+            _edit_list_field(blocker_path, "blocks", task_id, add=False)
+
+    return {"ok": True, "task": task_id, "blocked_by": ids, "missing": missing}
+
+
+def block(tasks_dir: Path, task_id: str, blocker: str) -> dict:
+    """Добавить блокера к задаче."""
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    current = parse_ids(_read_meta(path).get("blocked_by"))
+    return set_blocked_by(tasks_dir, task_id, current + parse_ids(blocker))
+
+
+def unblock(tasks_dir: Path, task_id: str, blocker: str = "") -> dict:
+    """Снять блокера (без аргумента — всех)."""
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    drop = parse_ids(blocker)
+    current = parse_ids(_read_meta(path).get("blocked_by"))
+    keep = [i for i in current if i not in drop] if drop else []
+    return set_blocked_by(tasks_dir, task_id, keep)
+
+
+def set_paused(tasks_dir: Path, task_id: str, reason: str) -> dict:
+    """Поставить задачу на паузу с причиной (пустая причина — снять).
+
+    Пауза — метка, а не статус: `status` и раздел доски остаются как были.
+    """
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    reason = _one_line(reason)
+    _set_fields(path, {"paused": reason or EMPTY})
+    return {"ok": True, "task": task_id.strip().upper(), "paused": reason}
+
+
+def stalled(tasks_dir: Path) -> dict:
+    """Срез «что сейчас стоит и почему» — для агента, как `--queue`.
+
+    Причина простоя лежит во frontmatter, поэтому доску читать незачем.
+    """
+    tasks_dir = Path(tasks_dir)
+    tasks = []
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        m = re.match(r"^(TASK-\d+).*\.md$", path.name)
+        if not m:
+            continue
+        try:
+            meta = _read_meta(path)
+        except OSError:
+            continue
+        state = stall_of(meta)
+        if not state["stalled"]:
+            continue
+        tasks.append({"id": m.group(1).upper(), "title": meta.get("title", ""),
+                      "status": meta.get("status", ""), "file": path.name,
+                      "blocked_by": state["blocked_by"], "paused": state["paused"]})
+    return {"total": len(tasks), "tasks": tasks}
+
+
 def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
     """Пайплайн проекта и — для задачи — законные цели перехода.
 
@@ -500,6 +697,16 @@ def main() -> None:
                         help="Живая очередь доски прямо сейчас (JSON)")
     parser.add_argument("--limit", type=int, default=5,
                         help="Сколько задач очереди показать, 0 — все (default: 5)")
+    parser.add_argument("--block", metavar="TASK-NNN", default=None,
+                        help="Задача ждёт другую: правит blocked_by и blocks у обеих")
+    parser.add_argument("--unblock", metavar="TASK-NNN", nargs="?", const="", default=None,
+                        help="Снять блокировку (без значения — все блокировки)")
+    parser.add_argument("--pause", metavar="ПРИЧИНА", default=None,
+                        help="Пауза с причиной: статус задачи не меняется")
+    parser.add_argument("--resume", action="store_true",
+                        help="Снять паузу")
+    parser.add_argument("--stalled", action="store_true",
+                        help="Что сейчас стоит и почему (JSON)")
     parser.add_argument("--agent", default=None,
                         help="Кто меняет статус (попадёт в строку доски)")
     parser.add_argument("--position", choices=["start", "end"], default="start",
@@ -514,12 +721,49 @@ def main() -> None:
         print(json.dumps(queue(tasks_dir, args.limit), ensure_ascii=False, indent=2))
         return
 
+    if args.stalled:
+        print(json.dumps(stalled(tasks_dir), ensure_ascii=False, indent=2))
+        return
+
     if args.list or args.targets:
         print(json.dumps(describe(tasks_dir, args.targets), ensure_ascii=False, indent=2))
         return
 
+    # Блокировки и пауза правят только frontmatter: статус задачи и её раздел
+    # доски остаются на месте, поэтому эти флаги идут без аргумента `status`
+    stall_flags = (args.block is not None or args.unblock is not None
+                   or args.pause is not None or args.resume)
+    if stall_flags:
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --block / --unblock / --pause / --resume")
+
+        def apply(result: dict, message) -> None:
+            if not result.get("ok"):
+                print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+                sys.exit(1)
+            print(message(result))
+            if result.get("missing"):
+                print(f"[i] задачи не найдены в проекте: {', '.join(result['missing'])}")
+
+        if args.block:
+            apply(block(tasks_dir, args.task_id, args.block),
+                  lambda r: f"[OK] {r['task']} ждёт {format_ids(r['blocked_by'])}")
+        if args.unblock is not None:
+            apply(unblock(tasks_dir, args.task_id, args.unblock),
+                  lambda r: f"[OK] {r['task']}: блокировки — {format_ids(r['blocked_by'])}")
+        if args.pause:
+            apply(set_paused(tasks_dir, args.task_id, args.pause),
+                  lambda r: f"[OK] {r['task']} на паузе: {r['paused']}")
+        if args.resume:
+            apply(set_paused(tasks_dir, args.task_id, ""),
+                  lambda r: f"[OK] {r['task']}: пауза снята")
+
+        if not args.status:
+            return
+
     if not args.task_id or not args.status:
-        parser.error("нужны TASK-NNN и статус (либо --list / --targets / --queue)")
+        parser.error("нужны TASK-NNN и статус "
+                     "(либо --list / --targets / --queue / --stalled / --block / --pause)")
 
     result = set_status(tasks_dir, args.task_id, args.status,
                         agent=args.agent, position=args.position)

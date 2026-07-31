@@ -9,6 +9,7 @@ from backend.board_parser import parse_board
 from backend.board_repair import _section_for_status, row_matches_file, task_files
 from backend.config import is_lost_section
 from backend.scaffold import detect_harnesses, environment_issues, harness_choice
+from backend.stall import stall_issues
 from backend.statuses import load_pipeline
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
@@ -188,6 +189,11 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
         if m and m.group(1) not in on_board:
             warnings.append(f"{f.name}: файла нет на доске")
             repairable += 1
+
+    # Причины простоя (blocked_by / blocks / paused) живут во frontmatter, и
+    # починка доски их не касается: битую ссылку и разъехавшиеся концы правит
+    # set_status.py, а не перенос строк. Поэтому в repairable они не идут
+    warnings.extend(stall_issues(tasks_dir, cfg))
 
     report = _report(critical, degraded, warnings, features)
     report["repairable"] = repairable
