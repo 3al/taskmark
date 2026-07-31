@@ -381,6 +381,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
                       value={blockId}
                       onChange={(v, found) => { setBlockId(v); setBlockTask(found) }}
                       onEnter={addBlocker}
+                      onEscape={() => { setStallForm(null); setBlockId(''); setBlockTask(null) }}
                       blockerFor={taskId}
                       placeholder="TASK-NNN"
                       autoFocus

@@ -197,6 +197,14 @@ class TaskModalStallTest(unittest.TestCase):
         self.assertIn("ReasonPrompt", self.src,
                       "ввод причины сделан на месте, а не общим компонентом")
 
+    def test_escape_closes_both_forms(self) -> None:
+        """Esc закрывал форму паузы, но не форму блокировки: поле подсказок
+        глушило событие даже с закрытым списком."""
+        self.assertIn("onEscape", self.src, "форма блокировки не закрывается по Esc")
+        picker = (COMPONENTS / "TaskPicker.jsx").read_text(encoding="utf-8")
+        self.assertIn("if (open) { e.stopPropagation()", picker,
+                      "Esc гасится независимо от того, открыт ли список")
+
     def test_both_forms_are_built_the_same(self) -> None:
         """Пауза и блокировка — соседние поля одного смысла.
 

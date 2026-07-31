@@ -16,7 +16,7 @@ import { INLINE_FIELD } from '../fields'
 // (или null), и место вызова решает, что делать с «не выбрано».
 export default function TaskPicker({
   value, onChange, placeholder = 'TASK-NNN', exclude = [], autoFocus = false,
-  className = '', inputClassName = INLINE_FIELD, blockerFor = '', onEnter,
+  className = '', inputClassName = INLINE_FIELD, blockerFor = '', onEnter, onEscape,
 }) {
   const [tasks, setTasks] = useState([])
   // Два разных состояния, и путать их нельзя: `focus` — курсор действительно в
@@ -85,9 +85,13 @@ export default function TaskPicker({
       }
     }
     if (e.key === 'Enter' && onEnter) { e.preventDefault(); onEnter() }
-    // Esc закрывает список, а не всю модалку; список закрыт — гасим и всё равно,
-    // чтобы окно не схлопнулось из-под набранного текста
-    if (e.key === 'Escape') { e.stopPropagation(); setDismissed(true) }
+    // Esc снимает по одному слою: сначала список подсказок, потом форму, в
+    // которой стоит поле. Дальше событие идёт наружу само — иначе поле молча
+    // съедало бы Esc и окно задачи переставало закрываться
+    if (e.key === 'Escape') {
+      if (open) { e.stopPropagation(); setDismissed(true); return }
+      if (onEscape) { e.stopPropagation(); onEscape() }
+    }
   }
 
   return (
