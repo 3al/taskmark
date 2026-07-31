@@ -9,7 +9,7 @@ from backend.board_parser import parse_board
 from backend.board_repair import _section_for_status, row_matches_file, task_files
 from backend.config import is_lost_section
 from backend.scaffold import detect_harnesses, environment_issues, harness_choice
-from backend.stall import stall_issues
+from backend.stall import plan_blocks_repair, stall_issues
 from backend.statuses import load_pipeline
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
@@ -194,6 +194,9 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     # починка доски их не касается: битую ссылку и разъехавшиеся концы правит
     # set_status.py, а не перенос строк. Поэтому в repairable они не идут
     warnings.extend(stall_issues(tasks_dir, cfg))
+    # Односторонние связи — то же расхождение двух концов, только оба во
+    # frontmatter: чинятся той же кнопкой, значит и считаются в repairable
+    repairable += len(plan_blocks_repair(tasks_dir))
 
     report = _report(critical, degraded, warnings, features)
     report["repairable"] = repairable

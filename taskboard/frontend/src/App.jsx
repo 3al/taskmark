@@ -502,15 +502,15 @@ export default function App() {
             <span key={`w${i}`} className="mr-4">• {w}</span>
           ))}
           {report.warnings.length > 5 && <span className="mr-4">и ещё {report.warnings.length - 5}…</span>}
-          {/* Рассинхрон доски и файлов чинится разом — но только после
-              предпросмотра: правки идут по файлам задач */}
+          {/* Разъехавшиеся концы (доска ↔ файл, blocked_by ↔ blocks) чинятся
+              разом — но только после предпросмотра: правки идут по файлам */}
           {report.repairable > 0 && (
             <span className="inline-flex items-center gap-2">
               <button
                 className="px-2 py-0.5 rounded bg-amber-700/50 hover:bg-amber-600/60 text-amber-100 transition"
                 onClick={() => setShowRepair(true)}
               >
-                Починить доску
+                Починить данные
               </button>
               <button
                 className="text-amber-300/70 hover:text-amber-100 transition"

@@ -393,6 +393,49 @@ def _cycles(graph: dict[str, list[str]]) -> list[list[str]]:
     return found
 
 
+def plan_blocks_repair(tasks_dir: Path) -> list[dict]:
+    """Что нужно поправить в обратных ссылках: `[{id, task, action}]`.
+
+    `blocked_by` — авторское поле, `blocks` — производное, поэтому починка
+    пересобирает второе из первого: где обратной ссылки нет — добавить
+    (`add`), где она указывает на задачу, которая себя заблокированной не
+    считает — убрать (`drop`).
+
+    Битые ссылки и циклы не трогаем: однозначного правильного действия там
+    нет, они остаются предупреждениями валидатора.
+    """
+    tasks = _all_tasks(tasks_dir)
+    plan: list[dict] = []
+
+    for task_id, info in tasks.items():
+        for blocker in info["stall"]["blocked_by"]:
+            other = tasks.get(blocker)
+            if other is not None and task_id not in other["stall"]["blocks"]:
+                plan.append({"id": blocker, "task": task_id, "action": "add"})
+        for dependent in info["stall"]["blocks"]:
+            other = tasks.get(dependent)
+            if other is not None and task_id not in other["stall"]["blocked_by"]:
+                plan.append({"id": task_id, "task": dependent, "action": "drop"})
+
+    return plan
+
+
+def apply_blocks_repair(tasks_dir: Path) -> dict:
+    """Выполнить починку обратных ссылок. Возвращает счётчик и осечки."""
+    tasks_dir = Path(tasks_dir)
+    failed: list[str] = []
+    plan = plan_blocks_repair(tasks_dir)
+
+    for item in plan:
+        path = find_task_file(tasks_dir, item["id"])
+        if path is None:
+            failed.append(f"{item['id']}: файл не найден")
+            continue
+        _edit_field(path, BLOCKS, item["task"], add=item["action"] == "add")
+
+    return {"ok": not failed, "fixed": len(plan) - len(failed), "failed": failed}
+
+
 def stall_issues(tasks_dir: Path, cfg: dict | None = None) -> list[str]:
     """Предупреждения о простое для отчёта валидатора.
 

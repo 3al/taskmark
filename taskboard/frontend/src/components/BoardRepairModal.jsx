@@ -13,8 +13,11 @@ function Group({ title, hint, tone, items, render }) {
         <div className="text-[11px] text-zinc-500">{hint}</div>
       </div>
       <div className="divide-y divide-zinc-800/60">
+        {/* Ключ по одному id не годится: у блокировок одна задача может
+            получить несколько правок */}
         {items.map((item) => (
-          <div key={item.id} className="px-3 py-1.5 text-xs text-zinc-300/90">{render(item)}</div>
+          <div key={`${item.id}-${item.task ?? ''}-${item.action ?? ''}`}
+               className="px-3 py-1.5 text-xs text-zinc-300/90">{render(item)}</div>
         ))}
       </div>
     </div>
@@ -47,6 +50,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
   const total = plan
     ? plan.add.length + (plan.move?.length ?? 0) + plan.lost.length
       + (plan.relink?.length ?? 0) + (plan.retitle?.length ?? 0)
+      + (plan.blocks?.length ?? 0)
     : 0
 
   const apply = async () => {
@@ -68,7 +72,9 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
       <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-3xl shadow-2xl
         max-h-[90vh] flex flex-col">
         <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
-          <div className="text-lg font-semibold">Починка доски</div>
+          {/* Не «починка доски»: правятся и строки board.md, и поля во
+              frontmatter — заголовок обязан покрывать и то, и другое */}
+          <div className="text-lg font-semibold">Починка данных</div>
           {total > 0 && (
             <button
               onClick={apply}
@@ -83,9 +89,11 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
         <div className="px-5 py-4 space-y-3 overflow-y-auto">
           <div className="text-sm text-zinc-300/90 bg-zinc-950/50 border border-zinc-800
             rounded-lg px-4 py-3">
-            Статус задачи хранится в двух местах — разделе доски и поле <code>status:</code>
-            {' '}в файле. Починка сводит их вместе, считая <strong>файлы задач источником
-            правды</strong>: доска подстраивается под них. Ничего не удаляется.
+            Часть данных хранится в двух местах: статус — разделом доски и полем
+            {' '}<code>status:</code> в файле, блокировка — полями <code>blocked_by</code>
+            {' '}и <code>blocks</code> у обеих задач. Починка сводит концы вместе,
+            считая <strong>файлы задач источником правды</strong>: доска
+            подстраивается под них. Ничего не удаляется.
           </div>
           {error && <div className="text-sm text-rose-400">{error}</div>}
           {plan === null && <div className="text-sm text-zinc-500">Загружаю…</div>}
@@ -95,6 +103,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
               {' '}записей без файла убрано {done.lost}
               {done.relinked > 0 && <>, ссылок исправлено {done.relinked}</>}
               {done.retitled > 0 && <>, заголовков обновлено {done.retitled}</>}
+              {done.blocks > 0 && <>, блокировок сведено {done.blocks}</>}
               {done.failed?.length > 0 && (
                 <div className="text-rose-300 mt-1">Не удалось: {done.failed.join('; ')}</div>
               )}
@@ -162,6 +171,24 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
                 <span className="text-rose-300/80">{i.from}</span>
                 <span className="text-zinc-500"> → </span>
                 <span className="text-emerald-300/80">{i.to}</span>
+              </>
+            )}
+          />
+
+          <Group
+            title="Свести блокировки"
+            hint="зависимость записана с одной стороны — вторая сторона получит её тоже; правым считается blocked_by, blocks собирается из него"
+            tone="text-amber-300"
+            items={plan?.blocks}
+            render={(i) => (
+              <>
+                <span className="text-zinc-500">{i.id}</span>
+                <span className="text-zinc-500">
+                  {i.action === 'add' ? ' → blocks: ' : ' : убрать blocks '}
+                </span>
+                <span className={i.action === 'add' ? 'text-emerald-300/80' : 'text-rose-300/80'}>
+                  {i.task}
+                </span>
               </>
             )}
           />

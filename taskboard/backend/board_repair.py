@@ -39,6 +39,7 @@ from backend.board_parser import parse_board
 from backend.config import is_lost_section, lost_section
 from backend.queue_ops import (add_entry, ensure_plain_section, move_task,
                                relink_entry, retitle_entry)
+from backend.stall import apply_blocks_repair, plan_blocks_repair
 from backend.statuses import Pipeline, load_pipeline
 from backend.task_parser import parse_frontmatter
 
@@ -134,7 +135,8 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
     """Что разошлось между доской и файлами. Ничего не меняет."""
     board_path = tasks_dir / cfg.get("board_file", "board.md")
     if not board_path.is_file():
-        return {"add": [], "move": [], "lost": [], "relink": [], "retitle": []}
+        return {"add": [], "move": [], "lost": [], "relink": [], "retitle": [],
+                "blocks": plan_blocks_repair(tasks_dir)}
 
     pipeline = load_pipeline(cfg)
     board = parse_board(board_path, pipeline)
@@ -188,8 +190,11 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
                     "status": info["status"], "section": section,
                     "restore": restore})
 
+    # Обратные ссылки блокировок — тоже расхождение двух концов, только оба
+    # конца лежат во frontmatter. Чинится той же кнопкой: пользователю неважно,
+    # где именно данные разъехались
     return {"add": add, "move": move, "lost": lost, "relink": relink,
-            "retitle": retitle}
+            "retitle": retitle, "blocks": plan_blocks_repair(tasks_dir)}
 
 
 def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
@@ -224,6 +229,10 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
         if not result.get("ok"):
             failed.append(f"{item['id']}: {result.get('error')}")
 
+    # Обратные ссылки блокировок: те же два конца, только оба во frontmatter
+    blocks = apply_blocks_repair(tasks_dir)
+    failed.extend(blocks["failed"])
+
     for item in plan["add"]:
         if item.get("restore"):
             result = move_task(tasks_dir, cfg, item["id"], item["section"],
@@ -244,4 +253,5 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
             "lost": len(plan["lost"]),
             "relinked": len(plan["relink"]),
             "retitled": len(plan["retitle"]),
+            "blocks": blocks["fixed"],
             "failed": failed}
