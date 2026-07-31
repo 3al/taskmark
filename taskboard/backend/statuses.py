@@ -168,6 +168,10 @@ class Pipeline:
     def is_forward(self, src: str, dst: str) -> bool:
         return dst in self.forward(src)
 
+    def is_offramp(self, key: str) -> bool:
+        """Съезд с маршрута (отмена): достижим отовсюду, но не шаг маршрута."""
+        return bool((self._by_key.get(key) or {}).get("offramp"))
+
     def skipped(self, src: str, dst: str) -> list[str]:
         """Статусы, пропущенные при прыжке вперёд (для предупреждения в логе).
 

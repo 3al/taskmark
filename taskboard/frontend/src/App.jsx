@@ -11,6 +11,7 @@ import SettingsModal from './components/SettingsModal'
 import ScaffoldModal from './components/ScaffoldModal'
 import AgenticStaleModal from './components/AgenticStaleModal'
 import BoardRepairModal from './components/BoardRepairModal'
+import ReasonPrompt from './components/ReasonPrompt'
 import HelpModal from './components/HelpModal'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению прямоугольников
@@ -57,6 +58,8 @@ export default function App() {
   const [stalledOnly, setStalledOnly] = useState(false)
   // Перенос остановленной задачи в работу: спрашиваем, а не запрещаем
   const [pendingMove, setPendingMove] = useState(null)
+  // Перенос в съезд с маршрута: без причины отмены он не состоится
+  const [pendingCancel, setPendingCancel] = useState(null)
   const [dndFullBoard, setDndFullBoard] = useState(false)
   const configLoaded = useRef(false)
   const [activeDrag, setActiveDrag] = useState(null)
@@ -73,13 +76,17 @@ export default function App() {
   // Помощь открывается там, где возник вопрос: сразу на нужном разделе
   const openHelp = (section = null) => setHelpSection(section || 'start')
 
-  // Esc закрывает вопрос о переносе — как и любое другое окно доски
+  // Esc закрывает вопрос о переносе и ввод причины — как и любое окно доски
   useEffect(() => {
-    if (!pendingMove) return
-    const onKey = (e) => e.key === 'Escape' && setPendingMove(null)
+    if (!pendingMove && !pendingCancel) return
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      setPendingMove(null)
+      setPendingCancel(null)
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pendingMove])
+  }, [pendingMove, pendingCancel])
 
   // Ввод опережает сеть: запрос уходит после паузы, иначе каждая буква — запрос
   useEffect(() => {
@@ -353,11 +360,11 @@ export default function App() {
   // оставленная пометка врала бы про то, чего задача не ждёт.
   // confirm — признак «пользователь подтвердил»: правило проверяет сервер, и
   // без признака он откажет (доска не единственный клиент)
-  const applyMove = async (move, clearStall = false, confirm = false) => {
+  const applyMove = async (move, clearStall = false, confirm = false, reason = null) => {
     const { taskId, sectionTitle, position, afterTaskId, group } = move
     try {
       if (clearStall) await api.updateTask(taskId, { blocked_by: [], paused: '' })
-      await api.moveTask(taskId, sectionTitle, position, afterTaskId, group, confirm)
+      await api.moveTask(taskId, sectionTitle, position, afterTaskId, group, confirm, reason)
       refresh()
     } catch (e) {
       // Доска могла не знать о простое (карточку изменили в другом окне) —
@@ -365,6 +372,12 @@ export default function App() {
       if (e.code === 'stall_confirm') {
         setPendingMove({ ...move, task: findTask(taskId)?.task, toTitle: sectionTitle,
                          serverReason: e.message })
+        return
+      }
+      // Съезд с маршрута требует причины: спрашиваем её и повторяем перенос.
+      // Правило проверяет сервер, доска только собирает текст
+      if (e.code === 'cancel_reason') {
+        setPendingCancel({ ...move, toTitle: sectionTitle })
         return
       }
       setError(e.message)
@@ -678,6 +691,39 @@ export default function App() {
               >
                 Снять простой и перенести
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Отмена — съезд с маршрута: из неё не возвращаются, и «почему»
+          остаётся в файле навсегда. Поэтому причина не опция, а условие
+          переноса: без текста кнопка неактивна */}
+      {pendingCancel && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+             onClick={() => setPendingCancel(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md shadow-2xl"
+               onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-zinc-800 text-base font-semibold text-zinc-300">
+              Причина отмены
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm text-zinc-300/90">
+              <div>
+                <span className="font-mono text-zinc-400">{pendingCancel.taskId}</span>
+                {' '}уезжает в «{pendingCancel.toTitle}». Из отмены не возвращаются —
+                причина останется в файле задачи.
+              </div>
+              <ReasonPrompt
+                label="Причина:"
+                placeholder="дублирует TASK-010"
+                submitLabel="Отменить задачу"
+                onSubmit={(reason) => {
+                  const m = pendingCancel
+                  setPendingCancel(null)
+                  applyMove(m, false, false, reason)
+                }}
+                onCancel={() => setPendingCancel(null)}
+              />
             </div>
           </div>
         </div>

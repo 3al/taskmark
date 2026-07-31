@@ -68,6 +68,8 @@ class MoveIn(BaseModel):
     # Перенос стоящей задачи в работу подтверждается явно: без признака API
     # отказывает и называет причину — правило одно для всех клиентов
     confirm: bool = False
+    # Причина съезда с маршрута (отмены): без неё перенос не выполняется
+    reason: str | None = None
 
 
 class TaskIn(BaseModel):
@@ -491,8 +493,12 @@ def api_move(task_id: str, body: MoveIn) -> dict:
                                       "message": verdict["reason"]})
 
     result = move_task(tasks_dir, cfg, task_id, body.to_section, body.position,
-                       body.after_task_id, body.group)
+                       body.after_task_id, body.group, reason=body.reason)
     if not result.get("ok"):
+        # Код отличает «нужна причина отмены» от прочих ошибок: по нему доска
+        # открывает поле ввода, а не показывает красную строку
+        if result.get("code"):
+            raise HTTPException(400, {"code": result["code"], "message": result["error"]})
         raise HTTPException(400, result.get("error", "Ошибка перемещения"))
     return result
 

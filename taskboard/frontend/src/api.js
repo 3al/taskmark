@@ -39,13 +39,14 @@ export const api = {
     request('/api/projects/activate', { method: 'POST', body: JSON.stringify({ name }) }),
   removeProject: (name) => request(`/api/projects/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   createTask: (payload) => request('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }),
-  // confirm — стоящую задачу берут в работу: без признака сервер откажет
+  // confirm — стоящую задачу берут в работу: без признака сервер откажет;
+  // reason — причина съезда с маршрута (отмены), без неё он тоже откажет
   moveTask: (id, toSection, position = null, afterTaskId = null, group = null,
-             confirm = false) =>
+             confirm = false, reason = null) =>
     request(`/api/tasks/${id}/move`, {
       method: 'POST',
       body: JSON.stringify({ to_section: toSection, position,
-                             after_task_id: afterTaskId, group, confirm }),
+                             after_task_id: afterTaskId, group, confirm, reason }),
     }),
   ensureQueue: () => request('/api/queue/ensure', { method: 'POST' }),
   repairPlan: () => request('/api/board/repair'),

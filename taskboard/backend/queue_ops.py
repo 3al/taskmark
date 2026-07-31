@@ -7,7 +7,7 @@ from pathlib import Path
 
 from backend.stall import clear_stall, is_terminal
 from backend.statuses import Pipeline, load_pipeline
-from backend.task_parser import set_task_status
+from backend.task_parser import find_task_file, set_meta_fields, set_task_status
 
 
 def _status_for_section(cfg: dict, to_section: str) -> str | None:
@@ -161,6 +161,7 @@ def move_task(
     after_task_id: str | None = None,
     group: str | None = None,
     touch_status: bool = True,
+    reason: str | None = None,
 ) -> dict:
     """
     Переместить задачу в другой раздел доски (и обновить frontmatter).
@@ -178,6 +179,16 @@ def move_task(
     """
     board_path = tasks_dir / cfg.get("board_file", "board.md")
     pipeline = load_pipeline(cfg)
+
+    # Отмена — съезд с маршрута: из него не возвращаются, и «почему» остаётся в
+    # файле навсегда. Спрашиваем причину до правки доски, иначе задача уже
+    # уехала бы, а причина потерялась
+    target = pipeline.status_for_section(to_section) or ""
+    reason = re.sub(r"\s+", " ", reason or "").strip()
+    if touch_status and pipeline.is_offramp(target) and not reason:
+        return {"ok": False, "code": "cancel_reason",
+                "error": f"Нужна причина: перевод в «{to_section}» без неё не выполняется"}
+
     lines = board_path.read_text(encoding="utf-8").splitlines()
 
     src_idx = _find_entry_line(lines, task_id)
@@ -248,6 +259,10 @@ def move_task(
     result = {"ok": True, "task": task_id, "section": to_section, "status": status}
     if touch_status and status:
         set_task_status(tasks_dir, task_id, status)
+        if reason and pipeline.is_offramp(status):
+            path = find_task_file(tasks_dir, task_id)
+            if path is not None:
+                set_meta_fields(path, {"cancel_reason": reason})
         # Задача доехала до конца маршрута — «ждёт» про неё больше не правда.
         # Снимаем простой вместе с обратными ссылками у блокеров: иначе в
         # файлах осталось бы ровно то, что API отказался бы создать

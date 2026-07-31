@@ -262,7 +262,12 @@ class SetStatusTest(unittest.TestCase):
         self.assertIn("cancelled", info["forward"])
         self.assertEqual("development", info["next"])
 
-        result = self.mod.set_status(self.tasks, "TASK-001", "cancelled")
+        # Съезд требует причины (TASK-042): из отмены не возвращаются
+        refused = self.mod.set_status(self.tasks, "TASK-001", "cancelled")
+        self.assertFalse(refused["ok"], "задача отменена без причины")
+
+        result = self.mod.set_status(self.tasks, "TASK-001", "cancelled",
+                                     reason="дублирует TASK-002")
         self.assertTrue(result["ok"], result)
         self.assertEqual(self._section_of(), "Cancelled")
 

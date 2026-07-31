@@ -271,6 +271,14 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
             )}
             {titleError && <div className="text-xs text-rose-400 mt-1">{titleError}</div>}
 
+            {/* Причина отмены: спрашивается один раз при переводе и остаётся
+                в файле навсегда — из съезда не возвращаются */}
+            {task?.meta?.cancel_reason && task.meta.cancel_reason !== '~' && (
+              <div className="text-xs text-zinc-500 mt-1">
+                отменена: <span className="text-zinc-400">{task.meta.cancel_reason}</span>
+              </div>
+            )}
+
             {/* Простой: почему задача стоит и как это снять. Блокировка живёт
                 двумя концами, но правится одним вызовом — см. backend/stall.py */}
             {task && (

@@ -14,6 +14,7 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   python tasks/set_status.py TASK-004 development   # то же без лаунчера py
   py tasks/set_status.py TASK-004 testing --agent "Claude Opus 5"
   py tasks/set_status.py TASK-004 completed --position end
+  py tasks/set_status.py TASK-004 cancelled --reason "дублирует TASK-002"
   py tasks/set_status.py --list             # пайплайн статусов проекта (JSON)
   py tasks/set_status.py --targets TASK-004 # куда можно двинуть задачу (JSON)
 
@@ -37,6 +38,7 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   --unblock [TASK-NNN]    Снять блокировку; без значения — все
   --pause ПРИЧИНА         Пауза с причиной; статус задачи при этом не меняется
   --resume                Снять паузу
+  --reason ПРИЧИНА        Причина съезда с маршрута (отмены) — без неё не переведёт
   --stalled               Срез простоя: что стоит и почему (JSON)
   --tasks-dir PATH        Папка задач (по умолчанию — папка этого скрипта)
 """
@@ -332,7 +334,7 @@ def _tidy_section(lines: list[str], name: str) -> None:
 
 def set_status(tasks_dir: Path, task_id: str, status: str,
                agent: str | None = None, position: str = "start",
-               force: bool = False) -> dict:
+               force: bool = False, reason: str | None = None) -> dict:
     """
     Перевести задачу в новый статус: frontmatter + раздел board.md.
 
@@ -341,6 +343,9 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
 
     force — взять в работу стоящую задачу: блокировка ровно от этого и
     защищает, поэтому без явного признака такой перевод не выполняется.
+
+    reason — причина съезда с маршрута (отмены). Обязательна: из отмены не
+    возвращаются, и «почему» должно остаться в файле.
     """
     tasks_dir = Path(tasks_dir)
     cfg = load_config(tasks_dir)
@@ -351,6 +356,13 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
         return {"ok": False,
                 "error": f"Статус {status} не входит в пайплайн проекта. "
                          f"Допустимо: {', '.join(known)}"}
+
+    meta_status = next((s for s in pipeline if s["key"] == status), {})
+    reason = _one_line(reason)
+    if meta_status.get("offramp") and not reason:
+        return {"ok": False,
+                "error": f"Нужна причина: перевод в «{meta_status.get('label', status)}» "
+                         f"без неё не выполняется — добавьте --reason \"…\""}
 
     # Стоящую задачу берут в работу — единственный аномальный переход: ждать
     # внутри ревью или тестирования законно, назад по маршруту тем более, а в
@@ -447,6 +459,9 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
         between = pipeline[keys.index(prev) + 1:keys.index(status)]
         skipped = [s["key"] for s in between
                    if not s.get("offramp") and not s.get("reentry")]
+
+    if reason:
+        _set_fields(task_file, {"cancel_reason": reason})
 
     # Доехали до конца маршрута — «ждёт» про закрытую задачу больше не правда
     cleared = clear_stall(tasks_dir, task_id) if is_terminal(pipeline, status) else None
@@ -805,6 +820,8 @@ def main() -> None:
                         help="Позиция в целевом разделе (default: start)")
     parser.add_argument("--force", action="store_true",
                         help="Взять в работу стоящую задачу (блокировка/пауза)")
+    parser.add_argument("--reason", default=None, metavar="ПРИЧИНА",
+                        help="Причина съезда с маршрута (отмены) — обязательна")
     parser.add_argument("--tasks-dir", default=None,
                         help="Папка задач (default: папка этого скрипта)")
     args = parser.parse_args()
@@ -860,7 +877,8 @@ def main() -> None:
                      "(либо --list / --targets / --queue / --stalled / --block / --pause)")
 
     result = set_status(tasks_dir, args.task_id, args.status,
-                        agent=args.agent, position=args.position, force=args.force)
+                        agent=args.agent, position=args.position, force=args.force,
+                        reason=args.reason)
 
     if not result.get("ok"):
         print(f"[ERROR] {result.get('error')}", file=sys.stderr)
