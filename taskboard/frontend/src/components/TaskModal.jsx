@@ -7,6 +7,7 @@ import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents, rehypeNoteMeta } from '../markdown'
 import { INLINE_FIELD } from '../fields'
 import CopyButton from './CopyButton'
+import MarkdownEditor from './MarkdownEditor'
 import ReasonPrompt from './ReasonPrompt'
 import TaskPicker from './TaskPicker'
 
@@ -35,6 +36,58 @@ function TitleActions({ children }) {
       </span>
     </span>
   )
+}
+
+// Заголовок редактируемой секции рисуем сами, а не отдаём в markdown: кнопка
+// правки должна стоять сразу за последним словом («Описание ✎»), как у названия
+// задачи, а внутрь тега, собранного react-markdown, её не положить. Стили те же —
+// `.md-body h2/h3` из index.css
+function SectionHeading({ heading, query, children }) {
+  const level = heading.length - heading.replace(/^#+/, '').length
+  const Tag = `h${Math.min(6, Math.max(1, level))}`
+  const text = heading.replace(/^#+\s*/, '')
+  return <Tag>{query ? highlight(text, query) : text}{children}</Tag>
+}
+
+// Тело задачи режется на блоки по редактируемым секциям: заголовки и ключи
+// приходят с бэкенда — структуру файла знает он, здесь её остаётся применить.
+// Граница секции — заголовок своего или более высокого уровня либо начало
+// соседней редактируемой секции (зеркало task_parser.section_bounds): иначе
+// «## Описание» обрывалось бы на первом же `### Что делаем`
+export function splitSections(body, sections) {
+  const blocks = []
+  const headings = (sections || []).map((s) => s.heading)
+  let rest = body || ''
+  for (const section of sections || []) {
+    const at = rest.indexOf(`${section.heading}\n`)
+    if (at < 0) continue
+    const before = rest.slice(0, at)
+    if (before.trim()) blocks.push({ type: 'md', text: before })
+
+    const from = at + section.heading.length + 1
+    const tail = rest.slice(from)
+    const level = section.heading.length - section.heading.replace(/^#+/, '').length
+    const stops = []
+    const higher = tail.match(new RegExp(`^#{1,${level}} `, 'm'))
+    if (higher) stops.push(higher.index)
+    for (const other of headings) {
+      if (other === section.heading) continue
+      const idx = tail.indexOf(`${other}\n`)
+      if (idx >= 0) stops.push(idx)
+    }
+    const to = stops.length ? from + Math.min(...stops) : rest.length
+    blocks.push({
+      type: 'section',
+      key: section.key,
+      heading: section.heading,
+      text: rest.slice(from, to).trim(),
+      // Правим сырой текст файла, а не очищенный от комментариев рендер
+      raw: section.text ?? '',
+    })
+    rest = rest.slice(to)
+  }
+  if (rest.trim()) blocks.push({ type: 'md', text: rest })
+  return blocks
 }
 
 // Модалка с полным содержимым задачи (рендер markdown).
@@ -103,6 +156,47 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
     }
   }
 
+  // Правка текста задачи: описание и критерии — отдельные секции, каждая со
+  // своим карандашом. Правится **сырой markdown файла**, без автопреобразований:
+  // в окне почти всегда открывают уже оформленное агентом описание, где перенос
+  // внутри абзаца — часть оформления. Предпросмотр показывает результат разметки
+  // до сохранения, чтобы поломка была видна сразу
+  const blocks = useMemo(() => splitSections(body, task?.sections), [body, task])
+  const [editSection, setEditSection] = useState(null)
+  const [sectionText, setSectionText] = useState('')
+  const [sectionPreview, setSectionPreview] = useState(false)
+  const [sectionSaving, setSectionSaving] = useState(false)
+  const [sectionError, setSectionError] = useState(null)
+
+  const startSection = (block) => {
+    setEditSection(block.key)
+    setSectionText(block.raw)
+    setSectionPreview(false)
+    setSectionError(null)
+  }
+
+  const cancelSection = () => {
+    setEditSection(null)
+    setSectionError(null)
+  }
+
+  const saveSection = async () => {
+    setSectionSaving(true)
+    try {
+      await api.updateTask(taskId, { [editSection]: sectionText })
+      // Ответ описывает правку, а не задачу целиком: перечитываем, чтобы тело
+      // и границы секций пересобрались из файла
+      setTask(await api.task(taskId))
+      setEditSection(null)
+      setSectionError(null)
+    } catch (e) {
+      // Правку не теряем: поле остаётся открытым с введённым текстом
+      setSectionError(e.message || 'Не удалось сохранить текст')
+    } finally {
+      setSectionSaving(false)
+    }
+  }
+
   // Простой задачи: что показываем и что правим. Форма ввода открывается по
   // кнопке — панель не должна занимать место, пока задача никого не ждёт
   const stall = task?.stall
@@ -154,16 +248,26 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
     api.task(taskId).then(setTask).catch((e) => setError(e.message))
   }, [taskId])
 
+  // Esc забирает открытая правка: закрыть окно поверх набранного текста —
+  // потерять его молча. Первый Esc сворачивает правку, второй закрывает окно.
+  // Слушатель нужен и здесь, а не только в поле: в режиме предпросмотра
+  // фокуса на textarea нет, и нажатие уходит прямо в окно
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose()
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      if (editSection) { cancelSection(); return }
+      onClose()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, editSection])
 
   return (
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={onClose}
+      // Пока идёт правка, окно закрывается только явно: промах мышью мимо
+      // карточки не должен уносить набранный текст
+      onClick={() => { if (!editSection) onClose() }}
     >
       {/* Ширина по содержимому: обычная задача остаётся привычных 48rem, а
           широкая таблица раздвигает окно до края экрана вместо того, чтобы
@@ -449,12 +553,53 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
         <div className={`overflow-y-auto px-5 py-4 md-body text-sm ${style.mdTint}`}>
           {error && <div className="text-rose-400">{error}</div>}
           {!task && !error && <div className="text-zinc-500">Загрузка…</div>}
-          {task && (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
-                           components={mdComponents}>
-              {body}
-            </ReactMarkdown>
-          )}
+          {task && blocks.map((block, i) => (
+            <div key={i} className="md-block group relative">
+              {block.type === 'section' && editSection === block.key ? (
+                <>
+                  <SectionHeading heading={block.heading} />
+                  {/* Ширина поля — та же колонка, в которой текст читается:
+                      раздвигать под правку окно незачем, вырастает только высота */}
+                  <MarkdownEditor
+                    value={sectionText}
+                    onChange={setSectionText}
+                    onSave={saveSection}
+                    onCancel={cancelSection}
+                    saving={sectionSaving}
+                    error={sectionError}
+                    preview={sectionPreview}
+                    onPreviewChange={setSectionPreview}
+                    minRows={10}
+                  />
+                </>
+              ) : (
+                <>
+                  {/* Карандаш стоит вплотную за словом заголовка — как у названия
+                      задачи. Клик по самому тексту правку не открывает: описание
+                      читают и копируют кусками, перехваченный клик мешал бы */}
+                  {block.type === 'section' && (
+                    <SectionHeading heading={block.heading} query={query}>
+                      {!editSection && (
+                        <TitleActions>
+                          <button
+                            onClick={() => startSection(block)}
+                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-600
+                              hover:text-zinc-300 opacity-0 group-hover:opacity-100 focus:opacity-100
+                              transition-opacity"
+                            title="Изменить текст"
+                          >✎</button>
+                        </TitleActions>
+                      )}
+                    </SectionHeading>
+                  )}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
+                                 components={mdComponents}>
+                    {block.text}
+                  </ReactMarkdown>
+                </>
+              )}
+            </div>
+          ))}
         </div>
       </div>
     </div>

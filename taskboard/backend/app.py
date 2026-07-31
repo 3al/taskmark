@@ -31,7 +31,8 @@ from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            move_confirmation, set_blocked_by, set_paused,
                            stall_details, stalled_tasks)
 from backend.statuses import CATALOG, load_pipeline
-from backend.task_parser import list_all_tasks, parse_task, set_task_title
+from backend.task_parser import (list_all_tasks, parse_task, set_task_section,
+                                 set_task_title)
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -94,6 +95,10 @@ class TaskUpdateIn(BaseModel):
     # паузы. Пустое значение снимает: [] — все блокировки, "" — паузу
     blocked_by: list[str] | str | None = None
     paused: str | None = None
+    # Тела редактируемых секций файла задачи, как их набрал человек: пишутся
+    # дословно, без «переносы → абзацы» (см. task_parser.replace_section)
+    description: str | None = None
+    criteria: str | None = None
 
 
 class ConfigIn(BaseModel):
@@ -443,6 +448,17 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
             file=new_file,
             board=bool(linked.get("ok") and titled.get("ok")),
         )
+
+    # Правка текста задачи: каждая секция пишется отдельно и точечно — пока
+    # карточка открыта, в тот же файл пишет агент
+    for key in ("description", "criteria"):
+        text = getattr(body, key)
+        if text is None:
+            continue
+        saved = set_task_section(tasks_dir, task_id, key, text)
+        if not saved.get("ok"):
+            raise HTTPException(400, saved.get("error", "Ошибка правки задачи"))
+        result.setdefault("sections", {})[key] = saved["text"]
 
     if body.blocked_by is not None or body.paused is not None:
         # Простой ставится не в любом статусе: у завершённой или отменённой

@@ -38,14 +38,118 @@ def find_task_file(tasks_dir: Path, task_id: str) -> Path | None:
     return None
 
 
+# Секции файла задачи, которые правятся из окна доски. Имена — те же, что
+# подставляет `create_task.py` (`_FILLED_SECTIONS`): структуру задаёт
+# `_TEMPLATE.md`, и второго источника правды у неё нет.
+#
+# Заголовок отдаётся окну вместе с текстом: по нему оно разрезает тело задачи
+# на блоки и понимает, над каким рисовать карандаш. Секции нет в файле —
+# правки нет, а не ошибка: задачи бывают старые и урезанные.
+EDITABLE_SECTIONS = (
+    ("description", "## Описание"),
+    ("criteria", "### Критерии приёмки"),
+)
+
+
+def section_bounds(content: str, heading: str) -> tuple[int, int] | None:
+    """Границы тела секции `heading` в тексте: (начало, конец) или None.
+
+    Секция кончается на заголовке **своего или более высокого уровня** — иначе
+    «## Описание» обрывалось бы на первом же `### Что делаем`, а правила проекта
+    прямо советуют разбивать длинное описание подзаголовками. Соседняя
+    редактируемая секция обрывает тоже: «### Критерии приёмки» лежат внутри
+    описания, но правятся отдельным полем.
+    """
+    start = content.find(heading + "\n")
+    if start < 0:
+        return None
+    level = len(heading) - len(heading.lstrip("#"))
+    body_start = start + len(heading) + 1
+    rest = content[body_start:]
+
+    stops = []
+    higher = re.search(rf"^#{{1,{level}}} ", rest, flags=re.M)
+    if higher:
+        stops.append(higher.start())
+    for _key, other in EDITABLE_SECTIONS:
+        if other == heading:
+            continue
+        at = rest.find(other + "\n")
+        if at >= 0:
+            stops.append(at)
+    end = body_start + min(stops) if stops else len(content)
+    return body_start, end
+
+
+def section_body(content: str, heading: str) -> str | None:
+    """Тело секции `heading` (без самого заголовка) либо None, если её нет."""
+    bounds = section_bounds(content, heading)
+    if bounds is None:
+        return None
+    start, end = bounds
+    return content[start:end].strip("\n")
+
+
+def replace_section(content: str, heading: str, body: str) -> str | None:
+    """Заменить тело секции, не трогая остальной файл. None — секции нет."""
+    bounds = section_bounds(content, heading)
+    if bounds is None:
+        return None
+    body_start, end = bounds
+
+    body = body.strip("\n")
+    # Текст автора пишется дословно: «переносы → абзацы» (`as_paragraphs`)
+    # уместны на вводе сырого текста в форме создания, а здесь правят уже
+    # оформленный markdown, где перенос внутри абзаца — часть оформления
+    filling = f"\n{body}\n\n" if body else "\n"
+    return content[:body_start] + filling + content[end:]
+
+
+def task_sections(content: str) -> list[dict]:
+    """Редактируемые секции задачи: [{key, heading, text}] в порядке файла."""
+    out: list[dict] = []
+    for key, heading in EDITABLE_SECTIONS:
+        text = section_body(content, heading)
+        if text is not None:
+            out.append({"key": key, "heading": heading, "text": text})
+    return out
+
+
+def set_task_section(tasks_dir: Path, task_id: str, key: str, text: str) -> dict:
+    """Записать новое тело секции задачи.
+
+    Правка точечная: пока карточка открыта, в тот же файл пишет агент
+    (заметки, история коммитов) — переписывать файл целиком нельзя.
+    """
+    heading = dict(EDITABLE_SECTIONS).get(key)
+    if not heading:
+        return {"ok": False, "error": f"Секция {key} не редактируется"}
+
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+
+    content = path.read_text(encoding="utf-8")
+    updated = replace_section(content, heading, text.replace("\r\n", "\n"))
+    if updated is None:
+        return {"ok": False, "error": f"В задаче нет секции «{heading.lstrip('# ')}»"}
+
+    # newline="" — файл пишется ровно теми переводами строк, что в тексте:
+    # у пользователей встречается CRLF, и удваивать \r нельзя
+    path.write_text(updated, encoding="utf-8", newline="")
+    return {"ok": True, "task": task_id, "key": key,
+            "text": section_body(updated, heading) or ""}
+
+
 def parse_task(tasks_dir: Path, task_id: str) -> dict | None:
-    """Прочитать задачу: meta + markdown-тело."""
+    """Прочитать задачу: meta + markdown-тело + редактируемые секции."""
     path = find_task_file(tasks_dir, task_id)
     if path is None:
         return None
     content = path.read_text(encoding="utf-8")
     meta, body = parse_frontmatter(content)
-    return {"id": task_id, "file": path.name, "meta": meta, "body": body}
+    return {"id": task_id, "file": path.name, "meta": meta, "body": body,
+            "sections": task_sections(content)}
 
 
 def list_all_tasks(tasks_dir: Path) -> list[dict]:

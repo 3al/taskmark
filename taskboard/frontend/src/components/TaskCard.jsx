@@ -54,6 +54,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         onClick={() => onOpen(task.id)}
         className={`${style.card} relative overflow-hidden border rounded-lg px-3.5 py-2.5
           cursor-grab ${style.cardHover} transition select-none touch-none
+          outline-none ${style.cardFocus}
           ${isDragging ? 'opacity-40' : ''} ${task.struck ? 'opacity-45 border-dashed' : ''}`}
       >
         {stripe && (

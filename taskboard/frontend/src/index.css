@@ -44,6 +44,11 @@ body {
    (.md-scroll-x) — ради них окно и растягивается */
 .md-body > * { max-width: 44rem; }
 .md-body > .md-scroll-x { max-width: 100%; }
+/* Тело задачи собирается из блоков (описание и критерии правятся посекционно) —
+   предел ширины и снятие его с широких блоков должны работать и внутри блока */
+.md-body > .md-block > * { max-width: 44rem; }
+.md-body > .md-block > .md-scroll-x { max-width: 100%; }
+.md-body > .md-block:first-child > :first-child { @apply mt-0; }
 /* Длинный путь или URL переносится, а не вылезает из колонки */
 .md-body p, .md-body li { @apply break-words; }
 .md-body p { @apply my-2 text-zinc-300/80 leading-relaxed; }
