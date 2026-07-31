@@ -152,10 +152,10 @@ export default function MarkdownEditor({
       </div>
 
       {preview ? (
-        // Никакой своей коробки: «Как выглядит» должен показывать текст ровно
-        // так, как он будет выглядеть в задаче, — теми же стилями `.md-body`,
-        // на том же фоне окна. Подложка поля здесь врала бы
-        <div>
+        // Рамка и отступы — как у поля, чтобы режимы не прыгали, но **без
+        // подложки**: текст показывается стилями `.md-body` на фоне окна, то
+        // есть ровно так, как задача выглядит в чтении
+        <div className="rounded-lg border border-zinc-700 px-3 py-2">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeNoteMeta]}
                          components={mdComponents}>
             {(value || '').trim() || '_(пусто)_'}
