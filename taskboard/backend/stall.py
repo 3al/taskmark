@@ -88,6 +88,31 @@ def task_stall(tasks_dir: Path, task_id: str) -> dict | None:
     return stall_of(_meta_of(path)) if path else None
 
 
+def resolve_ids(tasks_dir: Path, ids) -> list[dict]:
+    """Развернуть номера задач в `[{id, title, status, found}]`.
+
+    Номера мало: «TASK-013» ничего не говорит о том, далеко ли до разблокировки.
+    Ненайденную задачу не выбрасываем — помечаем `found: False`, иначе ссылка
+    на несуществующее просто исчезнет из интерфейса.
+    """
+    tasks_dir = Path(tasks_dir)
+    out: list[dict] = []
+    for task_id in parse_ids(ids):
+        path = find_task_file(tasks_dir, task_id)
+        meta = _meta_of(path) if path else {}
+        out.append({"id": task_id, "title": meta.get("title", ""),
+                    "status": meta.get("status", ""), "found": path is not None})
+    return out
+
+
+def stall_details(tasks_dir: Path, meta: dict) -> dict:
+    """Состояние простоя с развёрнутыми ссылками — для открытой карточки."""
+    state = stall_of(meta)
+    state["blocked_by_tasks"] = resolve_ids(tasks_dir, state["blocked_by"])
+    state["blocks_tasks"] = resolve_ids(tasks_dir, state["blocks"])
+    return state
+
+
 def _edit_field(path: Path, field: str, task_id: str, add: bool) -> None:
     """Добавить/убрать задачу в списочном поле файла."""
     ids = parse_ids(_meta_of(path).get(field))

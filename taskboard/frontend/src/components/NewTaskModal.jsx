@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import TaskPicker from './TaskPicker'
 
 // Модалка создания задачи (вызов create_task.py через API)
 // backlogSections — реальные подразделы ### колонки Backlog из board.md
@@ -18,11 +19,12 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Задача-блокер: поле хранит номер, но блокировать можно только существующую
+  // задачу — иначе новая задача рождается со ссылкой в никуда
+  const [blockedTask, setBlockedTask] = useState(null)
   // Реестр эпиков: известные ключи подсказываем, для нового спрашиваем имя —
   // имя эпика хранится только в epics.md, ссылка на безымянный эпик бесполезна
   const [epics, setEpics] = useState([])
-  // Список всех задач — подсказки для blocked_by
-  const [tasks, setTasks] = useState([])
   // Пресеты критериев: дефолт виден заранее (поле предзаполнено первым),
   // свой вариант можно сохранить — он появится во всех проектах
   const [presets, setPresets] = useState([])
@@ -32,7 +34,6 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
 
   useEffect(() => {
     api.epics().then((d) => setEpics(d.items || [])).catch(() => { /* нет реестра */ })
-    api.tasksList().then((d) => setTasks(d.items || [])).catch(() => {})
     api.criteriaPresets()
       .then((d) => {
         const items = d.presets || []
@@ -67,16 +68,6 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
   const epicSuggestions = epics.filter((e) =>
     e.key.toLowerCase().includes(needle) || (e.name || '').toLowerCase().includes(needle))
 
-  // Подсказки blocked_by — список задач проекта; без возможности создать новую
-  const [blockedFocus, setBlockedFocus] = useState(false)
-  const [blockedPicked, setBlockedPicked] = useState(null)
-  const blockedNeedle = form.blocked_by.trim().toLowerCase()
-  const blockedSuggestions = !blockedPicked && blockedNeedle
-    ? tasks.filter((t) =>
-        t.id.toLowerCase().includes(blockedNeedle) ||
-        (t.title || '').toLowerCase().includes(blockedNeedle))
-    : []
-
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && !busy && onClose()
     window.addEventListener('keydown', onKey)
@@ -88,6 +79,10 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
   const submit = async () => {
     if (!form.title.trim()) {
       setError('Название обязательно')
+      return
+    }
+    if (form.blocked_by.trim() && !blockedTask) {
+      setError('Задача-блокер не найдена — выберите её из списка')
       return
     }
     setBusy(true)
@@ -196,35 +191,14 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
               )}
             </div>
           </div>
-          <div className="relative">
-            <input
-              className={field}
-              placeholder="Заблокировано задачей (TASK-NNN, опционально)"
-              value={form.blocked_by}
-              onChange={(e) => { setBlockedPicked(null); set('blocked_by')(e) }}
-              onFocus={() => setBlockedFocus(true)}
-              onBlur={() => setBlockedFocus(false)}
-            />
-            {blockedFocus && !blockedPicked && blockedSuggestions.length > 0 && (
-              <div className="absolute z-20 mt-1 w-full max-h-40 overflow-y-auto bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl">
-                {blockedSuggestions.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-zinc-700"
-                    onMouseDown={() => {
-                      setBlockedPicked(t.id)
-                      setForm({ ...form, blocked_by: t.id })
-                      setBlockedFocus(false)
-                    }}
-                  >
-                    <span className="font-mono text-zinc-300">{t.id}</span>
-                    {t.title && <span className="text-zinc-500"> · {t.title}</span>}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Поле формы оформляет форма: в колонке крупных полей компактное
+              смотрелось бы чужим */}
+          <TaskPicker
+            value={form.blocked_by}
+            onChange={(v, found) => { setBlockedTask(found); setForm({ ...form, blocked_by: v }) }}
+            inputClassName={field}
+            placeholder="Заблокировано задачей (TASK-NNN, опционально)"
+          />
 
           {/* min-w-0 у обоих полей: у инпута есть интринсическая ширина, и без
               неё появление второго поля схлопывает первое до полусантиметра */}

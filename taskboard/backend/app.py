@@ -27,7 +27,8 @@ from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_e
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
-from backend.stall import annotate_stall, set_blocked_by, set_paused, stall_of, stalled_tasks
+from backend.stall import (annotate_stall, set_blocked_by, set_paused,
+                           stall_details, stalled_tasks)
 from backend.statuses import CATALOG, load_pipeline
 from backend.task_parser import list_all_tasks, parse_task, set_task_title
 from backend.validator import validate_project
@@ -353,9 +354,11 @@ def api_task(task_id: str) -> dict:
         raise HTTPException(404, f"Задача не найдена: {task_id}")
     # Во frontmatter лежит ключ, а имя эпика — только в реестре
     task["epic_name"] = epic_name(tasks_dir, task["meta"].get("epic", ""))
-    # Состояние простоя — производное от полей, считаем его на бэкенде,
-    # чтобы разбор «~», списков и пустых значений жил в одном месте
-    task["stall"] = stall_of(task["meta"])
+    # Состояние простоя — производное от полей, считаем его на бэкенде, чтобы
+    # разбор «~», списков и пустых значений жил в одном месте. Блокеры идут
+    # с заголовком и статусом: по одному номеру не понять, далеко ли до
+    # разблокировки, а фронт файлов задач не читает
+    task["stall"] = stall_details(tasks_dir, task["meta"])
     return task
 
 

@@ -37,6 +37,9 @@ export default function App() {
   const [health, setHealth] = useState(null)
   const [projects, setProjects] = useState({ active: null, projects: [] })
   const [openTask, setOpenTask] = useState(null)
+  // Путь по задачам: из карточки уходят по номеру блокера, и вернуться нужно
+  // туда, откуда пришли, а не искать исходную задачу на доске заново
+  const [taskTrail, setTaskTrail] = useState([])
   const [showNewTask, setShowNewTask] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -49,6 +52,11 @@ export default function App() {
   // Ищем на сервере, потому что содержание задач лежит в файлах, а не на доске
   const [query, setQuery] = useState('')
   const [found, setFound] = useState(null)
+  // Фильтр «стоят»: остановленные задачи разом, каждая на своём этапе —
+  // того, чего отдельный раздел доски не даёт
+  const [stalledOnly, setStalledOnly] = useState(false)
+  // Перенос остановленной задачи в работу: спрашиваем, а не запрещаем
+  const [pendingMove, setPendingMove] = useState(null)
   const [dndFullBoard, setDndFullBoard] = useState(false)
   const configLoaded = useRef(false)
   const [activeDrag, setActiveDrag] = useState(null)
@@ -177,18 +185,49 @@ export default function App() {
   }, [board, columnOrder, pipeline])
 
   // Доска под фильтром: колонки остаются на местах (структура не должна
-  // прыгать под руками), внутри — только найденные задачи
+  // прыгать под руками), внутри — только подходящие задачи. Фильтры
+  // складываются: «стоят» сужает найденное, а не заменяет поиск
+  const filtered = !!found || stalledOnly
   const visibleColumns = useMemo(() => {
-    if (!found) return orderedColumns
+    if (!filtered) return orderedColumns
+    const keep = (t) => (!found || found.has(t.id)) && (!stalledOnly || t.stalled)
     return orderedColumns.map((col) => ({
       ...col,
       groups: col.groups
-        .map((g) => ({ ...g, tasks: g.tasks.filter((t) => found.has(t.id)) }))
+        .map((g) => ({ ...g, tasks: g.tasks.filter(keep) }))
         .filter((g) => g.tasks.length),
     }))
-  }, [orderedColumns, found])
+  }, [orderedColumns, found, stalledOnly])
 
   const findColumn = (status) => board?.columns.find((c) => c.status === status)
+
+  // Задача и её колонка по номеру — нужны, чтобы назвать блокер в вопросе
+  const findTask = (taskId) => {
+    for (const col of board?.columns || []) {
+      for (const g of col.groups) {
+        for (const t of g.tasks) if (t.id === taskId) return { task: t, column: col }
+      }
+    }
+    return null
+  }
+
+  // Сколько задач стоит — цифра рядом с фильтром
+  const stalledCount = useMemo(() => {
+    let n = 0
+    for (const col of board?.columns || []) {
+      for (const g of col.groups) n += g.tasks.filter((t) => t.stalled).length
+    }
+    return n
+  }, [board])
+
+  // Аномален ровно один переход — «взять в работу»: блокировка это и значит,
+  // «не начинай, пока та не готова». Ждать внутри ревью, тестирования или
+  // релиза законно (две задачи проверяются только вместе), назад по маршруту —
+  // тем более, а в терминальные простой снимается сам
+  const isStartOfWork = (status) => {
+    const actions = board?.config?.actions || {}
+    return !!status && (status === actions.start || status === actions.return)
+  }
 
   const cardPosition = (status, taskId) => {
     const col = findColumn(status)
@@ -289,7 +328,25 @@ export default function App() {
     }
 
     const sectionTitle = findColumn(to)?.title || to
+    const move = { taskId, sectionTitle, position, afterTaskId, group }
+
+    // Заблокированную задачу берут в работу случайно — доска ведь не помнит,
+    // чего она ждёт. Запрещать не за что (доска остаётся правдой пользователя),
+    // поэтому переспрашиваем и называем причину
+    const card = findTask(taskId)?.task
+    if (card?.stalled && from !== to && isStartOfWork(to)) {
+      setPendingMove({ ...move, task: card, toTitle: sectionTitle })
+      return
+    }
+    applyMove(move)
+  }
+
+  // clearStall — задачу берут в работу, значит простой обычно уже неактуален:
+  // оставленная пометка врала бы про то, чего задача не ждёт
+  const applyMove = async ({ taskId, sectionTitle, position, afterTaskId, group },
+                           clearStall = false) => {
     try {
+      if (clearStall) await api.updateTask(taskId, { blocked_by: [], paused: '' })
       await api.moveTask(taskId, sectionTitle, position, afterTaskId, group)
       refresh()
     } catch (e) {
@@ -376,6 +433,9 @@ export default function App() {
         query={query}
         onQuery={setQuery}
         matches={found ? found.size : null}
+        stalledOnly={stalledOnly}
+        onStalledOnly={setStalledOnly}
+        stalledCount={stalledCount}
       />
 
       {error && (
@@ -506,6 +566,7 @@ export default function App() {
                   createStatus={createStatus}
                   query={query}
                   matches={found}
+                  filtered={filtered}
                   columnIndicator={
                     activeDrag?.column && colDropTarget?.status === col.status
                       ? (colDropTarget.side === 'after' ? 'right' : 'left')
@@ -546,9 +607,73 @@ export default function App() {
         )}
       </main>
 
+      {/* Перенос остановленной задачи в работу: вопрос вместо запрета.
+          Свой диалог, а не нативный confirm — он рисуется системой и выпадает
+          из темы доски */}
+      {pendingMove && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+             onClick={() => setPendingMove(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md shadow-2xl"
+               onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-zinc-800 text-base font-semibold text-amber-200">
+              Задача стоит
+            </div>
+            <div className="px-5 py-4 space-y-2 text-sm text-zinc-300/90">
+              <div>
+                <span className="font-mono text-zinc-400">{pendingMove.taskId}</span>
+                {pendingMove.task?.blocked_by?.length > 0 && (
+                  <> ждёт {pendingMove.task.blocked_by.map((id) => {
+                    const col = findTask(id)?.column
+                    return col ? `${id} (${col.title})` : id
+                  }).join(', ')}</>
+                )}
+                {pendingMove.task?.paused && (
+                  <>{pendingMove.task?.blocked_by?.length > 0 ? ' и' : ''} на паузе
+                    : {pendingMove.task.paused}</>
+                )}
+              </div>
+              <div className="text-zinc-500">
+                Всё равно взять в работу — перенести в «{pendingMove.toTitle}»?
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
+              <button onClick={() => setPendingMove(null)}
+                      className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">
+                Отмена
+              </button>
+              <button
+                onClick={() => { const m = pendingMove; setPendingMove(null); applyMove(m) }}
+                className="px-4 py-2 text-sm rounded-lg border border-zinc-700 text-zinc-300
+                  hover:border-zinc-500 hover:bg-zinc-800 transition"
+              >
+                Перенести
+              </button>
+              <button
+                onClick={() => { const m = pendingMove; setPendingMove(null); applyMove(m, true) }}
+                className="px-4 py-2 text-sm rounded-lg bg-amber-600 hover:bg-amber-500 font-medium"
+                title="Снять блокировки и паузу, затем перенести"
+              >
+                Снять простой и перенести
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Открыли найденную задачу — совпадения подсвечены в её тексте */}
       {openTask && (
-        <TaskModal taskId={openTask} query={query} onClose={() => setOpenTask(null)} />
+        <TaskModal
+          taskId={openTask}
+          query={query}
+          onOpenTask={(id) => { setTaskTrail([...taskTrail, openTask]); setOpenTask(id) }}
+          onChanged={refresh}
+          backTo={taskTrail[taskTrail.length - 1]}
+          onBack={taskTrail.length ? () => {
+            setOpenTask(taskTrail[taskTrail.length - 1])
+            setTaskTrail(taskTrail.slice(0, -1))
+          } : null}
+          onClose={() => { setOpenTask(null); setTaskTrail([]) }}
+        />
       )}
       {showNewTask && (
         <NewTaskModal

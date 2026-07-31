@@ -21,7 +21,7 @@ function GroupTail({ status, groupIndex, afterTaskId, groupTitle, allowed }) {
 
 // Колонка статуса с группами (подразделы ###)
 export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, columnIndicator,
-                                 pickStatus, createStatus, query, matches }) {
+                                 pickStatus, createStatus, query, matches, filtered = false }) {
   const style = statusStyle(column.status)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${column.status}`,
@@ -84,9 +84,9 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
                 match={matches?.get(task.id)}
               />
             ))}
-            {/* Под фильтром хвостовая зона врала бы: «после последней» указывало
-                бы на последнюю найденную, а не на последнюю в разделе */}
-            {!matches && (
+            {/* Под любым фильтром хвостовая зона врала бы: «после последней»
+                указывало бы на последнюю показанную, а не на последнюю в разделе */}
+            {!filtered && (
               <GroupTail
                 status={column.status}
                 groupIndex={gi}
@@ -102,7 +102,7 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
         ))}
         {!column.groups.length && (
           <div className="text-xs text-zinc-600 italic px-1">
-            {matches ? 'нет совпадений' : 'пусто'}
+            {filtered ? 'нет совпадений' : 'пусто'}
           </div>
         )}
       </div>

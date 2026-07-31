@@ -25,6 +25,12 @@ MODAL = (
     / "frontend" / "src" / "components" / "NewTaskModal.jsx"
 )
 API_JS = Path(__file__).resolve().parent.parent / "frontend" / "src" / "api.js"
+# Подсказки задач вынесены в общий компонент (TASK-017): номер задачи вводят и
+# в форме создания, и в открытой карточке при простановке блокировки
+PICKER = (
+    Path(__file__).resolve().parent.parent
+    / "frontend" / "src" / "components" / "TaskPicker.jsx"
+)
 
 
 class CriteriaPresetsStoreTest(unittest.TestCase):
@@ -174,37 +180,44 @@ class BlockedBySuggestionsUiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.src = MODAL.read_text(encoding="utf-8")
+        cls.picker = PICKER.read_text(encoding="utf-8")
         cls.api = API_JS.read_text(encoding="utf-8")
 
     def test_api_client_has_endpoint(self) -> None:
         self.assertIn("tasksList", self.api)
         self.assertIn("/api/tasks/list", self.api)
 
+    def test_form_uses_shared_picker(self) -> None:
+        """Своей копии подсказок в форме больше нет — она общая с карточкой."""
+        self.assertIn("TaskPicker", self.src)
+        self.assertIn("blocked_by", self.src)
+
     def test_tasks_loaded_on_mount(self) -> None:
-        self.assertIn("tasksList", self.src)
+        self.assertIn("tasksList", self.picker)
 
     def test_custom_suggestion_list(self) -> None:
-        self.assertIn("blockedSuggestions", self.src)
-        self.assertIn("blockedPicked", self.src)
+        """Список свой и тёмный: нативный datalist браузер рисует белым."""
+        self.assertIn("suggestions", self.picker)
+        self.assertNotIn("<datalist", self.picker)
 
     def test_suggestion_shows_id_and_title(self) -> None:
-        self.assertRegex(self.src, r"blockedSuggestions\.map")
+        self.assertRegex(self.picker, r"suggestions\.map")
+        self.assertIn("t.title", self.picker)
 
     def test_no_create_new_option(self) -> None:
         """В отличие от эпика, для blocked_by нет поля «создать новую задачу»."""
         self.assertNotIn("blocked_name", self.src)
 
     def test_input_has_onfocus_onblur(self) -> None:
-        self.assertIn("onFocus={() => setBlockedFocus(true)}", self.src)
-        self.assertIn("onBlur={() => setBlockedFocus(false)}", self.src)
+        self.assertIn("onFocus={() => setFocus(true)}", self.picker)
+        self.assertIn("onBlur={() => setFocus(false)}", self.picker)
 
     def test_selected_task_fills_id(self) -> None:
-        self.assertIn("setBlockedPicked(t.id)", self.src)
-        self.assertIn("setForm({ ...form, blocked_by: t.id })", self.src)
+        self.assertIn("onChange(task.id, task)", self.picker)
 
     def test_submit_sends_id_not_label(self) -> None:
-        """В подсказке может быть ID · название, в форму пишется только ID."""
-        self.assertIn("blockedPicked", self.src)
+        """В подсказке может быть ID · название, в поле пишется только ID."""
+        self.assertIn("onMouseDown={() => pick(t)}", self.picker)
 
 
 if __name__ == "__main__":

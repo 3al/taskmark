@@ -59,7 +59,7 @@ function projectDir(tasksDir) {
 export default function Header({
   projects, active, canCreate, hasLogs, hasCustomOrder,
   onSwitchProject, onNewTask, onShowLogs, onRefresh, onResetColumns, onOpenSettings,
-  onOpenHelp, query, onQuery, matches,
+  onOpenHelp, query, onQuery, matches, stalledOnly, onStalledOnly, stalledCount = 0,
 }) {
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
@@ -197,6 +197,20 @@ export default function Header({
           </span>
         )}
       </div>
+
+      {/* Фильтр простоя: остановленные задачи разом, каждая в своей колонке.
+          Складывается с поиском — оба фильтра сужают доску */}
+      <button
+        onClick={() => onStalledOnly(!stalledOnly)}
+        title="Показать только задачи, которые стоят: ждут другую задачу или на паузе"
+        className={`px-3 py-1.5 text-sm rounded-lg border transition
+          ${stalledOnly
+            ? 'border-amber-600 bg-amber-950/50 text-amber-200'
+            : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800'}`}
+      >
+        ⛔ стоят
+        {stalledCount > 0 && <span className="ml-1.5 text-xs text-zinc-500">{stalledCount}</span>}
+      </button>
 
       <div className="flex items-center gap-2">
         {hasCustomOrder && (

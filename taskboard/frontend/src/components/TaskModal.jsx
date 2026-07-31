@@ -2,15 +2,25 @@ import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
-import { statusStyle } from '../statuses'
+import { statusLabel, statusStyle } from '../statuses'
 import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents, rehypeNoteMeta } from '../markdown'
+import { INLINE_FIELD } from '../fields'
 import CopyButton from './CopyButton'
+import ReasonPrompt from './ReasonPrompt'
+import TaskPicker from './TaskPicker'
 
 // Типографика заголовка — одна и та же в просмотре и в правке: любой разнобой
 // в размере, начертании или межстрочном интервале превращается в скачок высоты
 // шапки при входе в редактирование
 const TITLE_TEXT = 'text-xl font-semibold text-zinc-300 leading-snug break-words'
+
+// Кнопки правки простоя — в оформлении самого окна: заливка акцентным синим
+// спорит с цветом статуса в шапке и тянет на себя внимание сильнее задачи
+const STALL_BUTTON =
+  'shrink-0 px-2 py-1 text-xs rounded-lg border border-zinc-700 text-zinc-300 ' +
+  'hover:border-zinc-500 hover:bg-zinc-800 disabled:opacity-40 ' +
+  'disabled:hover:border-zinc-700 disabled:hover:bg-transparent transition'
 
 // Кнопки правки названия — inline сразу за последним символом, но нулевой
 // ширины и высоты: в поток они не попадают, поэтому текст переносится ровно
@@ -28,8 +38,10 @@ function TitleActions({ children }) {
 }
 
 // Модалка с полным содержимым задачи (рендер markdown).
-// query — активный поиск: совпадения подсвечиваются прямо в тексте задачи
-export default function TaskModal({ taskId, query, onClose }) {
+// query — активный поиск: совпадения подсвечиваются прямо в тексте задачи.
+// onOpenTask — переход к другой задаче (номер блокера кликабелен),
+// onChanged — простой поменялся: доске нужно перечитать карточки
+export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack, backTo, onClose }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
   // HTML-комментарии в файле задачи — служебные пометки для агентов; человеку
@@ -91,11 +103,54 @@ export default function TaskModal({ taskId, query, onClose }) {
     }
   }
 
+  // Простой задачи: что показываем и что правим. Форма ввода открывается по
+  // кнопке — панель не должна занимать место, пока задача никого не ждёт
+  const stall = task?.stall
+  const [stallForm, setStallForm] = useState(null) // 'pause' | 'block'
+  // Номер в поле и выбранная задача: блокировать можно только существующую,
+  // поэтому решает не текст, а то, нашлась ли задача в проекте
+  const [blockId, setBlockId] = useState('')
+  const [blockTask, setBlockTask] = useState(null)
+  const [stallBusy, setStallBusy] = useState(false)
+  const [stallError, setStallError] = useState(null)
+
+  const patchStall = async (updates) => {
+    setStallBusy(true)
+    setStallError(null)
+    try {
+      await api.updateTask(taskId, updates)
+      // Ответ PATCH описывает правку, а не задачу целиком: перечитываем — так
+      // подтянутся и заголовки блокеров, и обратные ссылки
+      setTask(await api.task(taskId))
+      setStallForm(null)
+      setBlockId('')
+      setBlockTask(null)
+      onChanged?.()
+    } catch (e) {
+      setStallError(e.message)
+    } finally {
+      setStallBusy(false)
+    }
+  }
+
+  // За раз добавляется одна задача: несколько номеров в одном поле подсказки
+  // подобрать не помогут, а «мусор через пробел» превращался в блокеров-призраков
+  const addBlocker = () => {
+    if (!blockTask) return
+    patchStall({ blocked_by: [...(stall?.blocked_by || []), blockTask.id] })
+  }
+
+  const dropBlocker = (id) =>
+    patchStall({ blocked_by: (stall?.blocked_by || []).filter((b) => b !== id) })
+
   useEffect(() => {
     setTask(null)
     setError(null)
     setEditing(false)
     setTitleError(null)
+    setStallForm(null)
+    setStallError(null)
+    setBlockId('')
     api.task(taskId).then(setTask).catch((e) => setError(e.message))
   }, [taskId])
 
@@ -124,7 +179,19 @@ export default function TaskModal({ taskId, query, onClose }) {
             {/* Рамка правки рисуется вплотную над строкой номера — на время
                 правки уводим её на пару пикселей вверх. Это transform: в поток
                 он не попадает, поэтому высота шапки не меняется */}
-            <div className={`text-xs font-mono text-zinc-500 transition-transform ${editing ? '-translate-y-0.5' : ''}`}>
+            <div className={`flex items-center gap-2 text-xs font-mono text-zinc-500
+              transition-transform ${editing ? '-translate-y-0.5' : ''}`}>
+              {/* Ушли по номеру блокера — должен быть путь обратно: иначе
+                  переход в один конец, и открытую задачу приходится искать заново */}
+              {onBack && (
+                <button
+                  onClick={onBack}
+                  className="text-zinc-500 hover:text-zinc-200 transition"
+                  title={backTo ? `Назад к ${backTo}` : 'Назад'}
+                >
+                  ←
+                </button>
+              )}
               {taskId}
             </div>
             {/* Кнопки лежат на нулевой ширине сразу за последним символом, а
@@ -203,6 +270,130 @@ export default function TaskModal({ taskId, query, onClose }) {
               </div>
             )}
             {titleError && <div className="text-xs text-rose-400 mt-1">{titleError}</div>}
+
+            {/* Простой: почему задача стоит и как это снять. Блокировка живёт
+                двумя концами, но правится одним вызовом — см. backend/stall.py */}
+            {task && (
+              <div className="mt-2 space-y-1">
+                {stall?.blocked_by_tasks?.map((b) => (
+                  <div key={b.id} className="flex items-center gap-2 text-xs">
+                    <span className="text-rose-400/90 shrink-0">⛔ ждёт</span>
+                    {/* Номер блокера — в цвет маркера на превью: на доске и в
+                        карточке это одно и то же, разный цвет читался бы как
+                        разные вещи. Блокировка красная, пауза жёлтая — иначе
+                        два разных состояния сливаются в одно пятно */}
+                    <button
+                      onClick={() => onOpenTask?.(b.id)}
+                      className="font-mono text-rose-400/90 hover:text-rose-300 shrink-0"
+                      title="Открыть блокирующую задачу"
+                    >
+                      {b.id}
+                    </button>
+                    {b.found ? (
+                      <span className="text-zinc-500 truncate">
+                        {b.title}
+                        {b.status && <> · {statusLabel(b.status)}</>}
+                      </span>
+                    ) : (
+                      <span className="text-rose-400/80 shrink-0">задача не найдена</span>
+                    )}
+                    <button
+                      onClick={() => dropBlocker(b.id)}
+                      disabled={stallBusy}
+                      className="ml-1 text-zinc-600 hover:text-zinc-300 shrink-0 disabled:opacity-40"
+                      title="Снять блокировку"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+
+                {stall?.paused && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-amber-300/80 shrink-0">⏸ пауза</span>
+                    <span className="text-zinc-400 truncate" title={stall.paused}>{stall.paused}</span>
+                    <button
+                      onClick={() => patchStall({ paused: '' })}
+                      disabled={stallBusy}
+                      className="text-zinc-600 hover:text-zinc-300 shrink-0 disabled:opacity-40"
+                      title="Снять паузу"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {/* Кого держит эта задача — справочно: снимают блокировку с той
+                    стороны, где она объявлена */}
+                {stall?.blocks_tasks?.length > 0 && (
+                  <div className="text-xs text-zinc-600">
+                    держит: {stall.blocks_tasks.map((b) => b.id).join(', ')}
+                  </div>
+                )}
+
+                {stallForm === 'pause' && (
+                  <ReasonPrompt
+                    label="Пауза:"
+                    placeholder="ждём ответ контрагента"
+                    value={stall?.paused || ''}
+                    busy={stallBusy}
+                    buttonClassName={STALL_BUTTON}
+                    onSubmit={(reason) => patchStall({ paused: reason })}
+                    onCancel={() => setStallForm(null)}
+                  />
+                )}
+
+                {/* Форма блокировки повторяет форму паузы: подпись, поле той же
+                    высоты, кнопка, отмена. Разная конструкция у двух соседних
+                    полей читается как разный смысл, хотя действие одно */}
+                {/* Место под подпись об ошибке держим всегда, пока форма открыта:
+                    сама подпись лежит вне потока и иначе наезжает на границу шапки */}
+                {stallForm === 'block' && (
+                  <div className="flex items-center gap-2 pb-4">
+                    <span className="text-xs text-zinc-500 shrink-0">Ждёт:</span>
+                    <TaskPicker
+                      className="flex-1 min-w-0"
+                      inputClassName={INLINE_FIELD}
+                      value={blockId}
+                      onChange={(v, found) => { setBlockId(v); setBlockTask(found) }}
+                      onEnter={addBlocker}
+                      exclude={[taskId, ...(stall?.blocked_by || [])]}
+                      placeholder="TASK-NNN"
+                      autoFocus
+                    />
+                    <button
+                      onClick={addBlocker}
+                      disabled={stallBusy || !blockTask}
+                      className={STALL_BUTTON}
+                    >
+                      Заблокировать
+                    </button>
+                    <button
+                      onClick={() => { setStallForm(null); setBlockId(''); setBlockTask(null) }}
+                      className="shrink-0 px-1.5 py-1 text-xs text-zinc-500 hover:text-zinc-200 transition"
+                      title="Отменить (Esc)"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {!stallForm && (
+                  <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                    <button className="hover:text-zinc-300 transition"
+                            onClick={() => setStallForm('block')}>
+                      + блокировка
+                    </button>
+                    <button className="hover:text-zinc-300 transition"
+                            onClick={() => setStallForm('pause')}>
+                      {stall?.paused ? 'изменить паузу' : '+ пауза'}
+                    </button>
+                  </div>
+                )}
+
+                {stallError && <div className="text-xs text-rose-400">{stallError}</div>}
+              </div>
+            )}
           </div>
           {task && (
             <CopyButton
