@@ -75,7 +75,10 @@
 ## Смена статуса вручную и агентами
 
 ```sh
+# py — лаунчер Windows; нет его (Python из Microsoft Store) — зовите python,
+# на macOS/Linux — python3
 py tasks/set_status.py TASK-004 development --agent "Имя (модель)"
+python tasks/set_status.py TASK-004 development --agent "Имя (модель)"
 py tasks/set_status.py --list              # пайплайн проекта
 py tasks/set_status.py --targets TASK-004  # куда можно двинуть задачу
 py tasks/set_status.py --queue             # очередь прямо сейчас (--limit 0 — вся)

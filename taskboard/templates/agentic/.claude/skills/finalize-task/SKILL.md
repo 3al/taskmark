@@ -23,6 +23,10 @@ py tasks/set_status.py --targets TASK-NNN            (Windows)
 python3 tasks/set_status.py --targets TASK-NNN
 ```
 
+Лаунчера `py` может не быть (Python из Microsoft Store его не ставит) —
+тогда та же команда через `python`. Подробнее — в правилах проекта,
+раздел «Чем запускать скрипты».
+
 Ответ (JSON):
 - `current` — текущий статус задачи
 - `forward` — куда можно двинуть вперёд (включая съезды вроде отмены)

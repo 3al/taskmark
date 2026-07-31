@@ -4,6 +4,7 @@
 
 Использование (интерактивный режим):
   py tasks/create_task.py          (Windows)
+  python tasks/create_task.py      (Windows без лаунчера py — Microsoft Store)
   python3 tasks/create_task.py     (macOS/Linux)
 
 Использование (с аргументами):

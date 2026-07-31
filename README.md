@@ -17,6 +17,7 @@
 2. Запустить из любого места:
    ```
    py taskboard.py          (Windows)
+   python taskboard.py      (Windows без лаунчера py — например Python из Microsoft Store)
    python3 taskboard.py     (macOS/Linux)
    ```
    При первом запуске спросит подтверждение установки зависимостей (флаг `--yes` — не спрашивать).

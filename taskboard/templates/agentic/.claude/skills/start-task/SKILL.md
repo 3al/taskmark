@@ -19,6 +19,10 @@ py tasks/set_status.py --list            (Windows)
 python3 tasks/set_status.py --list
 ```
 
+Лаунчера `py` может не быть (Python из Microsoft Store его не ставит) —
+тогда та же команда через `python`. Подробнее — в правилах проекта,
+раздел «Чем запускать скрипты».
+
 Из ответа нужны `actions.start` (куда переводить задачу) и `actions.pick`
 (раздел, откуда берут работу). Скрипта нет — работай по разделам `tasks/board.md`.
 

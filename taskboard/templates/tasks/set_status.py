@@ -6,8 +6,12 @@
 доски. Правка их по отдельности рано или поздно приводит к рассинхрону
 (в файле одно, на доске другое). Этот скрипт меняет оба места за один вызов.
 
+Команда запуска: `py` (Windows), `python` (окружения без лаунчера py — например
+Python из Microsoft Store), `python3` (macOS/Linux).
+
 Использование:
   py tasks/set_status.py TASK-004 development
+  python tasks/set_status.py TASK-004 development   # то же без лаунчера py
   py tasks/set_status.py TASK-004 testing --agent "Claude Opus 5"
   py tasks/set_status.py TASK-004 completed --position end
   py tasks/set_status.py --list             # пайплайн статусов проекта (JSON)

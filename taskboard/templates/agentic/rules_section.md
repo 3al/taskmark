@@ -8,6 +8,23 @@
 - tasks/TASK-NNN-title.md — отдельная задача
 - tasks/epics.md — реестр эпиков (ключ → имя), единый источник имён
 
+## Чем запускать скрипты
+
+Дальше команды написаны через `py` (Windows) и `python3` (macOS/Linux) —
+это самые частые варианты, но **не единственные**. Лаунчера `py` может не быть:
+Python из Microsoft Store его не ставит, и вызов падает с
+`CommandNotFoundException`.
+
+Команда не найдена — **не бросай скрипт, попробуй соседнюю**:
+
+```
+py tasks/set_status.py --list        # Windows с лаунчером
+python tasks/set_status.py --list    # Windows из Microsoft Store, окружения без py
+python3 tasks/set_status.py --list   # macOS/Linux
+```
+
+Какая сработала — той и пользуйся дальше в сессии.
+
 ## В начале каждой сессии
 
 1. Прочитай tasks/board.md
