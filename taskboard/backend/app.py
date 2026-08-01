@@ -252,7 +252,7 @@ def api_get_config() -> dict:
 def api_save_config(body: ConfigIn) -> dict:
     # Защита от мусора: разрешаем только известные ключи
     allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
-               "create_script", "status_script", "logs_dir", "queue_section",
+               "create_script", "status_script", "release_script", "logs_dir", "queue_section",
                "queued_status", "statuses", "pipeline", "actions", "harnesses",
                "vault", "update_check", "release_manifest_url"}
     updates = {k: v for k, v in body.updates.items() if k in allowed}

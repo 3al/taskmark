@@ -17,6 +17,10 @@ DEFAULTS: dict = {
     "board_file": "board.md",
     "create_script": "create_task.py",
     "status_script": "set_status.py",
+    # Скрипт выпуска версии. Пуст по умолчанию: у каждого проекта «выпустить»
+    # значит своё, и универсального механизма тут быть не может. Задан — скилл
+    # выпуска зовёт его; не задан — доводит подготовку и останавливается
+    "release_script": "",
     "logs_dir": "logs",
     "queue_section": "Queue",
     "queued_status": "queued",
@@ -41,8 +45,8 @@ DEFAULTS: dict = {
 # Ключи, которые имеет смысл держать на уровне проекта: жизненный цикл у каждого
 # проекта свой, а порт и тема — свойства инструмента, а не репозитория
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "board_file", "create_script",
-                "status_script", "logs_dir", "queue_section", "queued_status",
-                "lost_section", "dnd_full_board", "harnesses", "vault"}
+                "status_script", "release_script", "logs_dir", "queue_section",
+                "queued_status", "lost_section", "dnd_full_board", "harnesses", "vault"}
 
 
 def lost_section(cfg: dict) -> str:

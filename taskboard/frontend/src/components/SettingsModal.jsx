@@ -83,6 +83,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
     board_file: config.board_file,
     create_script: config.create_script,
     status_script: config.status_script,
+    release_script: (config.release_script || '').trim(),
     logs_dir: config.logs_dir,
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
@@ -329,6 +330,31 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   />
                 </div>
               )}
+
+              {/* Отдельным блоком, а не третьим полем к скриптам выше: те —
+                  имена артефактов, которые разворачивает сам инструмент, а этот
+                  скрипт пишет пользователь, и его может не быть вовсе */}
+              <div className="border-t border-zinc-800 pt-4">
+                <span className={label}>Скрипт выпуска версии</span>
+                <input
+                  className={field}
+                  placeholder="не настроен"
+                  value={config.release_script || ''}
+                  onChange={(e) => set('release_script', e.target.value)}
+                />
+                <div className="text-[11px] text-zinc-600 mt-1">
+                  Путь к вашему скрипту в проекте, например <code>tools/release.py</code>.
+                  Пусто — подготовка выпуска доводится до changelog, а выпускаете вы сами.
+                  {onOpenHelp && (
+                    <button
+                      className="ml-1 underline hover:text-zinc-400"
+                      onClick={() => onOpenHelp('release')}
+                    >
+                      подробнее
+                    </button>
+                  )}
+                </div>
+              </div>
 
               <div className="text-[11px] text-zinc-600">
                 Порт и тема — глобально (~/.taskboard/config.json), жизненный цикл и имена

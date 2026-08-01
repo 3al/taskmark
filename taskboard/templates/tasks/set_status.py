@@ -496,7 +496,12 @@ COMMITS_SECTION = "История коммитов"
 
 # Порядок секций файла задачи — эталон tasks/_TEMPLATE.md. «История доработок»
 # появляется только после возврата с ревью, поэтому необязательна
-TASK_SECTIONS = ("Описание", "Чеклист", "История доработок",
+RELEASE_SECTION = "Изменение для пользователя"
+
+# Порядок секций файла задачи. «История доработок» появляется после возврата
+# с ревью, «Изменение для пользователя» — при отборе в выпуск: обе создаются
+# скиллами и в шаблоне новой задачи не нужны
+TASK_SECTIONS = ("Описание", RELEASE_SECTION, "Чеклист", "История доработок",
                  NOTES_SECTION, COMMITS_SECTION)
 
 NOTE_RE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\*\* · [^·]+ · .+$")
@@ -955,6 +960,9 @@ def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
         "pipeline": [{"key": s["key"], "label": s["label"], "section": s["section"],
                       "offramp": bool(s.get("offramp"))} for s in pipeline],
         "actions": actions_of(cfg, pipeline),
+        # Чем проект выпускает версии. Пусто — своего механизма нет, скилл
+        # выпуска доводит подготовку и останавливается, а не гадает
+        "release_script": (cfg.get("release_script") or "").strip(),
     }
     if task_id:
         status = current_status(Path(tasks_dir), task_id)
