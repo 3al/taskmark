@@ -118,7 +118,7 @@ py tasks/set_status.py --stalled                     # что стоит и по
 
 ## Жизненный цикл статуса
 
-backlog → todo → development → testing → done  (+ вне маршрута: cancelled)
+backlog → todo → development → testing → ready_for_release → release_notes → to_release → done  (+ вне маршрута: cancelled)
 
 Порядок задаёт **ожидаемый** маршрут, а не запрет: шаг вперёд через статус (простая
 задача, хотфикс) и возврат назад законны. Ближайший следующий статус — рекомендуемый.
@@ -166,7 +166,7 @@ py tasks/set_status.py TASK-004 development --agent "АГЕНТ (модель)" 
 python3 tasks/set_status.py TASK-004 development --agent "АГЕНТ (модель)"
 ```
 
-- Статусы проекта: backlog | todo | development | testing | done | cancelled (актуальный список — `set_status.py --list`)
+- Статусы проекта: backlog | todo | development | testing | ready_for_release | release_notes | to_release | done | cancelled (актуальный список — `set_status.py --list`)
 - `--agent` попадает в хвост строки доски вместе с датой; без него сохраняется прежний исполнитель
 - `--position end` — вставить в конец раздела (по умолчанию задача встаёт первой)
 
@@ -251,7 +251,7 @@ py tasks/set_status.py TASK-004 cancelled --reason "дублирует TASK-002"
 
 ## Формат board.md
 
-В каждом разделе статуса (Backlog, To Do, Development, Testing, Done, Cancelled) задачи перечисляются:
+В каждом разделе статуса (Backlog, To Do, Development, Testing, Ready for Release, Release Notes, To Release, Done, Cancelled) задачи перечисляются:
 - TASK-NNN · [Заголовок](TASK-NNN-название.md) · АГЕНТ (модель) · 2026-MM-DD
   Примеры:
 - - TASK-001 · [Fix hard words dict name](TASK-001-fix-hard-words-dict-name-on-profile-switch.md) · Claude Sonnet 4.6 · 2026-03-02
