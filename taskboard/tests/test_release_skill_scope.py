@@ -93,6 +93,40 @@ class DraftRuleTest(ReleaseSkillText):
                         "не сказано, что пустую секцию трогать нельзя")
 
 
+class ApprovalIsMandatoryTest(ReleaseSkillText):
+    """Утверждение текстов — гейт, а не вежливость (TASK-100).
+
+    «Дождись ответа» проигрывает контексту, в котором человек только что
+    сказал «действуй»: агент прочитал общее разрешение как согласие на всё
+    сразу и перевёл задачи в утверждённое, не показав тексты.
+    """
+
+    def test_step_says_it_cannot_be_skipped(self) -> None:
+        drafts = self.step_with("Показать черновики")
+
+        self.assertTrue(re.search(r"пропуск\w*|не пропуска\w+|обязательн\w+", drafts),
+                        "шаг не назван обязательным — его снова пропустят")
+
+    def test_general_permission_is_not_an_approval_of_wording(self) -> None:
+        """«Катим релиз» — согласие на выпуск, а не на формулировки."""
+        text = self.text
+
+        self.assertTrue(re.search(r"«?(катим|выпускай|двигай|действуй)", text, re.I),
+                        "общее разрешение нигде не разобрано")
+
+    def test_lock_requires_the_answer(self) -> None:
+        approved = self.step_with("Утвердить состав")
+
+        self.assertTrue(re.search(r"только после", approved, re.I),
+                        "перевод в утверждённое не привязан к ответу человека")
+
+    def test_rule_repeated_among_the_important_ones(self) -> None:
+        """Рядом с «ничего не выпускай без подтверждения» — там оно работает."""
+        tail = self.text.split("## Важно", 1)[-1]
+
+        self.assertIn("текст", tail.lower())
+
+
 class ApprovedCompositionTest(ReleaseSkillText):
     """Состав выпуска — то, что лежит в статусе утверждённого."""
 
