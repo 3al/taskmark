@@ -18,7 +18,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -30,6 +33,14 @@ from .config import GLOBAL_DIR, DEFAULTS
 
 # Кэш последней проверки: рядом с остальным глобальным состоянием инструмента
 CACHE_FILE = GLOBAL_DIR / "update.json"
+
+# Обмен с лаунчером при обновлении по кнопке. Отдельные файлы, а не кэш
+# проверки: его перетирает фоновая проверка, и запрос на обновление исчез бы
+# вместе с ней. Имена дублируются в taskboard.py (UPDATE_REQUEST/UPDATE_RESULT)
+# и должны оставаться синхронными: лаунчер не может импортировать backend —
+# git-операция идёт до импорта
+APPLY_FILE = GLOBAL_DIR / "update_apply.json"
+RESULT_FILE = GLOBAL_DIR / "update_result.json"
 
 # Как часто ходить в сеть при `auto`. Реже суток нет смысла: релизы редкие
 CHECK_INTERVAL = 24 * 60 * 60
@@ -212,6 +223,150 @@ def check_in_background(cfg: dict) -> None:
     threading.Thread(target=run, name="update-check", daemon=True).start()
 
 
+# --- Готовность к обновлению -----------------------------------------------
+# Здесь кончается «только смотрим»: из манифеста приходит тег, на который
+# выполняется git merge. Это исполняемое действие по данным из сети, поэтому
+# remote берётся из локального репозитория, тег проверяется как данные,
+# а версия обязана быть строго новее установленной.
+
+# Тег релиза и ничего кроме: `v` + семантическая версия. Ни путей, ни ссылок,
+# ни опций — строка из сети не должна попадать в командную строку git как есть
+TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+
+
+def valid_tag(tag: object) -> bool:
+    """Похоже ли значение из манифеста на имя релизного тега."""
+    return isinstance(tag, str) and bool(TAG_RE.match(tag))
+
+
+def _git(root: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Запустить git в папке инструмента. Без shell и без склейки строк."""
+    return subprocess.run(["git", *args], cwd=str(root), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout)
+
+
+def local_remote(root: Path) -> str | None:
+    """Имя remote, откуда клонировались. `origin` в приоритете.
+
+    Адрес обновления берётся отсюда, а не из манифеста: манифест лежит в сети
+    и мог быть подменён, а remote — это то, откуда пользователь уже получил
+    установленный код.
+    """
+    try:
+        out = _git(root, "remote")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    names = [line.strip() for line in out.stdout.splitlines() if line.strip()]
+    if not names:
+        return None
+    return "origin" if "origin" in names else names[0]
+
+
+def worktree_dirty(root: Path) -> bool | None:
+    """Есть ли незакоммиченные правки отслеживаемых файлов (None — не узнать).
+
+    Untracked не считаются намеренно: у части установок папка задач лежит
+    в дереве инструмента незаигноренной, и она обновлению не мешает.
+    """
+    try:
+        out = _git(root, "status", "--porcelain", "--untracked-files=no")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return bool(out.stdout.strip())
+
+
+def head_commit(root: Path) -> str:
+    """Текущий HEAD — точка отката, если обновление не сложится."""
+    try:
+        out = _git(root, "rev-parse", "HEAD")
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def in_dev_mode() -> bool:
+    """Под dev-супервизором обновляться нельзя: он перезапустит сервер."""
+    return bool(os.environ.get("TASKBOARD_SUPERVISED"))
+
+
+def plan(cfg: dict, root: Path) -> dict:
+    """Можно ли обновиться прямо сейчас — и если нет, то почему.
+
+    Преграды собираются **все сразу**: чинить их по одной, каждый раз запуская
+    обновление заново, — худший из возможных сценариев. Команда ручного
+    обновления возвращается в любом случае: отказ кнопки не повод оставлять
+    человека без выхода.
+    """
+    info = status(cfg, root)
+    latest = info.get("latest") or {}
+    tag = str(latest.get("tag") or "")
+    target = str(latest.get("version") or "")
+
+    blockers: list[str] = []
+    if not info.get("update_available"):
+        blockers.append(
+            f"Устанавливать нечего: у вас {info['version']}, "
+            f"в манифесте {target or 'версии нет'}")
+    if info.get("install") == "nogit":
+        blockers.append("git не найден в PATH — обновиться командой не получится")
+    elif info.get("install") != "git":
+        blockers.append("Инструмент установлен не из git — обновите распаковкой архива")
+    if not valid_tag(tag):
+        blockers.append(f"Тег в манифесте не похож на релизный: {tag!r}")
+    if in_dev_mode():
+        blockers.append("Идёт dev-режим (--dev): остановите его и обновитесь обычным запуском")
+
+    remote = local_remote(root) if info.get("install") == "git" else None
+    if info.get("install") == "git" and not remote:
+        blockers.append("У репозитория нет remote — неоткуда получать обновление")
+
+    dirty = worktree_dirty(root) if info.get("install") == "git" else None
+    if dirty:
+        blockers.append("В рабочей копии есть незакоммиченные правки — "
+                        "сохраните или отмените их")
+    elif dirty is None and info.get("install") == "git":
+        blockers.append("Не удалось проверить состояние рабочей копии")
+
+    return {
+        "ok": not blockers,
+        "blockers": blockers,
+        "tag": tag,
+        "version": target,
+        "remote": remote,
+        "head": head_commit(root) if info.get("install") == "git" else "",
+        "command": update_command(tag) if valid_tag(tag) else "",
+    }
+
+
+def request_apply(plan_data: dict) -> None:
+    """Записать лаунчеру, что применять: тег, версия и точка отката."""
+    APPLY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    APPLY_FILE.write_text(json.dumps(
+        {"tag": plan_data.get("tag", ""), "version": plan_data.get("version", ""),
+         "head": plan_data.get("head", ""), "at": time.time()},
+        ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def last_result() -> dict:
+    """Чем кончилось последнее обновление (пусто — его не было)."""
+    try:
+        data = json.loads(RESULT_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def clear_result() -> None:
+    """Забыть итог обновления — плашку показываем один раз."""
+    try:
+        RESULT_FILE.unlink()
+    except OSError:
+        pass
+
+
 # --- Сводка для интерфейса -------------------------------------------------
 
 
@@ -239,4 +394,8 @@ def status(cfg: dict, root: Path) -> dict:
         "checked_at": cache.get("checked_at"),
         "error": cache.get("error"),
         "command": update_command(tag) if available and kind == "git" and tag else "",
+        # Итог последнего обновления — интерфейс показывает его один раз.
+        # Нет итога — именно None, а не пустой объект: `{}` во фронте истинно,
+        # и окно нарисовало бы плашку о провале, которого не было
+        "last_result": last_result() or None,
     }

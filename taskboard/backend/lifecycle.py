@@ -62,6 +62,18 @@ def restart_server(port: int, tasks_dir: str | None) -> None:
     _delayed_exit(EXIT_RESTART)
 
 
+def apply_update(port: int, tasks_dir: str | None) -> None:
+    """Выйти, передав применение обновления дочернему лаунчеру.
+
+    Git-операцию нельзя делать в живом сервере: он раздаёт `frontend/dist`
+    из той самой папки, которую перезаписывает обновление, и держит
+    импортированный `backend` в памяти. Поэтому сервер завершается, а дочерний
+    процесс ждёт освобождения порта и только потом трогает репозиторий.
+    """
+    _spawn_detached(port, tasks_dir, extra=["--apply-update"])
+    _delayed_exit(EXIT_RESTART)
+
+
 def _console_less_python() -> str:
     """Интерпретатор без консоли для detached-запуска.
 
@@ -78,7 +90,8 @@ def _console_less_python() -> str:
     return sys.executable
 
 
-def _spawn_detached(port: int, tasks_dir: str | None) -> None:
+def _spawn_detached(port: int, tasks_dir: str | None,
+                    extra: list[str] | None = None) -> None:
     """Запустить отсоединённый процесс лаунчера, переживающий текущий."""
     cmd = [
         _console_less_python(), str(LAUNCHER),
@@ -86,6 +99,7 @@ def _spawn_detached(port: int, tasks_dir: str | None) -> None:
     ]
     if tasks_dir:
         cmd += ["--tasks-dir", tasks_dir]
+    cmd += extra or []
     kwargs: dict = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,

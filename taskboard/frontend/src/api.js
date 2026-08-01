@@ -84,6 +84,11 @@ export const api = {
   // и само нажатие кнопки считается согласием на запрос
   updateStatus: () => request('/api/update/status'),
   updateCheck: () => request('/api/update/check', { method: 'POST' }),
+  // Применение обновления: plan говорит, можно ли и почему нет; apply выходит
+  // из сервера, дальше работает лаунчер
+  updatePlan: () => request('/api/update/plan'),
+  updateApply: () => request('/api/update/apply', { method: 'POST' }),
+  updateSeen: () => request('/api/update/seen', { method: 'POST' }),
   changelog: () => request('/api/changelog'),
 }
 

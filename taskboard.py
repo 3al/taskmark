@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -37,6 +38,18 @@ DEFAULT_PORT = 8765
 EXIT_STOP = 43
 
 
+# Обмен с сервером при обновлении по кнопке. Пути — магические константы,
+# дублируются в backend/updater.py и должны оставаться синхронными: лаунчер
+# не может импортировать backend, потому что git-операция идёт ДО импорта
+UPDATE_DIR = Path.home() / ".taskboard"
+UPDATE_REQUEST = UPDATE_DIR / "update_apply.json"
+UPDATE_RESULT = UPDATE_DIR / "update_result.json"
+
+# Имя релизного тега и ничего кроме (зеркало updater.TAG_RE): тег приходит
+# по сети и попадает в командную строку git
+TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
+
+
 def log(msg: str) -> None:
     print(f"[taskboard] {msg}")
 
@@ -46,14 +59,17 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
-def local_version() -> str:
-    """Версия этой копии инструмента (файл taskboard/VERSION).
+def local_version(root: Path | None = None) -> str:
+    """Версия копии инструмента (файл taskboard/VERSION).
 
     Читается напрямую, без импорта backend: лаунчер работает до создания venv,
     когда зависимостей ещё нет. Логика та же, что в backend/version.py.
+    `root` — корень копии; по умолчанию своя (нужен обновлению, которое
+    проверяет версию в только что обновлённом дереве).
     """
+    base = (root or ROOT) / "taskboard"
     try:
-        text = (TOOL_DIR / "VERSION").read_text(encoding="utf-8").strip()
+        text = (base / "VERSION").read_text(encoding="utf-8").strip()
     except OSError:
         return "0.0.0"
     return text or "0.0.0"
@@ -98,6 +114,122 @@ def deps_installed() -> bool:
         return True
     except ImportError:
         return False
+
+
+# --- Применение обновления --------------------------------------------------
+# Живой сервер раздаёт frontend/dist из той самой папки, которую перезаписывает
+# git, и держит импортированный backend в памяти. Поэтому обновление применяет
+# отдельный процесс при уже остановленном сервере и ДО импорта backend.
+
+
+def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=str(root), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout)
+
+
+def _pip_install() -> bool:
+    """Доустановить зависимости новой версии: requirements.txt мог смениться."""
+    out = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "-r", str(REQUIREMENTS)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return out.returncode == 0
+
+
+def apply_update(root: Path, request: dict, install_deps=_pip_install,
+                 result_file: Path | None = None) -> dict:
+    """Выполнить обновление: fetch → fast-forward на тег → зависимости → проверка.
+
+    `request` — что записал сервер перед выходом: `tag`, `version`, `head`.
+    Возвращает итог и кладёт его в файл, чтобы поднявшийся сервер показал
+    пользователю, чем всё кончилось.
+
+    Провал на любом шаге возвращает код к записанному HEAD. Зависимости при
+    этом откату не подлежат: requirements.txt не припинен, и переустановка
+    старого файла поставит те же новые версии — обещать транзакцию нечестно.
+    """
+    tag = str(request.get("tag") or "")
+    target = str(request.get("version") or "")
+    head = str(request.get("head") or "")
+
+    def done(ok: bool, error: str = "") -> dict:
+        result = {"ok": ok, "version": local_version(root) if ok else target,
+                  "target": target, "tag": tag, "error": error,
+                  "at": time.time()}
+        path = result_file if result_file is not None else UPDATE_RESULT
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(result, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+        except OSError:
+            pass
+        return result
+
+    def rollback(reason: str) -> dict:
+        if head:
+            _git(root, "reset", "--hard", head)
+        return done(False, f"{reason}. Код возвращён к прежней версии, "
+                           f"но установленные зависимости откату не подлежат")
+
+    # Тег пришёл по сети: проверяем как данные, до любого вызова git
+    if not TAG_RE.match(tag):
+        return done(False, f"Тег не похож на релизный: {tag!r}")
+    if not head:
+        return done(False, "Не записан HEAD — откатывать было бы некуда")
+
+    # Remote берётся из локального репозитория, а не из манифеста: обновляемся
+    # только оттуда, откуда клонировались
+    try:
+        remotes = _git(root, "remote").stdout.split()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return done(False, f"git недоступен: {exc}")
+    if not remotes:
+        return done(False, "У репозитория нет remote — неоткуда получать обновление")
+    remote = "origin" if "origin" in remotes else remotes[0]
+
+    log(f"Обновление до {target}: получаю {tag} из {remote} ...")
+    fetched = _git(root, "fetch", remote, "main", "--tags")
+    if fetched.returncode != 0:
+        return done(False, f"Не удалось получить обновление: {fetched.stderr.strip()}")
+
+    ref = f"refs/tags/{tag}"
+    if _git(root, "rev-parse", "-q", "--verify", ref).returncode != 0:
+        return done(False, f"Тега {tag} нет в {remote} — обновляться не на что")
+
+    # Потомок HEAD? merge --ff-only это и обеспечит, но отказ должен быть внятным
+    if _git(root, "merge-base", "--is-ancestor", "HEAD", ref).returncode != 0:
+        return done(False, f"{tag} не является продолжением вашей истории: "
+                           f"есть локальные коммиты или другая ветка")
+
+    merged = _git(root, "merge", "--ff-only", ref)
+    if merged.returncode != 0:
+        return done(False, f"Обновление не применилось: {merged.stderr.strip()}")
+
+    if not install_deps():
+        return rollback("Не удалось установить зависимости новой версии")
+
+    # Верификация: стартовать половину обновления хуже, чем не обновиться
+    if local_version(root) != target:
+        return rollback(f"После обновления версия {local_version(root)}, "
+                        f"а ожидалась {target}")
+    if not (root / "taskboard" / "frontend" / "dist" / "index.html").is_file():
+        return rollback("В новой версии нет собранного интерфейса")
+
+    log(f"Обновление применено: {target}")
+    return done(True)
+
+
+def read_update_request() -> dict:
+    """Что просил применить сервер перед выходом (и сразу забыть просьбу)."""
+    try:
+        data = json.loads(UPDATE_REQUEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    try:
+        UPDATE_REQUEST.unlink()
+    except OSError:
+        pass
+    return data if isinstance(data, dict) else {}
 
 
 def ensure_python() -> None:
@@ -280,18 +412,31 @@ def main() -> None:
                         help="Не открывать браузер (служебный, для дочерних процессов)")
     parser.add_argument("--respawn", action="store_true",
                         help="Служебный (перезапуск из UI): ждать освобождения порта перед стартом")
+    parser.add_argument("--apply-update", action="store_true",
+                        help="Служебный (обновление из UI): применить обновление и стартовать")
     args = parser.parse_args()
 
     ensure_python()
     ensure_deps(args.yes)
-    ensure_frontend(args.yes)
 
     # Перезапуск из UI: старый процесс ещё умирает — ждём освобождения порта
-    if args.respawn:
+    if args.respawn or args.apply_update:
         for _ in range(60):
             if server_alive(args.port) is None:
                 break
             time.sleep(0.25)
+
+    # Обновление применяется здесь: сервер уже вышел, backend ещё не импортирован
+    if args.apply_update:
+        request = read_update_request()
+        if request:
+            result = apply_update(ROOT, request)
+            if not result["ok"]:
+                log(f"Обновление не применено: {result['error']}")
+        else:
+            log("Обновление отменено: запрос не найден")
+
+    ensure_frontend(args.yes)
 
     tasks_dir = Path(args.tasks_dir) if args.tasks_dir else Path.cwd() / "tasks"
     tasks_dir = tasks_dir.resolve()

@@ -228,6 +228,41 @@ def api_update_check() -> dict:
     return updater.status(cfg, ROOT_DIR)
 
 
+@app.get("/api/update/plan")
+def api_update_plan() -> dict:
+    """Можно ли обновиться по кнопке — и если нет, то по каким причинам."""
+    return updater.plan(load_global_config(), ROOT_DIR)
+
+
+@app.post("/api/update/apply")
+def api_update_apply() -> dict:
+    """Применить обновление: записать запрос и выйти, передав работу лаунчеру.
+
+    Сам сервер git не трогает: он раздаёт `frontend/dist` из папки, которую
+    перезаписывает обновление. Проверки повторяются здесь, а не берутся
+    с фронта: кнопку могли нажать, когда преграда уже появилась.
+    """
+    cfg = load_global_config()
+    plan = updater.plan(cfg, ROOT_DIR)
+    if not plan["ok"]:
+        raise HTTPException(400, {"message": "Обновление сейчас невозможно",
+                                  "blockers": plan["blockers"]})
+
+    updater.clear_result()
+    updater.request_apply(plan)
+    proj = registry.get_active()
+    lifecycle.apply_update(int(os.environ.get("TASKBOARD_PORT", 8765)),
+                           proj["tasks_dir"] if proj else None)
+    return {"ok": True, "version": plan["version"], "tag": plan["tag"]}
+
+
+@app.post("/api/update/seen")
+def api_update_seen() -> dict:
+    """Плашку «что нового» показали — больше не показывать."""
+    updater.clear_result()
+    return {"ok": True}
+
+
 @app.get("/api/changelog")
 def api_changelog() -> dict:
     """Локальный CHANGELOG.md — «что нового в этой версии», уже установленной."""

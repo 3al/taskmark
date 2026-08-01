@@ -11,8 +11,10 @@ import CopyButton from './CopyButton'
 // единственное место, где он выходит в сеть, и включается она только с согласия.
 // Пока согласия нет, окно показывает вопрос, а не молча ходит на сервер.
 //
-// Само обновление отсюда не запускается: показываем готовую команду, которую
-// пользователь выполняет сам. Кнопка «обновить и перезапустить» — следующий шаг.
+// Обновление применяется кнопкой, но не этим процессом: сервер выходит,
+// а git-операцию выполняет дочерний лаунчер (он же ставит зависимости и
+// проверяет результат). Кнопка показывается, только если обновление сейчас
+// возможно; иначе на её месте — причины и команда для ручного выполнения.
 
 function formatChecked(ts) {
   if (!ts) return null
@@ -43,13 +45,22 @@ const INSTALL_HINT = {
 
 export default function UpdateModal({ onClose }) {
   const [status, setStatus] = useState(null)
+  const [plan, setPlan] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [applying, setApplying] = useState(false)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     // Только чтение кэша: открытие окна само по себе запросов наружу не шлёт
     api.updateStatus().then(setStatus).catch((e) => setError(e.message))
   }, [])
+
+  // Готовность к обновлению спрашиваем, только когда есть что ставить:
+  // проверка трогает git, и делать её просто так незачем
+  useEffect(() => {
+    if (!status?.update_available) { setPlan(null); return }
+    api.updatePlan().then(setPlan).catch(() => setPlan(null))
+  }, [status?.update_available, status?.latest?.version])
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
@@ -84,7 +95,43 @@ export default function UpdateModal({ onClose }) {
     }
   }
 
+  // Обновление: сервер уходит вниз, лаунчер применяет git и поднимает его
+  // заново. Ждём ровно того же, чего ждёт перезапуск из настроек
+  const apply = async () => {
+    setApplying(true)
+    setError(null)
+    try {
+      await api.updateApply()
+    } catch (e) {
+      // Сервер мог умереть раньше, чем ответил, — это норма для этой операции
+      if (!/fetch|network|failed/i.test(e.message)) {
+        const blockers = e.blockers || e.detail?.blockers
+        setError(blockers ? blockers.join('; ') : e.message)
+        setApplying(false)
+        return
+      }
+    }
+    for (let i = 0; i < 180; i++) {
+      await new Promise((r) => setTimeout(r, 1000))
+      try {
+        await api.health()
+        location.reload()
+        return
+      } catch { /* ещё обновляется */ }
+    }
+    setError('Сервер не поднялся после обновления — запустите его вручную')
+    setApplying(false)
+  }
+
+  const dismissResult = async () => {
+    try { await api.updateSeen() } catch { /* не страшно */ }
+    setStatus({ ...status, last_result: null })
+  }
+
   const latest = status?.latest
+  // Итог считаем настоящим только с отметкой времени: пустой объект в JS
+  // истинен, и окно рисовало плашку о провале, которого не было
+  const result = status?.last_result?.at ? status.last_result : null
   const checked = formatChecked(status?.checked_at)
   const btn = 'px-3 py-1.5 rounded-lg text-sm border border-zinc-700 text-zinc-300 ' +
     'hover:bg-zinc-800 hover:text-zinc-100 transition disabled:opacity-50'
@@ -116,6 +163,24 @@ export default function UpdateModal({ onClose }) {
         <div className="flex-1 overflow-y-auto px-5 py-4 text-sm text-zinc-300">
           {error && <div className="text-rose-400 mb-3">{error}</div>}
           {!status && !error && <div className="text-zinc-500">Загрузка…</div>}
+
+          {/* Чем кончилось обновление: сервер к этому моменту уже перезапущен,
+              и человек иначе не узнает ни об успехе, ни о провале с откатом */}
+          {result && (
+            <div className={`mb-4 rounded-xl border p-4 ${result.ok
+              ? 'border-emerald-800/60 bg-emerald-950/20'
+              : 'border-rose-800/60 bg-rose-950/20'}`}>
+              <div className={`font-medium mb-1 ${result.ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+                {result.ok
+                  ? `Обновлено до версии ${result.version}`
+                  : 'Обновление не применилось'}
+              </div>
+              {!result.ok && result.error && (
+                <p className="text-zinc-400">{result.error}</p>
+              )}
+              <button className={`${btn} mt-3`} onClick={dismissResult}>Понятно</button>
+            </div>
+          )}
 
           {/* Пояснение показывается, пока пользователь не ответил. Ответ —
               любой из режимов ниже, в том числе «вручную»: иначе вопрос висел бы
@@ -176,9 +241,40 @@ export default function UpdateModal({ onClose }) {
                 {latest.date && <span className="text-zinc-500 text-sm ml-2">от {latest.date}</span>}
               </div>
 
+              {/* Кнопка — только когда обновление действительно возможно.
+                  Иначе показываем, что именно мешает: чинить преграды по одной,
+                  каждый раз нажимая кнопку заново, — худший сценарий */}
+              {plan?.ok && (
+                <div className="mt-3">
+                  <button
+                    className="px-3 py-1.5 rounded-lg text-sm border border-emerald-700/70
+                      text-emerald-300 hover:bg-emerald-950/40 transition disabled:opacity-50"
+                    onClick={apply}
+                    disabled={applying}
+                  >
+                    {applying ? 'Обновляю…' : 'Обновить и перезапустить'}
+                  </button>
+                  <p className="text-xs text-zinc-500 mt-2">
+                    Сервер остановится, обновление применит отдельный процесс, затем
+                    страница перезагрузится сама. Займёт до минуты.
+                  </p>
+                </div>
+              )}
+
+              {plan && !plan.ok && plan.blockers?.length > 0 && (
+                <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2">
+                  <div className="text-zinc-400 mb-1">Обновить кнопкой сейчас нельзя:</div>
+                  <ul className="list-disc pl-5 text-xs text-zinc-400 space-y-1">
+                    {plan.blockers.map((b) => <li key={b}>{b}</li>)}
+                  </ul>
+                </div>
+              )}
+
               {status.command ? (
                 <div className="mt-3">
-                  <div className="text-zinc-400 mb-1">Обновиться одной командой:</div>
+                  <div className="text-zinc-400 mb-1">
+                    {plan?.ok ? 'Или вручную:' : 'Обновиться одной командой:'}
+                  </div>
                   <div className="flex items-start gap-2 rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2">
                     <code className="flex-1 text-xs text-zinc-300 break-all">{status.command}</code>
                     <CopyButton text={status.command} title="Скопировать команду" />
