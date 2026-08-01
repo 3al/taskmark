@@ -9,10 +9,31 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend import config
 from backend.board_parser import parse_board
 from backend.queue_ops import ensure_section
 from backend.scaffold import sync_rules
 from backend.statuses import CATALOG, load_pipeline
+
+
+def migrate_global_config() -> list[str]:
+    """Разовая чистка глобального конфига от слепка дефолтов (TASK-088).
+
+    До этой правки файл создавался копией всего `DEFAULTS`, и записанное
+    значение всегда побеждало дефолт: изменение поставки не доезжало ни до
+    кого, у кого конфиг уже создан. Убираем ключи, совпадающие с дефолтом
+    на момент миграции, — дальше они снова следуют за поставкой.
+
+    Возвращает список вычищенных ключей (пусто — чистить было нечего).
+    """
+    if not config.GLOBAL_CONFIG_FILE.exists():
+        return []
+    stored = config.stored_global_config()
+    kept = config.only_changed(stored)
+    removed = [k for k in stored if k not in kept]
+    if removed:
+        config.write_stored_global(kept)
+    return removed
 
 
 def apply_config_migrations(tasks_dir: Path, old: dict, new: dict,

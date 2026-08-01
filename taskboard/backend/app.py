@@ -21,7 +21,8 @@ from backend.config import (PROJECT_KEYS, add_criteria_preset, criteria_presets,
                             save_global_config, save_project_config)
 from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
-from backend.migrations import apply_config_migrations, pipeline_removals
+from backend.migrations import (apply_config_migrations, migrate_global_config,
+                                pipeline_removals)
 from backend.pipeline_sources import list_sources
 from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
@@ -744,6 +745,9 @@ def _startup() -> None:
     # В dev-режиме (uvicorn --reload) сервер живёт в подпроцессе,
     # поэтому watcher стартуем через событие, а не извне
     start_watcher()
+    # Разовая чистка: прежние версии писали в глобальный конфиг слепок всех
+    # дефолтов, и правки поставки переставали доезжать (TASK-088)
+    migrate_global_config()
     # Проверка обновлений — фоном и только при согласии (update_check: auto).
     # В путь запроса доски сеть не попадает никогда
     updater.check_in_background(load_global_config())

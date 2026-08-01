@@ -67,19 +67,46 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def only_changed(stored: dict) -> dict:
+    """Убрать из сохранённого то, что совпадает с дефолтом поставки.
+
+    Отличить «пользователь выбрал значение, совпавшее с дефолтом» от «значение
+    записалось само» невозможно — и не нужно: поведение при этом не меняется,
+    зато ключ снова начинает следовать за поставкой.
+    """
+    return {k: v for k, v in stored.items()
+            if k not in DEFAULTS or v != DEFAULTS[k]}
+
+
+def stored_global_config() -> dict:
+    """Только то, что реально записано в файле, без дефолтов."""
+    return _read_json(GLOBAL_CONFIG_FILE)
+
+
+def write_stored_global(stored: dict) -> None:
+    """Записать в файл именно то, что передали, — без дефолтов."""
+    try:
+        GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
+        GLOBAL_CONFIG_FILE.write_text(
+            json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
 def load_global_config() -> dict:
-    """Загрузить глобальный конфиг (создать с дефолтами при отсутствии)."""
+    """Дефолты поставки + то, что пользователь менял.
+
+    Файл при первом запуске создаётся **пустым**, а не слепком `DEFAULTS`:
+    записанное значение всегда побеждает дефолт, поэтому полный слепок
+    замораживал конфиг в том виде, в каком поставка выглядела в день первого
+    запуска, и правки дефолтов не доезжали ни до кого (TASK-088).
+    """
     if not GLOBAL_CONFIG_FILE.exists():
-        try:
-            GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
-            GLOBAL_CONFIG_FILE.write_text(
-                json.dumps(DEFAULTS, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-        except Exception:
-            pass
+        write_stored_global({})
         return dict(DEFAULTS)
     cfg = dict(DEFAULTS)
-    cfg.update(_read_json(GLOBAL_CONFIG_FILE))
+    cfg.update(stored_global_config())
     return cfg
 
 
@@ -118,17 +145,15 @@ def load_project_config(tasks_dir: Path) -> dict:
 
 
 def save_global_config(updates: dict) -> dict:
-    """Слить updates в глобальный конфиг и сохранить. Возвращает итоговый конфиг."""
-    cfg = load_global_config()
-    cfg.update(updates)
-    try:
-        GLOBAL_DIR.mkdir(parents=True, exist_ok=True)
-        GLOBAL_CONFIG_FILE.write_text(
-            json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    except Exception:
-        pass
-    return cfg
+    """Слить updates в глобальный конфиг и сохранить. Возвращает итоговый конфиг.
+
+    В файл идёт **только изменённое пользователем**: писать эффективный конфиг
+    целиком значит замораживать дефолты остальных ключей (TASK-088).
+    """
+    stored = stored_global_config()
+    stored.update(updates)
+    write_stored_global(only_changed(stored))
+    return load_global_config()
 
 
 def save_project_config(tasks_dir: Path, updates: dict) -> dict:
