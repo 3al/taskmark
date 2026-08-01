@@ -40,7 +40,55 @@ DEFAULTS: dict = {
     # лежать там же, где код, и хостинг может смениться
     "release_manifest_url":
         "https://raw.githubusercontent.com/3al/taskmark/main/release.json",
+    # Вид карточки на доске. Числами, а не пресетами: «чтобы больше влезало» —
+    # это про конкретную высоту колонки и длину заголовков, и у каждого она своя
+    "card_title_size": 14,
+    "card_title_lines": 3,
+    "card_meta_size": 12,
 }
+
+# Границы вида карточки: за ними превью разваливается — заголовок перестаёт
+# читаться или карточка занимает пол-экрана. Свобода настройки не должна
+# доходить до возможности сломать доску, поэтому диапазоны — часть контракта,
+# и их проверяет бэкенд, а не только форма
+CARD_LIMITS: dict[str, tuple[int, int]] = {
+    "card_title_size": (12, 18),
+    "card_title_lines": (1, 4),
+    "card_meta_size": (10, 14),
+}
+
+
+def card_style(cfg: dict) -> dict:
+    """Значения вида карточки — с подстановкой дефолтов вместо пропусков."""
+    return {k: cfg.get(k, DEFAULTS[k]) for k in CARD_LIMITS}
+
+
+def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
+    """Привести размеры карточки к целым и проверить границы.
+
+    Возвращает (updates с числами вместо строк, список ошибок). Форма шлёт
+    значения полей строками, а «14» и 14 — одно и то же число; а вот 40 или
+    «много» — уже нет, и такое сохранять нельзя.
+    """
+    out = dict(updates)
+    errors: list[str] = []
+    for key, (low, high) in CARD_LIMITS.items():
+        if key not in out:
+            continue
+        value = out[key]
+        if isinstance(value, bool) or not isinstance(value, (int, str, float)):
+            errors.append(f"{key}: нужно целое число от {low} до {high}")
+            continue
+        try:
+            number = int(str(value).strip())
+        except ValueError:
+            errors.append(f"{key}: нужно целое число от {low} до {high}")
+            continue
+        if not low <= number <= high:
+            errors.append(f"{key}: допустимо от {low} до {high}, получено {number}")
+            continue
+        out[key] = number
+    return out, errors
 
 # Ключи, которые имеет смысл держать на уровне проекта: жизненный цикл у каждого
 # проекта свой, а порт и тема — свойства инструмента, а не репозитория

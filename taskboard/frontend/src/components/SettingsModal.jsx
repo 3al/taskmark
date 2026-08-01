@@ -85,6 +85,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
     status_script: config.status_script,
     release_script: (config.release_script || '').trim(),
     logs_dir: config.logs_dir,
+    // Размеры превью: пустое поле — «не меняли», иначе бэкенд получит ноль
+    ...Object.fromEntries(['card_title_size', 'card_title_lines', 'card_meta_size']
+      .filter((k) => config[k] !== '' && config[k] != null)
+      .map((k) => [k, Number(config[k])])),
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
@@ -261,6 +265,38 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
               <div>
                 <span className={label}>Папка логов</span>
                 <input className={field} value={config.logs_dir} onChange={(e) => set('logs_dir', e.target.value)} />
+              </div>
+
+              {/* Превью задачи. Границы приходят с бэкенда (card_limits) — он же
+                  их и проверяет: числа, вписанные сюда руками, разъехались бы
+                  с проверкой при первой правке диапазона */}
+              <div className="border-t border-zinc-800 pt-4">
+                <span className={label}>Превью задачи на доске</span>
+                <div className="grid grid-cols-3 gap-3">
+                  {[['card_title_size', 'Заголовок, px'],
+                    ['card_title_lines', 'Строк заголовка'],
+                    ['card_meta_size', 'Метаданные, px']].map(([key, title]) => {
+                    const [low, high] = config.card_limits?.[key] || []
+                    const value = config[key]
+                    const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                    return (
+                      <div key={key}>
+                        <span className={label}>{title}</span>
+                        <input
+                          className={`${field} ${bad ? 'border-rose-500' : ''}`}
+                          type="number"
+                          min={low}
+                          max={high}
+                          value={value ?? ''}
+                          onChange={(e) => set(key, e.target.value)}
+                        />
+                        <span className="block text-[11px] text-zinc-600 mt-1">
+                          от {low} до {high}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
 
               {/* Состав агентского окружения проверяется по выбранным средам:

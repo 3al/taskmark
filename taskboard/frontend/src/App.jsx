@@ -159,6 +159,17 @@ export default function App() {
 
   useEffect(() => { refresh() }, [refresh])
 
+  // Размеры превью — CSS-переменными на корне: карточек на доске десятки,
+  // и менять их все через пропсы ради трёх чисел незачем (TASK-097)
+  useEffect(() => {
+    const style = board?.config?.card_style
+    if (!style) return
+    const root = document.documentElement
+    root.style.setProperty('--card-title-size', `${style.card_title_size}px`)
+    root.style.setProperty('--card-title-lines', String(style.card_title_lines))
+    root.style.setProperty('--card-meta-size', `${style.card_meta_size}px`)
+  }, [board?.config?.card_style])
+
   // Точка «есть новая версия» — из кэша сервера, один раз при открытии доски.
   // Проверка обновлений в путь загрузки доски не попадает: она идёт фоном
   // на сервере и только при согласии пользователя

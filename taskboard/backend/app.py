@@ -15,10 +15,12 @@ from pydantic import BaseModel
 from backend import help_docs, lifecycle, registry, updater, version
 from backend.board_parser import parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
-from backend.config import (PROJECT_KEYS, add_criteria_preset, criteria_presets,
+from backend.config import (CARD_LIMITS, PROJECT_KEYS, add_criteria_preset,
+                            card_style, criteria_presets,
                             custom_criteria_presets, load_global_config,
                             load_project_config, remove_criteria_preset,
-                            save_global_config, save_project_config)
+                            save_global_config, save_project_config,
+                            validate_card_style)
 from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import (apply_config_migrations, migrate_global_config,
@@ -238,12 +240,18 @@ def api_changelog() -> dict:
 
 @app.get("/api/config")
 def api_get_config() -> dict:
-    """Действующий конфиг: для активного проекта — с его переопределениями."""
+    """Действующий конфиг: для активного проекта — с его переопределениями.
+
+    Вместе со значениями отдаём `card_limits` — допустимые границы размеров
+    превью. Форма ограничивает поля по ним, а не по числам, вписанным в JS:
+    иначе границы разъедутся с проверкой бэкенда при первой же правке.
+    """
     proj = registry.get_active()
     if not proj:
-        return load_global_config()
+        return {**load_global_config(), "card_limits": CARD_LIMITS}
     tasks_dir = Path(proj["tasks_dir"])
     cfg = load_project_config(tasks_dir)
+    cfg["card_limits"] = CARD_LIMITS
     # Волт мог быть развёрнут до появления ключа в конфиге — тогда его режим
     # виден только по файлам. Отдаём эффективное значение, иначе форма настроек
     # покажет «выключен» и первым же сохранением это в конфиг и запишет
@@ -257,8 +265,16 @@ def api_save_config(body: ConfigIn) -> dict:
     allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
                "create_script", "status_script", "release_script", "logs_dir", "queue_section",
                "queued_status", "statuses", "pipeline", "actions", "harnesses",
-               "vault", "update_check", "release_manifest_url"}
+               "vault", "update_check", "release_manifest_url",
+               *CARD_LIMITS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
+
+    # Размеры превью проверяет бэкенд, а не только форма: за границами диапазона
+    # карточка разваливается, и «настройка» превращается в способ сломать доску
+    updates, invalid = validate_card_style(updates)
+    if invalid:
+        raise HTTPException(400, {"message": "Недопустимые размеры превью",
+                                  "errors": invalid})
 
     proj = registry.get_active()
     tasks_dir = Path(proj["tasks_dir"]) if proj else None
@@ -339,6 +355,8 @@ def api_board() -> dict:
         "queue_section": pipeline.section_of(pipeline.action("pick") or "") or "Queue",
         "queued_status": pipeline.action("pick"),
         "dnd_full_board": cfg.get("dnd_full_board", True),
+        # Размеры превью — доска рисует карточки по ним
+        "card_style": card_style(cfg),
     }
     return board
 

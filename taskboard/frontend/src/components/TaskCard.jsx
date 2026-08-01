@@ -66,7 +66,8 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             заголовка. У блокировки номер важнее значка — сразу видно, чего
             ждём; у паузы номера нет, а слово «пауза» рядом со значком ничего
             не добавляет */}
-        <div className="flex items-center gap-1.5 text-xs font-mono text-zinc-500">
+        <div className="flex items-center gap-1.5 font-mono text-zinc-500"
+             style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
           <span className="shrink-0">{task.id}</span>
           {task.struck && <span className="text-zinc-600 normal-case shrink-0">superseded</span>}
           {/* Значок — эмодзи: его цвет рисует шрифт, и text-* на него не
@@ -102,7 +103,18 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         </div>
         {/* Заголовок превью чуть мягче интерфейсных надписей: карточек на доске
             десятки, полная яркость превращает колонку в стену текста */}
-        <div className="text-base text-zinc-300/90 leading-snug mt-0.5 line-clamp-2" title={task.title}>
+        {/* Размеры превью настраиваются (TASK-097) и приезжают CSS-переменными
+            с корня документа: тащить их пропсами через колонку в каждую
+            карточку — лишний слой ради трёх чисел. Обрезка по строкам заодно
+            перестаёт быть классом line-clamp-N: число строк тоже настройка */}
+        <div className="text-zinc-300/90 leading-snug mt-0.5 overflow-hidden"
+             style={{
+               fontSize: 'var(--card-title-size, 14px)',
+               display: '-webkit-box',
+               WebkitBoxOrient: 'vertical',
+               WebkitLineClamp: 'var(--card-title-lines, 3)',
+             }}
+             title={task.title}>
           {highlight(task.title, query)}
         </div>
         {/* Нашлось в теле задачи — показываем, где именно: иначе непонятно,
@@ -117,7 +129,8 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             Эпик здесь, а не наверху: он самый широкий элемент строки и при этом
             самый редко нужный — наверху он вытеснял пометки простоя */}
         {(task.meta || task.epic) && (
-          <div className="flex items-center gap-2 mt-1 text-xs text-zinc-500">
+          <div className="flex items-center gap-2 mt-1 text-zinc-500"
+               style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
             {task.meta && <span className="truncate">{task.meta}</span>}
             {task.epic && (
               <span className="ml-auto min-w-0 shrink-0 truncate px-1.5 py-px rounded
