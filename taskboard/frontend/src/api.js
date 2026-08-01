@@ -89,7 +89,16 @@ export const api = {
   updatePlan: () => request('/api/update/plan'),
   updateApply: () => request('/api/update/apply', { method: 'POST' }),
   updateSeen: () => request('/api/update/seen', { method: 'POST' }),
-  changelog: () => request('/api/changelog'),
+  // Без since — весь файл; с ним — только версии новее указанной, то есть
+  // всё, что пользователь пропустил, а не одна последняя. limit ограничивает
+  // выдачу свежими: пропустивший два десятка выпусков получил бы стену текста
+  changelog: (since, limit) => {
+    const q = new URLSearchParams()
+    if (since) q.set('since_version', since)
+    if (limit) q.set('limit', String(limit))
+    const s = q.toString()
+    return request('/api/changelog' + (s ? `?${s}` : ''))
+  },
 }
 
 // Подписка на живые обновления (SSE)

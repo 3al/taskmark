@@ -154,6 +154,74 @@ class LocalRemoteTest(RepoTest):
         self.assertIsNone(updater.local_remote(self.repo))
 
 
+class LocalCommitsTest(RepoTest):
+    """Свои коммиты поверх релиза видны до сети — и отказ приходит сразу.
+
+    Раньше преграда всплывала только в лаунчере, после fetch: пользователь
+    нажимал кнопку, сервер уходил вниз, поднимался — и лишь тогда узнавал,
+    что обновление невозможно (TASK-098).
+    """
+
+    def track(self) -> None:
+        """Связать ветку с origin/main — обычное состояние после клона."""
+        git(self.repo, "push", "-q", "-u", "origin", "main")
+
+    def commit_own_work(self) -> None:
+        (self.repo / "моё.txt").write_text("моя работа", encoding="utf-8")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "моя работа")
+
+    def test_no_own_commits_is_fine(self) -> None:
+        self.track()
+        self.cache_latest()
+
+        self.assertTrue(self.plan()["ok"], self.reasons(self.plan()))
+
+    def test_own_commits_block_the_button(self) -> None:
+        self.track()
+        self.commit_own_work()
+        self.cache_latest()
+
+        plan = self.plan()
+
+        self.assertFalse(plan["ok"])
+        self.assertIn("коммит", self.reasons(plan).lower())
+
+    def test_refusal_promises_the_work_is_safe(self) -> None:
+        """Пользователь должен понять, что бояться нечего — и что делать."""
+        self.track()
+        self.commit_own_work()
+        self.cache_latest()
+
+        reason = next(b for b in self.plan()["blockers"] if "коммит" in b.lower())
+
+        self.assertIn("вручную", reason.lower())
+
+    def test_manual_command_still_offered(self) -> None:
+        self.track()
+        self.commit_own_work()
+        self.cache_latest()
+
+        self.assertIn("merge --ff-only", self.plan()["command"])
+
+    def test_branch_without_upstream_keeps_old_behaviour(self) -> None:
+        """Не с чем сравнивать — не выдумываем преграду; отказ придёт из лаунчера."""
+        self.cache_latest()
+
+        plan = self.plan()
+
+        self.assertTrue(plan["ok"], self.reasons(plan))
+
+    def test_counter_reports_none_without_upstream(self) -> None:
+        self.assertIsNone(updater.local_commits(self.repo))
+
+    def test_counter_counts_own_commits(self) -> None:
+        self.track()
+        self.commit_own_work()
+
+        self.assertEqual(1, updater.local_commits(self.repo))
+
+
 class PlanTest(RepoTest):
     """Можно ли обновляться и, если нет, почему именно."""
 

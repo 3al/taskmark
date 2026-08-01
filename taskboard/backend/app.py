@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend import help_docs, lifecycle, registry, updater, version
+from backend import changelog, help_docs, lifecycle, registry, updater, version
 from backend.board_parser import parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_LIMITS, PROJECT_KEYS, add_criteria_preset,
@@ -264,13 +264,23 @@ def api_update_seen() -> dict:
 
 
 @app.get("/api/changelog")
-def api_changelog() -> dict:
-    """Локальный CHANGELOG.md — «что нового в этой версии», уже установленной."""
+def api_changelog(since_version: str = "", limit: int = 0) -> dict:
+    """Локальный CHANGELOG.md — «что нового» в уже установленной версии.
+
+    С `since_version` отдаёт **отрезок**: секции строго новее указанной.
+    Обновление может перепрыгнуть несколько выпусков, и человеку нужно
+    увидеть их все, а не только последний (TASK-099).
+    """
     path = ROOT_DIR / "CHANGELOG.md"
     try:
-        return {"ok": True, "text": path.read_text(encoding="utf-8")}
+        text = path.read_text(encoding="utf-8")
     except OSError:
-        return {"ok": False, "text": ""}
+        return {"ok": False, "text": "", "sections": [], "total": 0}
+    found = changelog.since(text, since_version)
+    # Пропустивший двадцать выпусков получит стену текста, поэтому отдаём
+    # свежие, а сколько их всего — числом: окно скажет об остальных словами
+    shown = found[:limit] if limit > 0 else found
+    return {"ok": True, "text": text, "sections": shown, "total": len(found)}
 
 
 @app.get("/api/config")

@@ -34,6 +34,10 @@ const MODES = [
   { id: 'off', label: 'Выключена', hint: 'Проверка отключена — приложение в сеть не выходит. Обновиться вручную по-прежнему можно.' },
 ]
 
+// Сколько выпусков показывать сразу после обновления. Пропустивший год
+// получил бы стену текста; остальные доступны кнопкой
+const NEWS_SHOWN = 5
+
 // Что делать пользователю, у которого обновиться одной командой нельзя
 const INSTALL_HINT = {
   nogit: 'Копия развёрнута из git, но сам git в PATH не найден — установите его ' +
@@ -46,6 +50,8 @@ const INSTALL_HINT = {
 export default function UpdateModal({ onClose }) {
   const [status, setStatus] = useState(null)
   const [plan, setPlan] = useState(null)
+  const [news, setNews] = useState(null)
+  const [allNews, setAllNews] = useState(false)
   const [busy, setBusy] = useState(false)
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState(null)
@@ -61,6 +67,18 @@ export default function UpdateModal({ onClose }) {
     if (!status?.update_available) { setPlan(null); return }
     api.updatePlan().then(setPlan).catch(() => setPlan(null))
   }, [status?.update_available, status?.latest?.version])
+
+  // Что изменилось за всё пропущенное: обновление могло перепрыгнуть
+  // несколько выпусков, и показать надо каждый, а не только последний.
+  // Но и не все сразу: забывший про программу на год получит стену текста,
+  // поэтому по умолчанию — свежие, остальные по кнопке
+  useEffect(() => {
+    const done = status?.last_result
+    if (!done?.at || !done.ok) { setNews(null); return }
+    api.changelog(done.from, allNews ? 0 : NEWS_SHOWN)
+      .then((d) => setNews({ sections: d.sections || [], total: d.total || 0 }))
+      .catch(() => setNews(null))
+  }, [status?.last_result?.at, allNews])
 
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
@@ -178,6 +196,40 @@ export default function UpdateModal({ onClose }) {
               {!result.ok && result.error && (
                 <p className="text-zinc-400">{result.error}</p>
               )}
+
+              {/* Все пропущенные выпуски, а не только последний: обновление
+                  могло перепрыгнуть несколько версий */}
+              {result.ok && news?.sections?.length > 0 && (
+                <>
+                  {news.total > news.sections.length && (
+                    <p className="mt-2 text-zinc-400">
+                      Вы пропустили версий: {news.total}. Ниже — последние
+                      {' '}{news.sections.length}.
+                    </p>
+                  )}
+                  <div className="mt-3 space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {news.sections.map((s) => (
+                      <div key={s.version}>
+                        <div className="text-zinc-300">
+                          {s.version}
+                          {s.date && <span className="text-zinc-600 text-xs ml-2">{s.date}</span>}
+                        </div>
+                        <div className="md-body md-tint-zinc text-sm mt-1">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                            {s.body}
+                          </ReactMarkdown>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {news.total > news.sections.length && (
+                    <button className={`${btn} mt-2`} onClick={() => setAllNews(true)}>
+                      Показать все {news.total}
+                    </button>
+                  )}
+                </>
+              )}
+
               <button className={`${btn} mt-3`} onClick={dismissResult}>Понятно</button>
             </div>
           )}

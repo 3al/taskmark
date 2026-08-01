@@ -278,6 +278,26 @@ def worktree_dirty(root: Path) -> bool | None:
     return bool(out.stdout.strip())
 
 
+def local_commits(root: Path) -> int | None:
+    """Сколько своих коммитов лежит поверх апстрима (None — сравнить не с чем).
+
+    Тег обновления приезжает только с `fetch`, поэтому потомственность до сети
+    не проверить. Зато расхождение с апстримом видно локально — и именно оно
+    делает fast-forward невозможным. Без этой проверки отказ приходил после
+    перезапуска сервера, впустую (TASK-098).
+    """
+    try:
+        out = _git(root, "rev-list", "--count", "@{upstream}..HEAD")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None  # апстрим не настроен — прежнее поведение, отказ из лаунчера
+    try:
+        return int(out.stdout.strip())
+    except ValueError:
+        return None
+
+
 def head_commit(root: Path) -> str:
     """Текущий HEAD — точка отката, если обновление не сложится."""
     try:
@@ -323,6 +343,13 @@ def plan(cfg: dict, root: Path) -> dict:
     if info.get("install") == "git" and not remote:
         blockers.append("У репозитория нет remote — неоткуда получать обновление")
 
+    ahead = local_commits(root) if info.get("install") == "git" else None
+    if ahead:
+        blockers.append(
+            f"В вашей копии {ahead} собственных коммитов поверх релиза — "
+            f"обновление кнопкой невозможно. Работа не потеряется: "
+            f"обновитесь вручную, разобравшись с ними")
+
     dirty = worktree_dirty(root) if info.get("install") == "git" else None
     if dirty:
         blockers.append("В рабочей копии есть незакоммиченные правки — "
@@ -342,11 +369,17 @@ def plan(cfg: dict, root: Path) -> dict:
 
 
 def request_apply(plan_data: dict) -> None:
-    """Записать лаунчеру, что применять: тег, версия и точка отката."""
+    """Записать лаунчеру, что применять: тег, версия, точка отката и отсчёта.
+
+    `from` — версия, с которой уходим. Без неё после обновления не построить
+    диапазон «что изменилось»: обновление может перепрыгнуть несколько
+    выпусков, и показать надо все (TASK-099).
+    """
     APPLY_FILE.parent.mkdir(parents=True, exist_ok=True)
     APPLY_FILE.write_text(json.dumps(
         {"tag": plan_data.get("tag", ""), "version": plan_data.get("version", ""),
-         "head": plan_data.get("head", ""), "at": time.time()},
+         "head": plan_data.get("head", ""), "from": version.current(),
+         "at": time.time()},
         ensure_ascii=False, indent=2), encoding="utf-8")
 
 

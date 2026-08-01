@@ -155,6 +155,8 @@ def apply_update(root: Path, request: dict, install_deps=_pip_install,
     def done(ok: bool, error: str = "") -> dict:
         result = {"ok": ok, "version": local_version(root) if ok else target,
                   "target": target, "tag": tag, "error": error,
+                  # С какой версии ушли: по ней окно покажет всё пропущенное
+                  "from": str(request.get("from") or ""),
                   "at": time.time()}
         path = result_file if result_file is not None else UPDATE_RESULT
         try:
