@@ -31,11 +31,11 @@ DEFAULTS: dict = {
     "theme": "dark",
     # Проверка обновлений. Единственное место, где инструмент ходит в сеть,
     # поэтому по умолчанию «ask» — пока пользователь не ответил, запросов нет
-    "update_check": "ask",  # ask | auto | off
+    "update_check": "ask",  # ask | auto | manual | off
     # Адрес манифеста релиза. Настройка, а не константа: манифест не обязан
     # лежать там же, где код, и хостинг может смениться
     "release_manifest_url":
-        "https://raw.githubusercontent.com/3al/taskboard/main/release.json",
+        "https://raw.githubusercontent.com/3al/taskmark/main/release.json",
 }
 
 # Ключи, которые имеет смысл держать на уровне проекта: жизненный цикл у каждого

@@ -1,6 +1,6 @@
 # Changelog
 
-Заметные изменения taskboard. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
+Заметные изменения Taskmark. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 нумерация — [семантическая](https://semver.org/lang/ru/): MAJOR меняется, когда ломается формат
 данных пользователя, MINOR — новые возможности, PATCH — исправления.
 

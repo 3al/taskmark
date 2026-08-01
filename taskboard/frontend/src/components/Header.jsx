@@ -100,8 +100,13 @@ export default function Header({
 
   return (
     <header className="flex items-start gap-3 px-4 py-3 border-b border-zinc-800 bg-zinc-900/60">
-      <div className="font-bold text-lg tracking-tight">
-        task<span className="text-sky-400">board</span>
+      {/* Знак: [x] — синтаксис отмеченной задачи в markdown, тем же моноширинным,
+          каким она написана в файле. Дальше название обычным шрифтом интерфейса */}
+      <div className="font-bold text-lg tracking-tight flex items-baseline gap-1.5">
+        {/* Сдвиг вверх: скобки моноширинного шрифта уходят ниже базовой линии
+            заметно глубже букв, и по базовой линии знак кажется съехавшим */}
+        <span className="font-mono text-zinc-500 text-base leading-none relative -top-[2px]">[<span className="text-sky-400">x</span>]</span>
+        <span>task<span className="text-sky-400">mark</span></span>
       </div>
 
       <div className="flex flex-col gap-1 w-48 shrink-0">

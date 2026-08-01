@@ -1,4 +1,4 @@
-// Клиент API taskboard
+// Клиент API Taskmark
 
 async function request(url, options = {}) {
   const res = await fetch(url, {
