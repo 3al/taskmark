@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend import help_docs, lifecycle, registry
+from backend import help_docs, lifecycle, registry, updater, version
 from backend.board_parser import parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (PROJECT_KEYS, add_criteria_preset, criteria_presets,
@@ -38,12 +38,15 @@ from backend.watcher import TasksWatcher
 
 DIST_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 
+# Корень установки инструмента: по нему определяется способ обновления
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+
 # Возможности API: лаунчер сверяет их при подключении к уже запущенному
 # серверу, чтобы предупредить об устаревшем процессе
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
-                "board_repair": True, "stall": True}
+                "board_repair": True, "stall": True, "update": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -206,6 +209,30 @@ def api_remove_project(name: str) -> dict:
 
 # --- Конфиг ---
 
+@app.get("/api/update/status")
+def api_update_status() -> dict:
+    """Что известно о новой версии. Только из кэша — в сеть тут не ходим."""
+    return updater.status(load_global_config(), ROOT_DIR)
+
+
+@app.post("/api/update/check")
+def api_update_check() -> dict:
+    """Проверить сейчас. Нажатие кнопки и есть согласие на сетевой запрос."""
+    cfg = load_global_config()
+    updater.check_remote(cfg, force=True)
+    return updater.status(cfg, ROOT_DIR)
+
+
+@app.get("/api/changelog")
+def api_changelog() -> dict:
+    """Локальный CHANGELOG.md — «что нового в этой версии», уже установленной."""
+    path = ROOT_DIR / "CHANGELOG.md"
+    try:
+        return {"ok": True, "text": path.read_text(encoding="utf-8")}
+    except OSError:
+        return {"ok": False, "text": ""}
+
+
 @app.get("/api/config")
 def api_get_config() -> dict:
     """Действующий конфиг: для активного проекта — с его переопределениями."""
@@ -227,7 +254,7 @@ def api_save_config(body: ConfigIn) -> dict:
     allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
                "create_script", "status_script", "logs_dir", "queue_section",
                "queued_status", "statuses", "pipeline", "actions", "harnesses",
-               "vault"}
+               "vault", "update_check", "release_manifest_url"}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
     proj = registry.get_active()
@@ -277,13 +304,15 @@ def api_health() -> dict:
     tool_dir = str(Path(__file__).parent.parent.parent.resolve())
     if not proj:
         return {"ok": False, "project": None, "report": None,
-                "capabilities": CAPABILITIES, "tool_dir": tool_dir}
+                "capabilities": CAPABILITIES, "tool_dir": tool_dir,
+                "version": version.current()}
     tasks_dir = Path(proj["tasks_dir"])
     cfg = load_project_config(tasks_dir)
     report = validate_project(tasks_dir, cfg)
     report["ok"] = report["ok"] and True
     return {"ok": report["ok"], "project": proj, "config": cfg, "report": report,
-            "capabilities": CAPABILITIES, "tool_dir": tool_dir}
+            "capabilities": CAPABILITIES, "tool_dir": tool_dir,
+            "version": version.current()}
 
 
 @app.get("/api/board")
@@ -711,6 +740,9 @@ def _startup() -> None:
     # В dev-режиме (uvicorn --reload) сервер живёт в подпроцессе,
     # поэтому watcher стартуем через событие, а не извне
     start_watcher()
+    # Проверка обновлений — фоном и только при согласии (update_check: auto).
+    # В путь запроса доски сеть не попадает никогда
+    updater.check_in_background(load_global_config())
 
 
 @app.on_event("shutdown")

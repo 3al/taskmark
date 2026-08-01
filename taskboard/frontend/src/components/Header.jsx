@@ -59,7 +59,8 @@ function projectDir(tasksDir) {
 export default function Header({
   projects, active, canCreate, hasLogs, hasCustomOrder,
   onSwitchProject, onNewTask, onShowLogs, onRefresh, onResetColumns, onOpenSettings,
-  onOpenHelp, query, onQuery, matches, stalledOnly, onStalledOnly, stalledCount = 0,
+  onOpenHelp, onOpenUpdate, updateAvailable = false,
+  query, onQuery, matches, stalledOnly, onStalledOnly, stalledCount = 0,
 }) {
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
@@ -220,6 +221,18 @@ export default function Header({
         )}
         {hasLogs && <button className={btn} onClick={onShowLogs}>Логи</button>}
         <button className={btn} onClick={() => onOpenHelp()} title="Помощь: как работать с доской">?</button>
+        {/* Точка показывается только когда есть что ставить: постоянного
+            значка «обновись» в рабочем инструменте быть не должно */}
+        <button
+          className={`${btn} relative`}
+          onClick={onOpenUpdate}
+          title={updateAvailable ? 'Доступна новая версия' : 'Обновление и версия'}
+        >
+          ↑
+          {updateAvailable && (
+            <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-sky-400" />
+          )}
+        </button>
         <button className={btn} onClick={onOpenSettings} title="Настройки">⚙</button>
         {canCreate && (
           <button

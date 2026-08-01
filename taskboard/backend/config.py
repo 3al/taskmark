@@ -29,6 +29,13 @@ DEFAULTS: dict = {
     "pipeline": ["backlog", "queued", "development", "review", "testing", "completed"],
     "actions": {"create": "backlog", "start": "development"},
     "theme": "dark",
+    # Проверка обновлений. Единственное место, где инструмент ходит в сеть,
+    # поэтому по умолчанию «ask» — пока пользователь не ответил, запросов нет
+    "update_check": "ask",  # ask | auto | off
+    # Адрес манифеста релиза. Настройка, а не константа: манифест не обязан
+    # лежать там же, где код, и хостинг может смениться
+    "release_manifest_url":
+        "https://raw.githubusercontent.com/3al/taskboard/main/release.json",
 }
 
 # Ключи, которые имеет смысл держать на уровне проекта: жизненный цикл у каждого

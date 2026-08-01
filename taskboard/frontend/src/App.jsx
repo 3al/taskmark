@@ -13,6 +13,7 @@ import AgenticStaleModal from './components/AgenticStaleModal'
 import BoardRepairModal from './components/BoardRepairModal'
 import ReasonPrompt from './components/ReasonPrompt'
 import HelpModal from './components/HelpModal'
+import UpdateModal from './components/UpdateModal'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению прямоугольников
 function collisionDetection(args) {
@@ -47,6 +48,9 @@ export default function App() {
   const [showScaffold, setShowScaffold] = useState(false)
   const [showAgentic, setShowAgentic] = useState(false)
   const [showRepair, setShowRepair] = useState(false)
+  const [showUpdate, setShowUpdate] = useState(false)
+  // Точка у кнопки обновления. Читается из кэша сервера — сеть тут не задета
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   // Помощь: null — закрыта, иначе раздел, на котором её открыли
   const [helpSection, setHelpSection] = useState(null)
   // Живой поиск: строка ввода и результат с бэкенда (id → попадания).
@@ -154,6 +158,15 @@ export default function App() {
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
+
+  // Точка «есть новая версия» — из кэша сервера, один раз при открытии доски.
+  // Проверка обновлений в путь загрузки доски не попадает: она идёт фоном
+  // на сервере и только при согласии пользователя
+  useEffect(() => {
+    api.updateStatus()
+      .then((s) => setUpdateAvailable(!!s.update_available && s.mode !== 'off'))
+      .catch(() => {})
+  }, [])
 
   // Первое открытие проекта: состав окружения зависит от сред, в которых с ним
   // работают, — а это знает только пользователь. Спрашиваем один раз на проект;
@@ -460,6 +473,8 @@ export default function App() {
         onResetColumns={() => saveColumnOrder(null)}
         onOpenSettings={() => setShowSettings(true)}
         onOpenHelp={openHelp}
+        onOpenUpdate={() => setShowUpdate(true)}
+        updateAvailable={updateAvailable}
         query={query}
         onQuery={setQuery}
         matches={found ? found.size : null}
@@ -765,6 +780,17 @@ export default function App() {
       )}
       {helpSection && (
         <HelpModal section={helpSection} onClose={() => setHelpSection(null)} />
+      )}
+      {showUpdate && (
+        <UpdateModal
+          onClose={() => {
+            setShowUpdate(false)
+            // Окно могло проверить обновления или изменить режим — перечитываем
+            api.updateStatus()
+              .then((s) => setUpdateAvailable(!!s.update_available && s.mode !== 'off'))
+              .catch(() => {})
+          }}
+        />
       )}
       {showAgentic && (
         <AgenticStaleModal

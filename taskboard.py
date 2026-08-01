@@ -46,6 +46,41 @@ def fail(msg: str) -> None:
     sys.exit(1)
 
 
+def local_version() -> str:
+    """Версия этой копии инструмента (файл taskboard/VERSION).
+
+    Читается напрямую, без импорта backend: лаунчер работает до создания venv,
+    когда зависимостей ещё нет. Логика та же, что в backend/version.py.
+    """
+    try:
+        text = (TOOL_DIR / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "0.0.0"
+    return text or "0.0.0"
+
+
+def _version_tuple(value: str) -> tuple[int, ...] | None:
+    """Строка версии → кортеж чисел; непонятная строка → None."""
+    text = (value or "").strip().lstrip("vV")
+    parts = text.split(".") if text else []
+    if not parts or not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def _version_lt(running: str, local: str) -> bool:
+    """Версия запущенного сервера строго старее локальной?
+
+    Любая неразбираемая сторона — False: пугать пользователя из-за того, что
+    мы не поняли строку, хуже, чем промолчать.
+    """
+    a, b = _version_tuple(running), _version_tuple(local)
+    if a is None or b is None:
+        return False
+    width = max(len(a), len(b))
+    return a + (0,) * (width - len(a)) < b + (0,) * (width - len(b))
+
+
 def venv_python() -> Path:
     """Путь к python внутри venv (win/posix)."""
     if sys.platform == "win32":
@@ -268,10 +303,15 @@ def main() -> None:
     health = server_alive(args.port)
     if health is not None:
         log(f"Сервер уже запущен на порту {args.port}.")
-        caps = health.get("capabilities") or {}
-        if not caps.get("move_after_task_id"):
-            log("ВНИМАНИЕ: запущенный сервер старее текущего кода (нет move_after_task_id).")
-            log("Перемещения могут работать некорректно — перезапустите сервер.")
+        # Версия запущенного сервера против версии этого кода. Отсутствие ключа
+        # `version` — само по себе признак старого сервера: он появился вместе
+        # с проверкой обновлений и раньше его не было
+        running = health.get("version")
+        if running is None or _version_lt(running, local_version()):
+            shown = running or "без версии"
+            log(f"ВНИМАНИЕ: запущенный сервер старее текущего кода ({shown} "
+                f"против {local_version()}).")
+            log("Перезапустите сервер: UI → Настройки → «Сервер».")
         # Сервер из другого расположения (напр. старая/удалённая копия)
         other_dir = health.get("tool_dir")
         if other_dir and Path(other_dir).resolve() != ROOT:

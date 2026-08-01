@@ -80,6 +80,11 @@ export const api = {
   log: (name) => request(`/api/logs/${encodeURIComponent(name)}`),
   stopServer: () => request('/api/server/stop', { method: 'POST' }),
   restartServer: () => request('/api/server/restart', { method: 'POST' }),
+  // Обновления: status читает кэш и в сеть не ходит, check — ходит,
+  // и само нажатие кнопки считается согласием на запрос
+  updateStatus: () => request('/api/update/status'),
+  updateCheck: () => request('/api/update/check', { method: 'POST' }),
+  changelog: () => request('/api/changelog'),
 }
 
 // Подписка на живые обновления (SSE)
