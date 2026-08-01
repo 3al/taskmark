@@ -138,3 +138,21 @@ Taskmark делает один человек в свободное время. 
 
 Это не влияет на доступ к возможностям: платных функций в инструменте нет, всё доступно всем
 в рамках лицензии.
+
+## In English
+
+**Taskmark** is a kanban board on top of plain Markdown files in your project's `tasks/`
+folder — for you and your AI coding agents. No database, no cloud, no accounts: tasks live
+next to your code, you edit them in the browser, the agent edits the same files through its
+skills. One server serves several projects.
+
+Requires Python 3.10+; everything else installs itself on first run. Start it with
+`py taskboard.py` (Windows) or `python3 taskboard.py` (macOS/Linux), then open
+`http://127.0.0.1:8765`.
+
+**The interface and all documentation are in Russian**, and so are the agent instructions
+it deploys into your project. There is no English localization yet — worth knowing before
+you install.
+
+Licensed under [PolyForm Small Business 1.0.0](LICENSE): free for individuals and small
+companies, separate agreement above those thresholds.
