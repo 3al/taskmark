@@ -25,8 +25,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -145,6 +147,43 @@ def _git(*args: str) -> str:
                           text=True, encoding="utf-8", check=True).stdout.strip()
 
 
+def tag_args(tag: str, notes_path: Path) -> tuple[str, ...]:
+    """Аргументы `git tag` для аннотированного тега с заметками выпуска.
+
+    `--cleanup=verbatim` обязателен: без него git вырезает строки, начинающиеся
+    с `#`, считая их комментариями, и заголовки групп changelog («### Добавлено»)
+    исчезают молча — список при этом остаётся, и заметить трудно.
+
+    Заметки передаются файлом, а не через `-m`: они многострочные и с разметкой.
+    """
+    return ("tag", "-a", tag, "--cleanup=verbatim", "-F", str(notes_path))
+
+
+def release_args(tag: str, title: str, notes_path: Path) -> tuple[str, ...]:
+    """Аргументы `gh release create` для **уже существующего** тега."""
+    return ("gh", "release", "create", tag, "--title", title,
+            "--notes-file", str(notes_path))
+
+
+def create_github_release(tag: str, title: str, notes_path: Path) -> dict:
+    """Создать GitHub Release. Витрина: провал выпуск не отменяет.
+
+    Release нужен не для механизма обновлений — тот читает манифест из репозитория, —
+    а для людей: только у Release разметка отрендерена, и значок «Latest» считается
+    по нему. Без Release посетитель страницы релизов видит прошлую версию как
+    последнюю и скачивает устаревший архив.
+    """
+    if shutil.which("gh") is None:
+        return {"ok": False,
+                "reason": "gh не установлен — создайте Release вручную для тега " + tag}
+    try:
+        subprocess.run(release_args(tag, title, notes_path), cwd=ROOT,
+                       capture_output=True, text=True, encoding="utf-8", check=True)
+    except subprocess.CalledProcessError as exc:
+        return {"ok": False, "reason": (exc.stderr or str(exc)).strip()}
+    return {"ok": True}
+
+
 def blockers() -> list[str]:
     """Что мешает выпускать прямо сейчас. Список, а не первое встреченное.
 
@@ -211,15 +250,45 @@ def apply(bump: str, notes: str, tasks: list[str]) -> dict:
     _git("add", "--", str(VERSION_FILE), str(CHANGELOG), str(MANIFEST))
     body = "Задачи выпуска: " + ", ".join(tasks) if tasks else "Выпуск без привязки к задачам."
     _git("commit", "-m", f"Релиз {version}", "-m", body)
-    _git("tag", "-a", manifest["tag"], "-m", f"Taskmark {version}")
+
+    # Заметки в аннотацию тега: их читают из консоли (`git show`, `git tag -n`).
+    # На странице тега разметка не рендерится — это работа Release, см. publish()
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md",
+                                     delete=False) as tmp:
+        tmp.write(f"Taskmark {version}\n\n{manifest['notes'].strip()}\n")
+        annotation = Path(tmp.name)
+    try:
+        _git(*tag_args(manifest["tag"], annotation))
+    finally:
+        annotation.unlink(missing_ok=True)
     return {"ok": True, "version": version, "tag": manifest["tag"],
             "commit": _git("rev-parse", "--short", "HEAD")}
 
 
 def publish() -> dict:
-    """Отправить коммит и тег. Отдельный шаг: наружу — только по решению человека."""
+    """Отправить коммит и тег, затем создать GitHub Release.
+
+    Отдельный шаг: наружу — только по решению человека. Release создаётся **после**
+    пуша: без тега на удалённом создавать нечего. Его провал выпуск не отменяет —
+    тег и манифест уже на месте, значит обновления доедут.
+
+    Версия, тег и заметки берутся из `release.json` — он единственный источник
+    и уже лежит в релизном коммите.
+    """
     _git("push", "origin", "main", "--tags")
-    return {"ok": True, "pushed": True}
+
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md",
+                                     delete=False) as tmp:
+        tmp.write(manifest["notes"].strip() + "\n")
+        notes = Path(tmp.name)
+    try:
+        released = create_github_release(
+            manifest["tag"], f"Taskmark {manifest['version']}", notes)
+    finally:
+        notes.unlink(missing_ok=True)
+
+    return {"ok": True, "pushed": True, "release": released}
 
 
 # --- CLI -------------------------------------------------------------------
