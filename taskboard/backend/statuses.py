@@ -41,8 +41,16 @@ CATALOG: dict[str, dict] = {
     "review": {"label": "Review", "section": "Review", "color": "violet"},
     "to_testing": {"label": "К тестированию", "section": "To Testing", "color": "cyan"},
     "testing": {"label": "Testing", "section": "Testing", "color": "orange"},
-    # Одно семейство с to_fix и to_testing: «ждёт, чтобы попасть на этап»
-    "to_release": {"label": "К релизу", "section": "To Release", "color": "teal"},
+    # Выпуск версии тремя шагами: проверенных задач копятся десятки, состав
+    # релиза выбирается из них, и только выбранное получает тексты для changelog
+    "ready_for_release": {"label": "Готово к выпуску", "section": "Ready for Release",
+                          "color": "cyan"},
+    "release_notes": {"label": "Заметки о релизе", "section": "Release Notes",
+                      "color": "violet"},
+    "to_release": {"label": "В ближайший релиз", "section": "To Release", "color": "teal"},
+    # Выкатка — не то же, что выпуск версии: у процессов со стендом и продом
+    # «готово к деплою» наступает там, где версии может не быть вовсе
+    "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy", "color": "teal"},
     # completed и done — взаимозаменяемые терминалы; ключ пишется во frontmatter
     # (status: done), поэтому это не только подпись. Включают один из двух
     "completed": {"label": "Completed", "section": "Completed", "color": "emerald"},
@@ -76,12 +84,23 @@ PRESETS: tuple[dict, ...] = (
     },
     {
         "name": "Полный",
-        "hint": "локальная проверка, ревью, стенд и релиз; возвраты через «На исправление»",
+        "hint": "локальная проверка, ревью, стенд и выкатка; возвраты через «На исправление»",
         "pipeline": ["backlog", "todo", "to_fix", "development", "local_testing",
-                     "review", "to_testing", "testing", "to_release",
+                     "review", "to_testing", "testing", "ready_to_deploy",
                      "done", "cancelled"],
         "actions": {"create": "backlog", "pick": "todo",
                     "start": "development", "return": "to_fix"},
+    },
+    {
+        "name": "С релизами",
+        "hint": "выпуск версиями: проверенное копится, состав релиза выбирается из него",
+        "pipeline": ["backlog", "todo", "development", "testing", "ready_for_release",
+                     "release_notes", "to_release", "done", "cancelled"],
+        "actions": {"create": "backlog", "pick": "todo", "start": "development",
+                    "return": "development",
+                    # Точки расширения для скилла выпуска: он спрашивает цель
+                    # у конфига, а не знает имена статусов
+                    "release_draft": "release_notes", "release_lock": "to_release"},
     },
 )
 

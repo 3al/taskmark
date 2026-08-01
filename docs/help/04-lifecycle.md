@@ -16,7 +16,8 @@
 ## Как собрать свой пайплайн
 
 Статусы берутся из готового набора: `backlog`, `todo`, `queued`, `to_fix`, `development`,
-`local_testing`, `review`, `to_testing`, `testing`, `to_release`, `completed`, `done`,
+`local_testing`, `review`, `to_testing`, `testing`, `ready_for_release`,
+`release_notes`, `to_release`, `ready_to_deploy`, `completed`, `done`,
 `cancelled`. В редакторе можно включать нужные, убирать лишние и менять порядок стрелками.
 
 **Порядок в списке — это маршрут задачи.** Что правее текущего статуса — «вперёд», что левее —
@@ -36,7 +37,7 @@
 ```json
 {
   "pipeline": ["backlog", "todo", "to_fix", "development",
-               "review", "to_testing", "testing", "to_release", "done", "cancelled"],
+               "review", "to_testing", "testing", "ready_to_deploy", "done", "cancelled"],
   "actions": { "create": "backlog", "pick": "todo",
                "start": "development", "return": "to_fix" }
 }
