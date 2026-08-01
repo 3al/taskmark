@@ -27,7 +27,7 @@ class CatalogTest(unittest.TestCase):
     def test_catalog_covers_agreed_bricks(self) -> None:
         """Состав каталога согласован с пользователем — сузиться он не должен."""
         expected = {"backlog", "todo", "queued", "to_fix", "development", "local_testing",
-                    "review", "to_testing", "testing", "ready_to_deploy",
+                    "review", "to_testing", "testing", "to_release",
                     "completed", "done", "cancelled"}
         self.assertEqual(expected, set(CATALOG))
 
@@ -40,7 +40,7 @@ class PipelineOrderTest(unittest.TestCase):
     def setUp(self) -> None:
         self.p = load_pipeline({"pipeline": [
             "backlog", "todo", "to_fix", "development", "local_testing",
-            "review", "to_testing", "testing", "ready_to_deploy", "done", "cancelled"]})
+            "review", "to_testing", "testing", "to_release", "done", "cancelled"]})
 
     def test_order_comes_from_config_list(self) -> None:
         """Порядок задаёт сам список, а не каталог."""
@@ -63,7 +63,7 @@ class PipelineOrderTest(unittest.TestCase):
         backward = self.p.backward("testing")
         self.assertIn("to_fix", backward, "возврат багов из тестирования — движение назад")
         self.assertIn("backlog", backward)
-        self.assertNotIn("ready_to_deploy", backward)
+        self.assertNotIn("to_release", backward)
 
     def test_next_expected_is_nearest_forward(self) -> None:
         self.assertEqual("local_testing", self.p.next_expected("development"))

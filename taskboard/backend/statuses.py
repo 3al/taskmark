@@ -41,7 +41,8 @@ CATALOG: dict[str, dict] = {
     "review": {"label": "Review", "section": "Review", "color": "violet"},
     "to_testing": {"label": "К тестированию", "section": "To Testing", "color": "cyan"},
     "testing": {"label": "Testing", "section": "Testing", "color": "orange"},
-    "ready_to_deploy": {"label": "К релизу", "section": "Ready to Deploy", "color": "teal"},
+    # Одно семейство с to_fix и to_testing: «ждёт, чтобы попасть на этап»
+    "to_release": {"label": "К релизу", "section": "To Release", "color": "teal"},
     # completed и done — взаимозаменяемые терминалы; ключ пишется во frontmatter
     # (status: done), поэтому это не только подпись. Включают один из двух
     "completed": {"label": "Completed", "section": "Completed", "color": "emerald"},
@@ -77,7 +78,7 @@ PRESETS: tuple[dict, ...] = (
         "name": "Полный",
         "hint": "локальная проверка, ревью, стенд и релиз; возвраты через «На исправление»",
         "pipeline": ["backlog", "todo", "to_fix", "development", "local_testing",
-                     "review", "to_testing", "testing", "ready_to_deploy",
+                     "review", "to_testing", "testing", "to_release",
                      "done", "cancelled"],
         "actions": {"create": "backlog", "pick": "todo",
                     "start": "development", "return": "to_fix"},

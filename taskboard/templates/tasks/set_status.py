@@ -96,7 +96,7 @@ CATALOG = {
     "review": {"label": "Review", "section": "Review"},
     "to_testing": {"label": "К тестированию", "section": "To Testing"},
     "testing": {"label": "Testing", "section": "Testing"},
-    "ready_to_deploy": {"label": "К релизу", "section": "Ready to Deploy"},
+    "to_release": {"label": "К релизу", "section": "To Release"},
     "completed": {"label": "Completed", "section": "Completed"},
     "done": {"label": "Done", "section": "Done"},
     "cancelled": {"label": "Отменена", "section": "Cancelled", "offramp": True},
