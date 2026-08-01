@@ -48,6 +48,9 @@ def find_task_file(tasks_dir: Path, task_id: str) -> Path | None:
 EDITABLE_SECTIONS = (
     ("description", "## Описание"),
     ("criteria", "### Критерии приёмки"),
+    # Текст изменения для changelog: пишет скилл выпуска, вычитывает человек.
+    # В шаблоне новой задачи секции нет — она появляется при отборе в релиз
+    ("release_notes", "## Изменение для пользователя"),
 )
 
 
