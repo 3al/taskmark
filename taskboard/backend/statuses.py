@@ -93,9 +93,10 @@ PRESETS: tuple[dict, ...] = (
     },
     {
         "name": "С релизами",
-        "hint": "выпуск версиями: проверенное копится, состав релиза выбирается из него",
-        "pipeline": ["backlog", "todo", "development", "testing", "ready_for_release",
-                     "release_notes", "to_release", "done", "cancelled"],
+        "hint": "ревью и выпуск версиями: готовое копится, состав релиза выбирается из него",
+        "pipeline": ["backlog", "todo", "development", "review", "testing",
+                     "ready_for_release", "release_notes", "to_release",
+                     "done", "cancelled"],
         "actions": {"create": "backlog", "pick": "todo", "start": "development",
                     "return": "development",
                     # Точки расширения для скилла выпуска: он спрашивает цель

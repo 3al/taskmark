@@ -7,7 +7,20 @@ const ACTION_LABEL = {
   pick: 'очередь',
   start: 'в работу',
   return: 'возврат',
+  release_draft: 'черновик релиза',
+  release_lock: 'в релиз',
 }
+
+// Поля формы действий. Обязательные заполнены всегда, необязательные нужны
+// только тем, кто выпускает версии, — им доступен пустой вариант
+const ACTION_FIELDS = [
+  { name: 'create', title: 'Новая задача' },
+  { name: 'start', title: 'Взять в работу' },
+  { name: 'return', title: 'Вернуть после замечаний' },
+  { name: 'pick', title: 'Брать работу из', empty: 'авто (перед «в работу»)' },
+  { name: 'release_draft', title: 'Готовить заметки релиза', empty: 'не используется' },
+  { name: 'release_lock', title: 'Отобрано в релиз', empty: 'не используется' },
+]
 
 // Редактор жизненного цикла: порядок статусов и цели действий скиллов.
 // Порядок задаёт маршрут (что идёт за чем), а не запреты: прыжки вперёд и
@@ -166,16 +179,12 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, on
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        {['create', 'start', 'return', 'pick'].map((name) => (
+        {ACTION_FIELDS.map(({ name, title, empty }) => (
           <div key={name}>
-            <span className={label}>
-              {name === 'create' ? 'Новая задача' :
-               name === 'start' ? 'Взять в работу' :
-               name === 'return' ? 'Вернуть после замечаний' : 'Брать работу из'}
-            </span>
+            <span className={label}>{title}</span>
             <select className={field} value={actions[name] || ''}
                     onChange={(e) => setAction(name, e.target.value)}>
-              {name === 'pick' && <option value="">авто (перед «в работу»)</option>}
+              {empty && <option value="">{empty}</option>}
               {pipeline.map((s) => (
                 <option key={s.key} value={s.key}>{s.label}</option>
               ))}
