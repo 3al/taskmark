@@ -160,7 +160,7 @@ export default function UpdateModal({ onClose }) {
           )}
 
           {status && status.mode !== 'ask' && !status.update_available && !status.error && (
-            <div className="text-zinc-400">
+            <div className={latest ? 'text-emerald-400' : 'text-zinc-400'}>
               {latest
                 ? 'У вас последняя версия.'
                 : 'Сведений о новых версиях пока нет — нажмите «Проверить сейчас».'}
@@ -169,7 +169,9 @@ export default function UpdateModal({ onClose }) {
 
           {status?.update_available && (
             <div>
-              <div className="text-base text-zinc-100 mb-1">
+              {/* Цвета из гаммы приложения: emerald — как подтверждение у кнопки
+                  копирования, amber — как маркер стоящих задач на доске */}
+              <div className="text-base text-amber-300 mb-1">
                 Доступна версия {latest.version}
                 {latest.date && <span className="text-zinc-500 text-sm ml-2">от {latest.date}</span>}
               </div>
