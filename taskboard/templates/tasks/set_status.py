@@ -478,9 +478,15 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # Доехали до конца маршрута — «ждёт» про закрытую задачу больше не правда
     cleared = clear_stall(tasks_dir, task_id) if is_terminal(pipeline, status) else None
 
+    # Работа кончилась — самое время сказать про волт и хвосты в файле задачи:
+    # позже, при выпуске, автор деталей уже не помнит
+    reminders = (finish_reminders(tasks_dir, task_id, task_file, cfg)
+                 if status == work_done_status(cfg, pipeline) else [])
+
     return {"ok": True, "task": task_id, "status": status, "section": section,
             "file": task_file.name, "from": prev, "skipped": skipped,
             "stall_cleared": bool(cleared and cleared.get("cleared")),
+            "reminders": reminders,
             # Смена статуса — единственный момент, когда файл задачи заведомо
             # открывают: заодно показываем, что в нём разъехалось
             "warnings": check_task_file(task_file)}
@@ -493,6 +499,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
 
 NOTES_SECTION = "Заметки агента"
 COMMITS_SECTION = "История коммитов"
+CHECKLIST_SECTION = "Чеклист"
 
 # Порядок секций файла задачи — эталон tasks/_TEMPLATE.md. «История доработок»
 # появляется только после возврата с ревью, поэтому необязательна
@@ -501,7 +508,7 @@ RELEASE_SECTION = "Изменение для пользователя"
 # Порядок секций файла задачи. «История доработок» появляется после возврата
 # с ревью, «Изменение для пользователя» — при отборе в выпуск: обе создаются
 # скиллами и в шаблоне новой задачи не нужны
-TASK_SECTIONS = ("Описание", RELEASE_SECTION, "Чеклист", "История доработок",
+TASK_SECTIONS = ("Описание", RELEASE_SECTION, CHECKLIST_SECTION, "История доработок",
                  NOTES_SECTION, COMMITS_SECTION)
 
 NOTE_RE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\*\* · [^·]+ · .+$")
@@ -947,6 +954,103 @@ def stalled(tasks_dir: Path) -> dict:
     return {"total": len(tasks), "tasks": tasks}
 
 
+# --- Конец работы над задачей -----------------------------------------------
+# Правило «финализируй скиллом» записано в правилах проекта и не срабатывает:
+# напоминание, лежащее вдали от места действия, проигрывает контексту, который
+# «вроде бы уже есть». Работает то, что сказано в момент операции, — поэтому
+# говорит сам скрипт.
+
+
+def work_done_status(cfg: dict, pipeline: list[dict]) -> str | None:
+    """Статус, в котором кончается работа автора над задачей.
+
+    Это не обязательно терминальный статус. С релизным хвостом задача уходит
+    в пул готового, а конец маршрута наступает при выпуске — когда её закрывает
+    релизный скилл, а автор давно забыл детали. Но у части проектов хвоста нет
+    вовсе, и работа кончается именно в терминальном статусе.
+
+    Имена не подставляем, правило выводится из конфига: задана цель подготовки
+    текстов (`actions.release_draft`) — работа кончается перед ней; не задана —
+    в последнем статусе маршрута.
+    """
+    keys = [s["key"] for s in pipeline if not s.get("offramp")]
+    if not keys:
+        return None
+    draft = actions_of(cfg, pipeline).get("release_draft")
+    if draft in keys:
+        i = keys.index(draft)
+        if i > 0:
+            return keys[i - 1]
+    return keys[-1]
+
+
+def _unchecked_boxes(lines: list[str]) -> list[str]:
+    """Незакрытые пункты чеклиста задачи."""
+    bounds = _section_bounds(lines, CHECKLIST_SECTION)
+    if not bounds:
+        return []
+    start, end = bounds
+    out = []
+    for i in range(start + 1, end):
+        m = re.match(r"^\s*-\s*\[\s\]\s*(.+?)\s*$", lines[i])
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def _has_entries(lines: list[str], name: str) -> bool:
+    """Есть ли в секции хоть одна строка списка."""
+    bounds = _section_bounds(lines, name)
+    if not bounds:
+        return False
+    start, end = bounds
+    return any(lines[i].lstrip().startswith("- ") for i in range(start + 1, end))
+
+
+def waiting_on(tasks_dir: Path, task_id: str) -> list[str]:
+    """Кто помечен ждущим эту задачу — по их собственным `blocked_by`."""
+    task_id = task_id.strip().upper()
+    return [t["id"] for t in stalled(tasks_dir)["tasks"]
+            if task_id in t["blocked_by"] and t["id"] != task_id]
+
+
+def finish_reminders(tasks_dir: Path, task_id: str, task_path: Path,
+                     cfg: dict) -> list[str]:
+    """Что осталось сделать, раз работа над задачей кончилась.
+
+    Проверяемое — проверяем: незакрытые чекбоксы, пустая история коммитов и
+    чужие пометки видны в данных, поэтому о них говорится конкретно. Про волт
+    можно только напомнить: «стоит ли сохранять знание» — суждение, а не
+    проверка. Список ничего не запрещает: задача может честно не давать знаний.
+    """
+    out: list[str] = []
+    if cfg.get("vault"):
+        out.append("работа над задачей кончилась — что выяснилось про проект, "
+                   "сохраните в волт (скилл write-vault): иначе следующая задача "
+                   "на ту же тему вычитывает тот же код заново")
+
+    try:
+        lines = Path(task_path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        lines = []
+
+    boxes = _unchecked_boxes(lines)
+    if boxes:
+        shown = ", ".join(f"«{b}»" for b in boxes[:3])
+        tail = f" и ещё {len(boxes) - 3}" if len(boxes) > 3 else ""
+        out.append(f"незакрытых пунктов чеклиста: {len(boxes)} — {shown}{tail}")
+
+    if not _has_entries(lines, COMMITS_SECTION):
+        out.append(f"секция «{COMMITS_SECTION}» пуста: по строке на коммит "
+                   f"задачи — `<short-hash>` и сообщение")
+
+    waiting = waiting_on(tasks_dir, task_id)
+    if waiting:
+        out.append(f"задачу ждут: {', '.join(waiting)} — свой простой она снимет "
+                   f"сама, а их пометки снимают у них: --unblock {task_id.upper()}")
+    return out
+
+
 def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
     """Пайплайн проекта и — для задачи — законные цели перехода.
 
@@ -1091,6 +1195,9 @@ def main() -> None:
         print(f"[i] минуя {', '.join(result['skipped'])}")
     for warning in result.get("warnings", []):
         print(f"[!] {warning}")
+    # Не гейт, а подсказка: переход уже выполнен, код возврата прежний
+    for reminder in result.get("reminders", []):
+        print(f"[!] {reminder}")
 
 
 if __name__ == "__main__":

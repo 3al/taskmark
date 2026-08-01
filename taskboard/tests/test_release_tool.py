@@ -13,6 +13,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from backend import version
@@ -105,7 +106,9 @@ class TestChangelog(unittest.TestCase):
         manifest = self.tool.build_manifest(self.path, "1.1.0")
         self.assertEqual(manifest["version"], "1.1.0")
         self.assertEqual(manifest["tag"], "v1.1.0")
-        self.assertEqual(manifest["date"], "2026-08-01")
+        # Манифест датируется днём сборки, а не датой секции: захардкоженная
+        # дата совпадала с сегодняшней ровно один день
+        self.assertEqual(manifest["date"], date.today().isoformat())
         self.assertIn("- новое", manifest["notes"])
 
     def test_манифест_требует_совпадения_версий(self):
