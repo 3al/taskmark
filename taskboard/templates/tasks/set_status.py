@@ -106,6 +106,20 @@ CATALOG = {
 }
 
 
+# Типы задач — дубль backend/config.py (см. выше про автономность). В отличие
+# от статусов это **не** библиотека дефолтов, а закрытый список: тип отвечает
+# на вопрос «что это за работа», и ответ не зависит от жизненного цикла проекта.
+# letter — буква кружка на превью доски, буквы не повторяются
+TASK_TYPES = {
+    "feature":    {"label": "Новый функционал", "letter": "Н", "color": "sky"},
+    "bug":        {"label": "Баг",              "letter": "Б", "color": "rose"},
+    "refactor":   {"label": "Рефакторинг",      "letter": "Р", "color": "violet"},
+    "cleanup":    {"label": "Уборка",           "letter": "У", "color": "emerald"},
+    "discussion": {"label": "Обсуждение",       "letter": "О", "color": "amber"},
+    "design":     {"label": "Дизайн",           "letter": "Д", "color": "fuchsia"},
+}
+
+
 def _titleize(key: str) -> str:
     return " ".join(part.capitalize() for part in key.split("_") if part)
 
@@ -914,6 +928,30 @@ def set_paused(tasks_dir: Path, task_id: str, reason: str) -> dict:
     return {"ok": True, "task": task_id.strip().upper(), "paused": reason}
 
 
+def set_type(tasks_dir: Path, task_id: str, value: str) -> dict:
+    """Сменить тип задачи. Тип — метка работы, статус и доску он не трогает.
+
+    Правится скриптом, а не руками: значение закрытое, и опечатка в нём
+    означает молча пропавшую метку на доске.
+    """
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    value = (value or "").strip().lower()
+    if value not in TASK_TYPES:
+        return {"ok": False,
+                "error": f"Неизвестный тип задачи: {value or '(пусто)'} "
+                         f"(допустимо: {', '.join(TASK_TYPES)})"}
+    _set_fields(path, {"type": value})
+    return {"ok": True, "task": task_id.strip().upper(), "type": value,
+            "label": TASK_TYPES[value]["label"]}
+
+
+def types() -> dict:
+    """Каталог типов задач: список спрашивают у скрипта, а не помнят."""
+    return {"types": [{"key": key, **meta} for key, meta in TASK_TYPES.items()]}
+
+
 def clear_stall(tasks_dir: Path, task_id: str) -> dict:
     """Снять с задачи и блокировки, и паузу (при переезде в конец маршрута)."""
     path = find_task_file(Path(tasks_dir), task_id)
@@ -1097,6 +1135,10 @@ def main() -> None:
                         help="Пауза с причиной: статус задачи не меняется")
     parser.add_argument("--resume", action="store_true",
                         help="Снять паузу")
+    parser.add_argument("--type", dest="task_type", metavar="ТИП", default=None,
+                        help="сменить тип задачи (см. --types)")
+    parser.add_argument("--types", action="store_true",
+                        help="каталог типов задач (JSON)")
     parser.add_argument("--stalled", action="store_true",
                         help="Что сейчас стоит и почему (JSON)")
     parser.add_argument("--note", metavar="ТЕКСТ", default=None,
@@ -1119,6 +1161,10 @@ def main() -> None:
         print(json.dumps(queue(tasks_dir, args.limit), ensure_ascii=False, indent=2))
         return
 
+    if args.types:
+        print(json.dumps(types(), ensure_ascii=False, indent=2))
+        return
+
     if args.stalled:
         print(json.dumps(stalled(tasks_dir), ensure_ascii=False, indent=2))
         return
@@ -1126,6 +1172,19 @@ def main() -> None:
     if args.list or args.targets:
         print(json.dumps(describe(tasks_dir, args.targets), ensure_ascii=False, indent=2))
         return
+
+    # Тип — метка работы, а не этап: по маршруту он задачу не двигает, поэтому
+    # флаг работает и сам по себе, и вместе со сменой статуса
+    if args.task_type is not None:
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --type")
+        result = set_type(tasks_dir, args.task_id, args.task_type)
+        if not result.get("ok"):
+            print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[OK] {result['task']}: тип — {result['label']} ({result['type']})")
+        if not args.status and args.note is None:
+            return
 
     # Блокировки и пауза правят только frontmatter: статус задачи и её раздел
     # доски остаются на месте, поэтому эти флаги идут без аргумента `status`

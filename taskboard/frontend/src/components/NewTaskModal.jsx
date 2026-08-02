@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { FORM_FIELD } from '../fields'
+import { TASK_TYPES } from '../taskTypes'
 import TaskPicker from './TaskPicker'
 
 // Модалка создания задачи (вызов create_task.py через API)
@@ -247,11 +248,12 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
           <div className="flex gap-3">
             <label className="flex-1 text-xs text-zinc-500">
               Тип
+              {/* Список типов — из общего каталога: второй, вписанный в форму,
+                  разъехался бы со скриптом при первом же новом типе */}
               <select className={`${field} mt-1`} value={form.task_type} onChange={set('task_type')}>
-                <option value="feature">feature</option>
-                <option value="bug">bug</option>
-                <option value="refactor">refactor</option>
-                <option value="cleanup">cleanup</option>
+                {Object.entries(TASK_TYPES).map(([key, meta]) => (
+                  <option key={key} value={key}>{meta.label}</option>
+                ))}
               </select>
             </label>
             <div className="flex-1 text-xs text-zinc-500">

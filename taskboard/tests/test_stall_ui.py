@@ -151,9 +151,22 @@ class CardMarkerTest(unittest.TestCase):
 
     def test_pause_sits_in_the_corner(self) -> None:
         """У значка без номера постоянное место читается лучше, чем позиция,
-        зависящая от того, есть ли рядом блокировка."""
-        block = self.src[self.src.index("task.paused &&"):self.src.index("⏸")]
-        self.assertIn("ml-auto", block, "значок паузы не прижат к правому краю строки")
+        зависящая от того, есть ли рядом блокировка.
+
+        Правый угол строки делят метка типа и пауза (TASK-054), поэтому к краю
+        прижата их общая группа, а сама пауза остаётся крайней справа.
+        """
+        corner = self.src[self.src.index("(type || task.paused)"):self.src.index("⏸")]
+        self.assertIn("ml-auto", corner, "правый угол строки не прижат к краю")
+        self.assertLess(self.src.index("type.letter"), self.src.index("⏸"),
+                        "пауза перестала быть крайней справа")
+
+    def test_pause_is_not_a_circle(self) -> None:
+        """Пауза остаётся значком без заливки: в кружке её путали с меткой
+        типа — у обсуждения тот же жёлтый цвет."""
+        pause = self.src[self.src.index("task.paused && ("):self.src.index("⏸")]
+        self.assertNotIn("MARK", pause, "пауза снова оформлена кружком типа")
+        self.assertIn("text-amber-300/90", pause, "значок паузы потерял свой цвет")
 
     def test_stall_above_epic(self) -> None:
         """Пометки простоя — наверху, эпик — вниз.

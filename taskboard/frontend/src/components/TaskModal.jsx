@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
 import { statusLabel, statusStyle } from '../statuses'
+import { TASK_TYPES, taskType } from '../taskTypes'
 import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents, rehypeNoteMeta } from '../markdown'
 import { INLINE_FIELD } from '../fields'
@@ -197,6 +198,30 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
     }
   }
 
+  // Тип задачи правится тут же: список открывается по клику на метке
+  const [typePicker, setTypePicker] = useState(false)
+  const [typeSaving, setTypeSaving] = useState(false)
+  // Клик мимо списка ловит подложка под ним (см. разметку), а не слушатель на
+  // окне: слушатель на mousedown успевал закрыть список до того, как до фона
+  // модалки доходил click, — и фон, уже не видя открытого списка, закрывал
+  // задачу целиком
+
+  const pickType = async (key) => {
+    setTypePicker(false)
+    if (key === task?.meta?.type) return
+    setTypeSaving(true)
+    try {
+      await api.updateTask(taskId, { type: key })
+      // Ответ PATCH описывает правку, а не задачу целиком — перечитываем
+      setTask(await api.task(taskId))
+      onChanged?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setTypeSaving(false)
+    }
+  }
+
   // Простой задачи: что показываем и что правим. Форма ввода открывается по
   // кнопке — панель не должна занимать место, пока задача никого не ждёт
   const stall = task?.stall
@@ -245,6 +270,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
     setStallForm(null)
     setStallError(null)
     setBlockId('')
+    setTypePicker(false)
     api.task(taskId).then(setTask).catch((e) => setError(e.message))
   }, [taskId])
 
@@ -256,17 +282,21 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
     const onKey = (e) => {
       if (e.key !== 'Escape') return
       if (editSection) { cancelSection(); return }
+      // Открытый список типов Esc тоже забирает: он перекрывает шапку,
+      // и закрыть окно вместе с ним значило бы промахнуться мимо задачи
+      if (typePicker) { setTypePicker(false); return }
       onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, editSection])
+  }, [onClose, editSection, typePicker])
 
   return (
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       // Пока идёт правка, окно закрывается только явно: промах мышью мимо
-      // карточки не должен уносить набранный текст
+      // карточки не должен уносить набранный текст. Открытый список типов
+      // сюда не доходит — его клик забирает собственная подложка
       onClick={() => { if (!editSection) onClose() }}
     >
       {/* Ширина по содержимому: обычная задача остаётся привычных 48rem, а
@@ -364,13 +394,57 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
               <div className="shrink-0 w-14" aria-hidden="true" />
             </div>
             {task?.meta && (
-              <div className="text-xs text-zinc-500 mt-1">
+              <div className="text-xs text-zinc-500 mt-1 flex items-center gap-2 flex-wrap">
+                {/* На превью тип — кружок с буквой (места там на один знак),
+                    здесь он подписан полностью: окно и открывают, чтобы понять,
+                    что это за задача. Клик по метке меняет тип: список тут же,
+                    цветными метками — выбирают глазами, а не по названию.
+                    Задача без типа показывает пустую метку, иначе поставить его
+                    было бы нечем */}
+                <span className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setTypePicker((v) => !v)}
+                    disabled={typeSaving}
+                    title="Сменить тип задачи"
+                    className={`px-1.5 py-px rounded border text-[10px] transition
+                      hover:brightness-125 disabled:opacity-60
+                      ${taskType(task.meta.type)?.badge
+                        || 'border-dashed border-zinc-700 text-zinc-500'}`}>
+                    {taskType(task.meta.type)?.label || 'без типа'}
+                  </button>
+                  {typePicker && (
+                    <>
+                    {/* Подложка на весь экран: любой клик мимо списка гасится
+                        здесь и дальше не идёт — ни к фону модалки, ни к тексту
+                        задачи. Она же закрывает список повторным кликом по метке */}
+                    <span className="fixed inset-0 z-40"
+                          onClick={(e) => { e.stopPropagation(); setTypePicker(false) }} />
+                    <span className="absolute left-0 top-full mt-1 z-50 flex flex-col gap-1
+                      rounded-lg border border-zinc-700 bg-zinc-900 p-1.5 shadow-xl">
+                      {Object.entries(TASK_TYPES).map(([key, meta]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => pickType(key)}
+                          className={`px-1.5 py-px rounded border text-[10px] text-left
+                            whitespace-nowrap transition hover:brightness-125
+                            ${meta.badge} ${key === task.meta.type ? 'ring-1 ring-zinc-500' : ''}`}>
+                          {meta.label}
+                        </button>
+                      ))}
+                    </span>
+                    </>
+                  )}
+                </span>
+                <span>
                 статус: {task.meta.status || '—'} · создана: {task.meta.created || '—'}
                 {/* Во frontmatter лежит ключ, имя эпика приходит из реестра */}
                 {task.meta.epic && task.meta.epic !== '~' && (
                   <> · эпик: <span className="text-zinc-400">{task.meta.epic}</span>
                     {task.epic_name ? ` — ${task.epic_name}` : ''}</>
                 )}
+                </span>
               </div>
             )}
             {titleError && <div className="text-xs text-rose-400 mt-1">{titleError}</div>}

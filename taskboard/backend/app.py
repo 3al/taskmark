@@ -34,8 +34,9 @@ from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            move_confirmation, set_blocked_by, set_paused,
                            stall_details, stalled_tasks)
 from backend.statuses import CATALOG, load_pipeline
-from backend.task_parser import (EDITABLE_SECTIONS, list_all_tasks, parse_task,
-                                 set_task_section, set_task_title)
+from backend.task_parser import (EDITABLE_SECTIONS, annotate_types,
+                                 list_all_tasks, parse_task, set_task_section,
+                                 set_task_title, set_task_type)
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -97,6 +98,8 @@ class TaskIn(BaseModel):
 
 class TaskUpdateIn(BaseModel):
     title: str | None = None
+    # Тип задачи: метка «что это за работа». Статус и доску не трогает
+    type: str | None = None
     # Простой задачи: список блокеров целиком (строкой или списком) и причина
     # паузы. Пустое значение снимает: [] — все блокировки, "" — паузу
     blocked_by: list[str] | str | None = None
@@ -389,6 +392,9 @@ def api_board() -> dict:
     # у которых не осталось файла, а не для работы
     board["columns"] = visible_columns(board, cfg)
     annotate_epics(tasks_dir, board)
+    # Тип — метка «что это за работа»: на превью кружок с буквой, в окне задачи
+    # подпись целиком. В строке board.md его нет, как и эпика
+    annotate_types(tasks_dir, board)
     # Причина простоя есть только во frontmatter — карточке она нужна, чтобы
     # маркер «стоит» рисовался без открытия задачи
     annotate_stall(tasks_dir, board, pipeline)
@@ -544,6 +550,12 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
             file=new_file,
             board=bool(linked.get("ok") and titled.get("ok")),
         )
+
+    if body.type is not None:
+        typed = set_task_type(tasks_dir, task_id, body.type)
+        if not typed.get("ok"):
+            raise HTTPException(400, typed.get("error", "Ошибка смены типа"))
+        result["type"] = typed["type"]
 
     # Правка текста задачи: каждая секция пишется отдельно и точечно — пока
     # карточка открыта, в тот же файл пишет агент.

@@ -1,0 +1,304 @@
+"""Тесты типа задачи (TASK-054).
+
+Тип выбирали при заведении, а он не оставлял следа: влиял только на состав
+чеклиста и исчезал. Ни доска, ни скрипт, ни будущий механизм требований этапа
+о типе не знали, а перечень не покрывал ни обсуждений, ни дизайна.
+
+Теперь тип живёт во frontmatter (`type:`), меняется скриптом и виден на доске.
+
+Запуск из корня репозитория:
+    taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from backend.config import DEFAULTS, TASK_TYPES  # noqa: E402
+from backend.scaffold import TASKS_TEMPLATES, scaffold_project  # noqa: E402
+from backend.task_parser import (annotate_types, parse_frontmatter,  # noqa: E402
+                                 set_task_type)
+
+FRONTEND = Path(__file__).resolve().parent.parent / "frontend" / "src"
+
+
+def _frontmatter(path: Path) -> dict:
+    meta, _ = parse_frontmatter(path.read_text(encoding="utf-8"))
+    return meta
+
+
+class ProjectCase(unittest.TestCase):
+    """Временный проект со развёрнутой структурой tasks/."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name) / "project"
+        self.tasks_dir = self.root / "tasks"
+        self.cfg = dict(DEFAULTS)
+        self.cfg["harnesses"] = {"claude": True, "opencode": True}
+        scaffold_project(self.tasks_dir, self.cfg, {"harnesses": self.cfg["harnesses"]})
+
+    def create(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.tasks_dir / "create_task.py"),
+             "-t", "Проверка типа", "-d", "описание", "-c", "критерии", *args],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(self.root))
+
+    def status(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.tasks_dir / "set_status.py"), *args],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(self.root))
+
+    def created_task(self) -> Path:
+        return next(self.tasks_dir.glob("TASK-*.md"))
+
+
+class TaskTypeStoredTest(ProjectCase):
+    """Тип обязан остаться в файле: иначе о нём никто не узнает."""
+
+    def test_template_declares_type(self) -> None:
+        text = (TASKS_TEMPLATES / "_TEMPLATE.md").read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?m)^type: ", "в эталоне задачи нет поля type")
+
+    def test_type_written_to_frontmatter(self) -> None:
+        self.assertEqual(self.create("--type", "bug").returncode, 0)
+        self.assertEqual(_frontmatter(self.created_task()).get("type"), "bug")
+
+    def test_default_type_is_feature(self) -> None:
+        self.assertEqual(self.create().returncode, 0)
+        self.assertEqual(_frontmatter(self.created_task()).get("type"), "feature",
+                         "тип по умолчанию должен быть записан явно")
+
+    def test_new_types_accepted(self) -> None:
+        """Обсуждение и дизайн — те самые непокрытые варианты."""
+        for value in ("discussion", "design"):
+            with self.subTest(value=value):
+                tmp = tempfile.TemporaryDirectory()
+                self.addCleanup(tmp.cleanup)
+                root, tasks_dir = Path(tmp.name) / "p", None
+                tasks_dir = root / "tasks"
+                scaffold_project(tasks_dir, self.cfg, {"harnesses": self.cfg["harnesses"]})
+                result = subprocess.run(
+                    [sys.executable, str(tasks_dir / "create_task.py"),
+                     "-t", "Проверка", "-d", "описание", "--type", value],
+                    capture_output=True, text=True, encoding="utf-8", cwd=str(root))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                created = next(tasks_dir.glob("TASK-*.md"))
+                self.assertEqual(_frontmatter(created).get("type"), value)
+
+    def test_discussion_checklist_has_no_tests(self) -> None:
+        """У обсуждения не бывает ни кода, ни тестов — чеклист про другое."""
+        self.assertEqual(self.create("--type", "discussion").returncode, 0)
+        text = self.created_task().read_text(encoding="utf-8")
+        self.assertNotIn("Все тесты проходят", text,
+                         "чеклист обсуждения требует тестов, которых не будет")
+
+    def test_unknown_type_rejected(self) -> None:
+        result = self.create("--type", "nonsense")
+        self.assertNotEqual(result.returncode, 0,
+                            "неизвестный тип принят молча")
+
+
+class TaskTypeChangeTest(ProjectCase):
+    """Тип правится скриптом: поставленный мимо не должен требовать редактора."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.assertEqual(self.create("--type", "feature").returncode, 0)
+        self.task_id = _frontmatter(self.created_task())["id"]
+
+    def test_type_changed_by_script(self) -> None:
+        result = self.status(self.task_id, "--type", "discussion")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        meta = _frontmatter(self.created_task())
+        self.assertEqual(meta.get("type"), "discussion")
+        self.assertEqual(meta.get("status"), "backlog",
+                         "смена типа не должна двигать задачу по маршруту")
+
+    def test_unknown_type_rejected_by_script(self) -> None:
+        result = self.status(self.task_id, "--type", "nonsense")
+        self.assertNotEqual(result.returncode, 0, "скрипт принял неизвестный тип")
+        self.assertEqual(_frontmatter(self.created_task()).get("type"), "feature")
+
+    def test_types_listed_by_script(self) -> None:
+        """Список типов спрашивают у скрипта, а не помнят наизусть."""
+        result = self.status("--types")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertEqual([t["key"] for t in data["types"]], list(TASK_TYPES))
+
+
+class BoardAnnotationTest(unittest.TestCase):
+    """Тип приезжает на доску: в строке board.md его нет."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tasks_dir = Path(self._tmp.name)
+
+    def _write(self, name: str, body: str) -> None:
+        (self.tasks_dir / name).write_text(body, encoding="utf-8")
+
+    def test_type_annotated_from_frontmatter(self) -> None:
+        self._write("TASK-001-a.md", "---\nid: TASK-001\ntype: bug\n---\n")
+        board = {"columns": [{"groups": [{"tasks": [
+            {"id": "TASK-001", "file": "TASK-001-a.md"}]}]}]}
+        annotate_types(self.tasks_dir, board)
+        self.assertEqual(board["columns"][0]["groups"][0]["tasks"][0]["type"], "bug")
+
+    def test_task_without_type_stays_clean(self) -> None:
+        """Задача, заведённая до появления поля, метки не получает."""
+        self._write("TASK-002-b.md", "---\nid: TASK-002\n---\n")
+        board = {"columns": [{"groups": [{"tasks": [
+            {"id": "TASK-002", "file": "TASK-002-b.md"}]}]}]}
+        annotate_types(self.tasks_dir, board)
+        self.assertNotIn("type", board["columns"][0]["groups"][0]["tasks"][0])
+
+    def test_unknown_type_ignored(self) -> None:
+        """Чужое значение в поле не должно рисовать пустой кружок."""
+        self._write("TASK-003-c.md", "---\nid: TASK-003\ntype: whatever\n---\n")
+        board = {"columns": [{"groups": [{"tasks": [
+            {"id": "TASK-003", "file": "TASK-003-c.md"}]}]}]}
+        annotate_types(self.tasks_dir, board)
+        self.assertNotIn("type", board["columns"][0]["groups"][0]["tasks"][0])
+
+
+class TypeCatalogTest(unittest.TestCase):
+    """Один список типов на бэкенд, скрипты и фронт — иначе разъедутся."""
+
+    def test_backend_catalog_covers_all(self) -> None:
+        self.assertEqual(set(TASK_TYPES),
+                         {"feature", "bug", "refactor", "cleanup", "discussion", "design"})
+
+    def test_scripts_know_same_types(self) -> None:
+        for name in ("create_task.py", "set_status.py"):
+            with self.subTest(script=name):
+                text = (TASKS_TEMPLATES / name).read_text(encoding="utf-8")
+                for key in TASK_TYPES:
+                    self.assertIn(key, text, f"{name} не знает тип {key}")
+
+    def test_frontend_catalog_matches(self) -> None:
+        text = (FRONTEND / "taskTypes.js").read_text(encoding="utf-8")
+        for key, meta in TASK_TYPES.items():
+            self.assertIn(f"{key}:", text, f"фронт не знает тип {key}")
+            self.assertIn(meta["label"], text, f"подпись типа {key} разошлась с бэкендом")
+
+    def test_letters_are_unique(self) -> None:
+        """Кружок на превью узнаётся по букве — две одинаковые бессмысленны."""
+        letters = [meta["letter"] for meta in TASK_TYPES.values()]
+        self.assertEqual(len(letters), len(set(letters)), "буквы типов повторяются")
+
+    def test_colors_are_unique_and_distinct(self) -> None:
+        """Цвет метки — второй способ её узнать, и соседи по палитре его портят.
+
+        `design` начинал с cyan и сливался с sky у `feature`; пары ниже —
+        именно такие соседи, различимые только рядом друг с другом.
+        """
+        colors = [meta["color"] for meta in TASK_TYPES.values()]
+        self.assertEqual(len(colors), len(set(colors)), "цвета типов повторяются")
+        for a, b in (("sky", "cyan"), ("cyan", "teal"), ("emerald", "teal"),
+                     ("amber", "yellow"), ("violet", "purple"), ("rose", "pink")):
+            self.assertFalse({a, b} <= set(colors),
+                             f"{a} и {b} — соседи по палитре, метки сольются")
+
+    def test_frontend_colors_match_backend(self) -> None:
+        """Классы фронта построены на том же цвете, что назван в каталоге."""
+        text = (FRONTEND / "taskTypes.js").read_text(encoding="utf-8")
+        for key, meta in TASK_TYPES.items():
+            start = text.find(f"{key}: {{")
+            self.assertGreater(start, -1, f"в taskTypes.js нет блока типа {key}")
+            block = text[start:text.index("},", start)]
+            self.assertIn(meta["color"], block,
+                          f"цвет типа {key} на фронте не {meta['color']}")
+
+
+class TypeEditFromUiTest(unittest.TestCase):
+    """Тип правится и из окна задачи: клик по метке — выбор из списка."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tasks_dir = Path(self._tmp.name)
+        self.path = self.tasks_dir / "TASK-001-a.md"
+        self.path.write_text("---\nid: TASK-001\nepic: ~\ntype: feature\n---\n\n## Описание\n",
+                             encoding="utf-8")
+
+    def test_type_written(self) -> None:
+        result = set_task_type(self.tasks_dir, "TASK-001", "design")
+        self.assertTrue(result.get("ok"), result)
+        self.assertEqual(_frontmatter(self.path).get("type"), "design")
+
+    def test_unknown_type_refused(self) -> None:
+        result = set_task_type(self.tasks_dir, "TASK-001", "nonsense")
+        self.assertFalse(result.get("ok"), "чужое значение принято")
+        self.assertEqual(_frontmatter(self.path).get("type"), "feature",
+                         "отказ не должен трогать файл")
+
+    def test_type_added_to_old_task(self) -> None:
+        """Задача без поля получает его правкой из окна, а не руками."""
+        path = self.tasks_dir / "TASK-002-b.md"
+        path.write_text("---\nid: TASK-002\nepic: ~\n---\n", encoding="utf-8")
+        self.assertTrue(set_task_type(self.tasks_dir, "TASK-002", "bug").get("ok"))
+        self.assertEqual(_frontmatter(path).get("type"), "bug")
+
+    def test_patch_endpoint_knows_type(self) -> None:
+        text = (Path(__file__).resolve().parent.parent / "backend" / "app.py").read_text(
+            encoding="utf-8")
+        self.assertIn("set_task_type", text, "PATCH задачи не умеет менять тип")
+
+
+class TypeUiTest(unittest.TestCase):
+    """Тип видно там, где на него смотрят: превью и окно задачи."""
+
+    def test_card_shows_type_mark(self) -> None:
+        text = (FRONTEND / "components" / "TaskCard.jsx").read_text(encoding="utf-8")
+        self.assertIn("taskTypes", text, "превью не знает о типах")
+        self.assertIn("letter", text, "на превью нет буквы типа")
+
+    def test_modal_shows_type_label(self) -> None:
+        text = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
+        self.assertIn("taskTypes", text, "в окне задачи не показан тип")
+        self.assertIn("label", text, "в окне задачи нет названия типа")
+
+    def test_modal_edits_type_by_click(self) -> None:
+        """Метка кликабельна: список цветных меток, выбор ставит тип."""
+        text = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
+        self.assertIn("TASK_TYPES", text, "в окне нет списка типов для выбора")
+        self.assertIn("typePicker", text, "метка не открывает выбор типа")
+        self.assertRegex(text, r"updateTask\(taskId, \{ type",
+                         "выбор типа не сохраняется")
+
+    def test_type_picker_closes_on_outside_click(self) -> None:
+        """Передумал — клик мимо списка закрывает его, ничего не меняя.
+
+        Ловит клик подложка под списком, а не слушатель на окне: слушатель на
+        `mousedown` успевал закрыть список раньше, чем до фона модалки доходил
+        `click`, и фон — уже не видя открытого списка — закрывал задачу целиком.
+        Подложка гасит событие у себя, поэтому до фона оно не доходит вовсе.
+        """
+        text = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
+        picker = text[text.index("{typePicker && ("):text.index("статус: {task.meta.status")]
+        self.assertIn("fixed inset-0", picker, "под списком нет подложки")
+        self.assertIn("stopPropagation", picker,
+                      "клик по подложке уходит дальше и закрывает окно")
+
+    def test_task_without_type_can_get_one(self) -> None:
+        """У задачи без типа метка всё равно есть — иначе её нечем поставить."""
+        text = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
+        self.assertIn("без типа", text, "задаче без типа нечего нажать")
+
+    def test_new_task_form_offers_all_types(self) -> None:
+        text = (FRONTEND / "components" / "NewTaskModal.jsx").read_text(encoding="utf-8")
+        self.assertIn("taskTypes", text, "форма перечисляет типы своим списком")
+
+
+if __name__ == "__main__":
+    unittest.main()

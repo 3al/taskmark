@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.config import TASK_TYPES
+
 _TASK_FILE_RE = re.compile(r"^TASK-\d+.*\.md$")
 
 
@@ -155,6 +157,30 @@ def parse_task(tasks_dir: Path, task_id: str) -> dict | None:
             "sections": task_sections(content)}
 
 
+def annotate_types(tasks_dir: Path, board: dict) -> dict:
+    """Проставить карточкам доски тип задачи.
+
+    В строке board.md типа нет — как эпик и простой, берём его из frontmatter.
+    Задача без поля (заведена до его появления) и задача с чужим значением
+    метки не получают: пустой кружок на превью хуже отсутствующего.
+    """
+    tasks_dir = Path(tasks_dir)
+    for column in board.get("columns", []):
+        for group in column.get("groups", []):
+            for task in group.get("tasks", []):
+                path = tasks_dir / task.get("file", "")
+                if not path.is_file():
+                    continue
+                try:
+                    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8"))
+                except OSError:
+                    continue
+                key = meta.get("type", "")
+                if key in TASK_TYPES:
+                    task["type"] = key
+    return board
+
+
 def list_all_tasks(tasks_dir: Path) -> list[dict]:
     """Все задачи проекта: [{id, title}] — для подсказок blocked_by.
 
@@ -216,6 +242,26 @@ def set_task_status(tasks_dir: Path, task_id: str, status: str) -> bool:
     if path is None:
         return False
     return set_meta_fields(path, {"status": status})
+
+
+def set_task_type(tasks_dir: Path, task_id: str, value: str) -> dict:
+    """Сменить тип задачи — то же, что `set_status.py --type`, но из окна доски.
+
+    Список закрыт: чужое значение молча превратилось бы в задачу без метки.
+    Поля может не быть вовсе (задача заведена до его появления) — тогда оно
+    дописывается, а не требует правки файла руками.
+    """
+    value = (value or "").strip().lower()
+    if value not in TASK_TYPES:
+        return {"ok": False,
+                "error": f"Неизвестный тип задачи: {value or '(пусто)'} "
+                         f"(допустимо: {', '.join(TASK_TYPES)})"}
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    if not set_meta_fields(path, {"type": value}):
+        return {"ok": False, "error": f"Не удалось записать тип в {path.name}"}
+    return {"ok": True, "type": value, "label": TASK_TYPES[value]["label"]}
 
 
 def slugify(text: str) -> str:

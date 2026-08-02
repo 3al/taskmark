@@ -1,5 +1,6 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { statusStyle } from '../statuses'
+import { taskType } from '../taskTypes'
 import { highlight } from '../highlight'
 
 // Карточка задачи: draggable + droppable (дроп на карточку = вставка на её позицию)
@@ -19,6 +20,12 @@ const STALL_STRIPE = {
   stale: 'bg-zinc-500/60',
 }
 
+// Кружок метки типа. Только у типа: пауза остаётся значком «как есть» —
+// в кружке она сливалась с типами, у которых тот же жёлтый (обсуждение).
+// Размер в em: строка номера масштабируется настройкой превью (--card-meta-size)
+const MARK = `inline-flex items-center justify-center rounded-full shrink-0
+  w-[1.4em] h-[1.4em] ring-1 leading-none`
+
 function stripeKind(task) {
   if (task.stall_stale) return 'stale'
   const blocked = task.blocked_by?.length > 0
@@ -31,6 +38,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
                                    query, match }) {
   const style = statusStyle(status)
   const stripe = stripeKind(task)
+  const type = taskType(task.type)
   const dragId = `task:${task.id}`
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
     id: dragId,
@@ -88,16 +96,33 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
               )}
             </span>
           )}
-          {/* Пауза — в правый угол строки: место освободилось после переезда
-              эпика, а у значка без номера постоянное место читается лучше, чем
-              позиция, зависящая от того, есть ли рядом блокировка */}
-          {task.paused && (
-            <span className={`ml-auto shrink-0 normal-case ${task.stall_stale
-              ? 'text-zinc-500 grayscale opacity-80' : 'text-amber-300/90'}`}
-                  title={task.stall_stale
-                    ? `Пометку можно снять: ${task.paused}`
-                    : `Пауза: ${task.paused}`}>
-              ⏸
+          {/* Правый угол строки: тип и пауза. Место освободилось после переезда
+              эпика, а у значков без номера постоянное место читается лучше, чем
+              позиция, зависящая от того, есть ли рядом блокировка.
+              Тип левее паузы: он у задачи всегда один и тот же, а пауза
+              приходит и уходит — прыгающий кружок сложнее находить взглядом */}
+          {(type || task.paused) && (
+            <span className="ml-auto flex items-center gap-1.5 shrink-0">
+              {/* Кружок, а не подпись: в строке места на один знак. Полное
+                  название типа — в окне задачи и в подсказке */}
+              {type && (
+                <span className={`${MARK} ${type.dot}`}
+                      style={{ fontSize: '0.85em' }}
+                      title={`Тип: ${type.label}`}>
+                  {type.letter}
+                </span>
+              )}
+              {/* Пауза — значок без заливки: в кружке её путали с типом
+                  (у обсуждения тот же жёлтый) */}
+              {task.paused && (
+                <span className={`shrink-0 normal-case ${task.stall_stale
+                  ? 'text-zinc-500 grayscale opacity-80' : 'text-amber-300/90'}`}
+                      title={task.stall_stale
+                        ? `Пометку можно снять: ${task.paused}`
+                        : `Пауза: ${task.paused}`}>
+                  ⏸
+                </span>
+              )}
             </span>
           )}
         </div>
