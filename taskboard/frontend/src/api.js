@@ -105,7 +105,7 @@ export const api = {
 }
 
 // Подписка на живые обновления (SSE)
-export function subscribeChanges(onChange) {
+export function subscribeChanges(onChange, onUpdate) {
   const source = new EventSource('/api/events')
   let opened = false
   // Переподключение после обрыва (перезапуск сервера, сон машины): события,
@@ -116,6 +116,9 @@ export function subscribeChanges(onChange) {
     opened = true
   }
   source.onmessage = (event) => {
+    // По одному каналу едут и правки файлов задач, и находки проверки
+    // обновлений: тип события — сама строка
+    if (event.data === 'update') onUpdate?.()
     if (event.data === 'changed') onChange()
   }
   return () => source.close()

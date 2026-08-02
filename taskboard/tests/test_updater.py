@@ -10,6 +10,7 @@
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -263,3 +264,205 @@ class TestCacheRoundTrip(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCdnCache(Base):
+    """Манифест не должен приезжать из кэша CDN (TASK-127).
+
+    `raw.githubusercontent.com` отдаёт файл с `Cache-Control: max-age=300`, и
+    пограничный узел пять минут отвечает не спрашивая источник. Ключ кэша —
+    точный URL, поэтому запрос по неизменному адресу попадает в кэш идеально:
+    сразу после публикации проверка честно сообщает старую версию.
+    """
+
+    def test_запрос_несёт_метку_свежести(self):
+        seen = {}
+
+        def fake_urlopen(request, timeout=None):
+            seen["url"] = request.full_url
+            raise OSError("сеть не нужна: проверяем только адрес")
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(OSError):
+                updater.fetch_manifest("https://example.invalid/release.json")
+
+        self.assertNotEqual(seen["url"], "https://example.invalid/release.json",
+                            "адрес не меняется — узел CDN ответит из кэша")
+        self.assertIn("?", seen["url"], "к адресу не добавлен параметр свежести")
+
+    def test_метка_разная_у_соседних_запросов(self):
+        urls = []
+
+        def fake_urlopen(request, timeout=None):
+            urls.append(request.full_url)
+            raise OSError("сеть не нужна")
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            for _ in range(2):
+                with self.assertRaises(OSError):
+                    updater.fetch_manifest("https://example.invalid/release.json")
+                time.sleep(0.01)
+
+        self.assertNotEqual(urls[0], urls[1], "метка повторяется — кэш снова сработает")
+
+    def test_адрес_с_параметрами_не_ломается(self):
+        seen = {}
+
+        def fake_urlopen(request, timeout=None):
+            seen["url"] = request.full_url
+            raise OSError("сеть не нужна")
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with self.assertRaises(OSError):
+                updater.fetch_manifest("https://example.invalid/r.json?ref=main")
+
+        self.assertIn("ref=main", seen["url"], "чужой параметр адреса потерялся")
+        self.assertEqual(seen["url"].count("?"), 1, "в адресе два знака вопроса")
+
+
+class TestPeriodicCheck(Base):
+    """Режим `auto` обязан проверять сам, а не при следующем запуске (TASK-125).
+
+    Проверка звалась только из `startup` приложения, и таймера не было вовсе:
+    `CHECK_INTERVAL` — троттлинг («не чаще суток»), а не расписание. Инструмент
+    локальный, его держат запущенным днями — то есть у выбравшего «автоматически»
+    проверка не случалась никогда, и релиз он пропускал.
+    """
+
+    def test_фоновая_проверка_повторяется(self):
+        calls = []
+        stop = updater.start_periodic_check(
+            {"update_check": "auto"},
+            interval=0.01,
+            check=lambda cfg: calls.append(1),
+        )
+        try:
+            deadline = time.time() + 2
+            while len(calls) < 3 and time.time() < deadline:
+                time.sleep(0.01)
+        finally:
+            stop()
+        self.assertGreaterEqual(len(calls), 3, "проверка не повторяется по таймеру")
+
+    def test_без_согласия_поток_не_запускается(self):
+        for mode in ("ask", "manual", "off"):
+            with self.subTest(mode=mode):
+                calls = []
+                stop = updater.start_periodic_check(
+                    {"update_check": mode}, interval=0.01,
+                    check=lambda cfg: calls.append(1))
+                time.sleep(0.05)
+                stop()
+                self.assertEqual(calls, [], f"в режиме {mode} ходили в сеть сами")
+
+    def test_остановка_срабатывает(self):
+        calls = []
+        stop = updater.start_periodic_check(
+            {"update_check": "auto"}, interval=0.01,
+            check=lambda cfg: calls.append(1))
+        time.sleep(0.05)
+        stop()
+        after_stop = len(calls)
+        time.sleep(0.05)
+        self.assertEqual(len(calls), after_stop, "поток продолжает работу после остановки")
+
+    def test_поток_демон(self):
+        """Поток не должен держать выход процесса и мешать перезапуску из UI."""
+        stop = updater.start_periodic_check({"update_check": "auto"}, interval=10)
+        try:
+            names = [t.name for t in threading.enumerate() if t.name == "update-check-loop"]
+            self.assertTrue(names, "фонового потока проверки нет")
+            thread = next(t for t in threading.enumerate() if t.name == "update-check-loop")
+            self.assertTrue(thread.daemon, "поток не демон — процесс не завершится")
+        finally:
+            stop()
+
+    def test_ошибка_проверки_не_убивает_цикл(self):
+        calls = []
+
+        def boom(cfg):
+            calls.append(1)
+            raise OSError("сеть отвалилась")
+
+        stop = updater.start_periodic_check(
+            {"update_check": "auto"}, interval=0.01, check=boom)
+        try:
+            deadline = time.time() + 2
+            while len(calls) < 3 and time.time() < deadline:
+                time.sleep(0.01)
+        finally:
+            stop()
+        self.assertGreaterEqual(len(calls), 3, "цикл умер на первой сетевой ошибке")
+
+
+class TestUpdateNotice(Base):
+    """Найденная версия доезжает до открытой доски (TASK-126).
+
+    Точка «доступна новая версия» читалась из кэша один раз при загрузке
+    страницы: даже успешная фоновая проверка не зажигала её, пока доску не
+    перезагрузят. Вместе с отсутствием периодической проверки это и делало
+    авто-режим тихим — сначала некому проверить, а проверил, так некому сказать.
+    """
+
+    def test_новая_версия_поднимает_событие(self):
+        sent = []
+        updater.write_cache({"checked_at": 0, "latest": {"version": "0.0.1"}})
+        updater.check_and_notify(
+            {"update_check": "auto"}, Path(self.tmp.name), notify=sent.append,
+            fetch=lambda url: updater.parse_manifest(GOOD))
+        self.assertEqual(sent, ["update"], "о новой версии никому не сказали")
+
+    def test_без_новой_версии_молчим(self):
+        current = version.current()
+        manifest = {**GOOD, "version": current}
+        sent = []
+        updater.check_and_notify(
+            {"update_check": "auto"}, Path(self.tmp.name), notify=sent.append,
+            fetch=lambda url: updater.parse_manifest(manifest))
+        self.assertEqual(sent, [], "событие ушло, хотя новой версии нет")
+
+    def test_повторная_находка_не_шумит(self):
+        sent = []
+        cfg = {"update_check": "auto"}
+        fetch = lambda url: updater.parse_manifest(GOOD)  # noqa: E731
+        updater.check_and_notify(cfg, Path(self.tmp.name), notify=sent.append, fetch=fetch)
+        updater.check_and_notify(cfg, Path(self.tmp.name), notify=sent.append, fetch=fetch)
+        self.assertEqual(sent, ["update"], "о той же версии сказали дважды")
+
+    def test_сетевая_ошибка_не_поднимает_событие(self):
+        def boom(url):
+            raise OSError("сеть отвалилась")
+
+        sent = []
+        updater.check_and_notify({"update_check": "auto"}, Path(self.tmp.name),
+                                 notify=sent.append, fetch=boom)
+        self.assertEqual(sent, [])
+
+
+class TestNoticeDelivery(Base):
+    """Событие доезжает до доски: канал SSE и реакция фронта (TASK-126)."""
+
+    def test_watcher_умеет_слать_произвольное_сообщение(self):
+        from backend.watcher import TasksWatcher
+        w = TasksWatcher()
+        q = w.subscribe()
+        try:
+            w.send("update")
+            self.assertEqual(q.get(timeout=1), "update")
+        finally:
+            w.unsubscribe(q)
+
+    def test_сервер_подписывает_цикл_на_уведомление(self):
+        src = (Path(__file__).resolve().parent.parent / "backend" / "app.py").read_text(
+            encoding="utf-8")
+        self.assertIn("check_and_notify", src, "цикл проверки не уведомляет доску")
+        self.assertIn("watcher.send", src, "находка не уходит в канал событий")
+
+    def test_фронт_реагирует_на_событие(self):
+        src_dir = Path(__file__).resolve().parent.parent / "frontend" / "src"
+        api_js = (src_dir / "api.js").read_text(encoding="utf-8")
+        self.assertIn("'update'", api_js, "подписка не различает событие обновления")
+        app_jsx = (src_dir / "App.jsx").read_text(encoding="utf-8")
+        handler = app_jsx[app_jsx.index("subscribeChanges("):]
+        handler = handler[:handler.index("[refresh])")]
+        self.assertIn("updateStatus", handler, "доска не перечитывает статус обновления")

@@ -188,11 +188,19 @@ class TasksWatcher:
         self._notify()
 
     def _notify(self) -> None:
+        self.send("changed")
+
+    def send(self, message: str) -> None:
+        """Разослать сообщение подписчикам SSE.
+
+        Канал общий: по нему едут и правки файлов задач, и находки проверки
+        обновлений (TASK-126). Тип события — сама строка, разбирает её фронт.
+        """
         with self._lock:
             subscribers = list(self._subscribers)
         for q in subscribers:
             try:
-                q.put_nowait("changed")
+                q.put_nowait(message)
             except queue.Full:
                 pass
 

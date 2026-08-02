@@ -25,6 +25,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -139,13 +140,27 @@ def cache_is_fresh(cache: dict, now: float | None = None) -> bool:
 # --- Сеть ------------------------------------------------------------------
 
 
+def _fresh_url(url: str) -> str:
+    """Адрес с меткой свежести: `?t=<секунды>` (или `&t=`, если параметры есть).
+
+    Манифест лежит за CDN (`raw.githubusercontent.com` отдаёт его с
+    `Cache-Control: max-age=300`), а ключ кэша — точный URL. Запрос по
+    неизменному адресу пять минут обслуживает пограничный узел, не спрашивая
+    источник, — и сразу после публикации проверка честно сообщает старую
+    версию. Новая метка = новый ключ: узел вынужден сходить за файлом.
+    `ETag` тут не помощник — его сверяют уже после истечения `max-age`.
+    """
+    separator = "&" if urllib.parse.urlparse(url).query else "?"
+    return f"{url}{separator}t={int(time.time() * 1000)}"
+
+
 def fetch_manifest(url: str, timeout: int = TIMEOUT) -> dict:
     """Скачать и разобрать манифест релиза.
 
     Наружу отдаётся только статичный User-Agent: ни о проекте, ни о пользователе
     не сообщается ничего.
     """
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    request = urllib.request.Request(_fresh_url(url), headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         raw = response.read(MAX_MANIFEST_BYTES + 1)
     if len(raw) > MAX_MANIFEST_BYTES:
@@ -221,6 +236,63 @@ def check_in_background(cfg: dict) -> None:
             pass
 
     threading.Thread(target=run, name="update-check", daemon=True).start()
+
+
+def check_and_notify(cfg: dict, root: Path, notify, fetch=fetch_manifest) -> dict:
+    """Проверить обновления и сказать открытой доске, если версия новая.
+
+    Точка «доступна новая версия» читается из кэша при загрузке страницы, и
+    без события фоновая находка оставалась невидимой до перезагрузки (TASK-126).
+
+    Событие поднимается **только на смену версии**: повторная находка той же
+    самой ничего не шлёт — иначе доска дёргалась бы каждый час без причины.
+    """
+    before = read_cache().get("latest") or {}
+    fresh = check_remote(cfg, fetch=fetch)
+    if fresh.get("error"):
+        return fresh
+
+    latest = fresh.get("latest") or {}
+    if not latest or latest.get("version") == before.get("version"):
+        return fresh
+    if status(cfg, root).get("update_available"):
+        notify("update")
+    return fresh
+
+
+# Как часто просыпается фоновый цикл. Само хождение в сеть по-прежнему держит
+# `CHECK_INTERVAL`: цикл лишь даёт шанс проверить, не дожидаясь перезапуска
+WAKE_INTERVAL = 60 * 60
+
+
+def start_periodic_check(cfg: dict, interval: float = WAKE_INTERVAL,
+                         check=None):
+    """Проверять обновления по таймеру, пока живёт сервер. Возвращает «стоп».
+
+    Раньше проверка звалась только из `startup`, а `CHECK_INTERVAL` был
+    троттлингом, а не расписанием: инструмент локальный и работает днями, так
+    что у выбравшего «автоматически» проверка не случалась вовсе — релиз он
+    узнавал руками (TASK-125).
+
+    В сеть по-прежнему ходим только при `auto` и не чаще суток: цикл лишь даёт
+    проверке шанс, решает всё тот же `check_remote`. Поток — демон: он не
+    держит выход процесса и не мешает остановке и перезапуску сервера из UI.
+    """
+    stop = threading.Event()
+    if not may_check(cfg):
+        return stop.set
+
+    run_check = check or check_remote
+
+    def loop() -> None:
+        while not stop.wait(interval):
+            try:
+                run_check(cfg)
+            except Exception:  # noqa: BLE001 — сеть отвалилась, цикл живёт дальше
+                pass
+
+    threading.Thread(target=loop, name="update-check-loop", daemon=True).start()
+    return stop.set
 
 
 # --- Готовность к обновлению -----------------------------------------------

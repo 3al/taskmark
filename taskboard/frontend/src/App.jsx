@@ -219,8 +219,15 @@ export default function App() {
     setShowScaffold(true)
   }, [health, projects.active])
 
-  // Живые обновления от watcher'а (агент двигает задачи — доска перечитывается)
-  useEffect(() => subscribeChanges(() => refresh()), [refresh])
+  // Живые обновления от watcher'а (агент двигает задачи — доска перечитывается).
+  // Вторым каналом приезжает находка проверки обновлений: точка у кнопки
+  // читается из кэша при загрузке и сама бы не зажглась (TASK-126)
+  useEffect(() => subscribeChanges(
+    () => refresh(),
+    () => api.updateStatus()
+      .then((s) => setUpdateAvailable(!!s.update_available && s.mode !== 'off'))
+      .catch(() => { /* окно обновления покажет причину, доске это не мешает */ }),
+  ), [refresh])
 
   const switchProject = async (name) => {
     if (!name) return

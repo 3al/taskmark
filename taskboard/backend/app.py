@@ -58,6 +58,9 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
 
+# Остановка фонового цикла проверки обновлений (ставится при старте)
+_stop_update_loop = None
+
 
 # --- Модели запросов ---
 
@@ -868,7 +871,15 @@ def _startup() -> None:
             pass
     # Проверка обновлений — фоном и только при согласии (update_check: auto).
     # В путь запроса доски сеть не попадает никогда
-    updater.check_in_background(load_global_config())
+    cfg = load_global_config()
+    updater.check_in_background(cfg)
+    # …и дальше по таймеру: инструмент локальный, его держат запущенным днями,
+    # а проверка «при старте» у такого пользователя не случается вовсе (TASK-125).
+    # Находку доводим до открытой доски событием: точка в шапке читается из
+    # кэша при загрузке страницы и сама бы не зажглась (TASK-126)
+    global _stop_update_loop
+    _stop_update_loop = updater.start_periodic_check(
+        cfg, check=lambda c: updater.check_and_notify(c, ROOT_DIR, watcher.send))
 
 
 @app.on_event("shutdown")
@@ -876,3 +887,5 @@ def _shutdown() -> None:
     # Разорвать SSE-подписки: иначе открытый EventSource браузера
     # не даёт uvicorn завершить процесс при reload
     watcher.shutdown()
+    if _stop_update_loop is not None:
+        _stop_update_loop()
