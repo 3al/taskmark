@@ -55,18 +55,42 @@ function SectionHeading({ heading, query, children }) {
 // Граница секции — заголовок своего или более высокого уровня либо начало
 // соседней редактируемой секции (зеркало task_parser.section_bounds): иначе
 // «## Описание» обрывалось бы на первом же `### Что делаем`
+// Копия текста, где содержимое блоков кода заменено пробелами: длина и
+// переносы сохраняются, поэтому найденный по маске индекс годится для
+// исходного текста. Зеркало `task_parser.mask_code_fences` — описание задачи
+// сплошь и рядом показывает фрагмент доски, и строка `## Release Notes` внутри
+// примера не должна обрывать секцию (TASK-120)
+const FENCE = /^ {0,3}(`{3,}|~{3,})/
+
+export function maskCodeFences(text) {
+  let fence = null
+  return (text || '').split('\n').map((line) => {
+    const match = FENCE.exec(line)
+    if (fence === null) {
+      if (!match) return line
+      fence = match[1][0]
+      return ' '.repeat(line.length)
+    }
+    // Закрывает забор того же вида; незакрытый маскирует всё до конца текста —
+    // ровно так же его понимает и markdown
+    if (match && match[1][0] === fence && !line.split(fence).join('').trim()) fence = null
+    return ' '.repeat(line.length)
+  }).join('\n')
+}
+
 export function splitSections(body, sections) {
   const blocks = []
   const headings = (sections || []).map((s) => s.heading)
   let rest = body || ''
   for (const section of sections || []) {
-    const at = rest.indexOf(`${section.heading}\n`)
+    const masked = maskCodeFences(rest)
+    const at = masked.indexOf(`${section.heading}\n`)
     if (at < 0) continue
     const before = rest.slice(0, at)
     if (before.trim()) blocks.push({ type: 'md', text: before })
 
     const from = at + section.heading.length + 1
-    const tail = rest.slice(from)
+    const tail = masked.slice(from)
     const level = section.heading.length - section.heading.replace(/^#+/, '').length
     const stops = []
     const higher = tail.match(new RegExp(`^#{1,${level}} `, 'm'))

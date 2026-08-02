@@ -56,6 +56,38 @@ EDITABLE_SECTIONS = (
 )
 
 
+# Забор блока кода: ``` или ~~~ с отступом не больше трёх пробелов (дальше
+# markdown считает строку уже частью списка или кодом-по-отступу)
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def mask_code_fences(text: str) -> str:
+    """Копия текста, где содержимое блоков кода заменено пробелами.
+
+    Длина и переносы сохраняются, поэтому найденный по маске индекс годится
+    для исходного текста. Нужна там, где ищут заголовки: строка `## Release
+    Notes` внутри примера — часть примера, а не граница секции (TASK-120).
+    Незакрытый забор маскирует всё до конца текста: так же его понимает и
+    markdown, который рисует остаток блоком кода.
+    """
+    out: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        match = _FENCE_RE.match(stripped)
+        if fence is None:
+            # Открывающая строка сама заголовком быть не может — маскируем и её
+            out.append(" " * len(stripped) + line[len(stripped):] if match else line)
+            if match:
+                fence = match.group(1)[0] * 3
+            continue
+        out.append(" " * len(stripped) + line[len(stripped):])
+        # Закрывает забор того же вида; хвост info-строки у закрывающей запрещён
+        if match and match.group(1).startswith(fence) and not stripped.strip(match.group(1)[0]).strip():
+            fence = None
+    return "".join(out)
+
+
 def section_bounds(content: str, heading: str) -> tuple[int, int] | None:
     """Границы тела секции `heading` в тексте: (начало, конец) или None.
 
@@ -65,12 +97,15 @@ def section_bounds(content: str, heading: str) -> tuple[int, int] | None:
     редактируемая секция обрывает тоже: «### Критерии приёмки» лежат внутри
     описания, но правятся отдельным полем.
     """
-    start = content.find(heading + "\n")
+    # Заголовки ищем по маске: внутри блока кода их нет, что бы там ни было
+    # написано, — иначе пример с фрагментом доски рвал бы секцию пополам
+    masked = mask_code_fences(content)
+    start = masked.find(heading + "\n")
     if start < 0:
         return None
     level = len(heading) - len(heading.lstrip("#"))
     body_start = start + len(heading) + 1
-    rest = content[body_start:]
+    rest = masked[body_start:]
 
     stops = []
     higher = re.search(rf"^#{{1,{level}}} ", rest, flags=re.M)

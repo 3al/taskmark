@@ -123,6 +123,53 @@ class SectionsInTaskTest(TaskSectionsFixture):
         section = next(s for s in task["sections"] if s["key"] == "criteria")
         self.assertEqual(section["text"], "TDD: RED -> GREEN -> ALL TESTS PASS")
 
+    def test_heading_inside_code_block_is_not_a_boundary(self) -> None:
+        """Заголовок внутри блока кода — часть примера, а не граница секции.
+
+        В этом проекте описание задачи сплошь и рядом показывает фрагмент
+        `board.md` или другого файла задачи, а там строки начинаются с `##`.
+        Пока такая строка обрывала секцию, API отдавал обрезанное описание,
+        окно рисовало незакрытый блок кода, а правка карандашом работала не
+        с тем текстом, который человек считает описанием (TASK-120).
+        """
+        self.path.write_text(TASK.replace(
+            "Первый абзац задачи,\nперенесённый по ширине.",
+            "Симптом:\n\n```\n## Release Notes\n\n\n## To Release\n\n_(нет)_\n```\n\n"
+            "Хвост описания после блока."),
+            encoding="utf-8")
+        task = parse_task(self.tasks, "TASK-001")
+        assert task is not None
+        section = next(s for s in task["sections"] if s["key"] == "description")
+        self.assertIn("## Release Notes", section["text"],
+                      "блок кода вырезан из описания")
+        self.assertIn("Хвост описания после блока.", section["text"],
+                      "описание оборвалось на заголовке внутри блока кода")
+        self.assertNotIn("Критерии приёмки", section["text"],
+                         "критерии затянуло в описание")
+
+    def test_edit_keeps_code_block_intact(self) -> None:
+        """Правка соседней секции не должна рвать блок кода в описании."""
+        self.path.write_text(TASK.replace(
+            "Первый абзац задачи,\nперенесённый по ширине.",
+            "Симптом:\n\n```\n## Release Notes\n```\n\nХвост."),
+            encoding="utf-8")
+        set_task_section(self.tasks, "TASK-001", "criteria", "Новые критерии")
+        text = self.path.read_text(encoding="utf-8")
+        self.assertEqual(text.count("```"), 2, "блок кода в описании развалился")
+        self.assertIn("Хвост.", text, "хвост описания потерялся при правке соседа")
+
+    def test_tilde_fence_counts_too(self) -> None:
+        """Забор бывает и из тильд — markdown принимает оба вида."""
+        self.path.write_text(TASK.replace(
+            "Первый абзац задачи,\nперенесённый по ширине.",
+            "Пример:\n\n~~~\n## Done\n~~~\n\nПосле примера."),
+            encoding="utf-8")
+        task = parse_task(self.tasks, "TASK-001")
+        assert task is not None
+        section = next(s for s in task["sections"] if s["key"] == "description")
+        self.assertIn("После примера.", section["text"],
+                      "описание оборвалось на заголовке внутри ~~~-блока")
+
     def test_missing_section_is_not_reported(self) -> None:
         """Секции нет в файле — правки нет: карандаш рисовать не над чем."""
         self.path.write_text(
@@ -235,6 +282,19 @@ class TaskModalEditingTest(unittest.TestCase):
         self.assertIn("splitSections", self.src, "тело задачи не режется на блоки по секциям")
         self.assertNotIn("'## Описание'", self.src,
                          "имя секции захардкожено во фронтенде — источник правды один, бэкенд")
+
+    def test_split_skips_code_fences(self) -> None:
+        """Резка на блоки обязана понимать блоки кода — иначе `## Release Notes`
+        из примера обрывает описание, окно рисует незакрытый забор, и дальше
+        весь текст расползается подложками (TASK-120).
+
+        Правило то же, что на бэкенде (`mask_code_fences`): границу секции ищут
+        по тексту без содержимого заборов.
+        """
+        self.assertIn("maskCodeFences", self.src, "фронт режет текст, не глядя на блоки кода")
+        split = self.src[self.src.index("export function splitSections"):
+                         self.src.index("// Модалка с полным содержимым")]
+        self.assertIn("maskCodeFences", split, "маска не применяется при поиске границ")
 
     def test_pencil_sits_next_to_heading(self) -> None:
         """Карандаш — вплотную за словом заголовка, как у названия задачи.
