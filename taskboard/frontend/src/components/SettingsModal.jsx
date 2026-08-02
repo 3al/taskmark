@@ -2,10 +2,42 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import PipelineEditor from './PipelineEditor'
 
-// Модалка настроек. Свойства инструмента (порт, тема) живут в глобальном
-// ~/.taskboard/config.json, настройки проекта (жизненный цикл, имена
-// артефактов) — в <проект>/tasks/.taskboard.json; раскладывает их бэкенд
+// Вкладки окна настроек. Реестр, а не россыпь JSX: добавить группу — дописать
+// строку, и она встанет и в список слева, и в переключение содержимого.
+// scope — уровень влияния: 'project' пишется в <проект>/tasks/.taskboard.json,
+// 'global' — в ~/.taskboard/config.json и действует во всех проектах.
+// Он же решает спор «куда положить»: настройка живёт там, где её слой
+const TABS = [
+  { key: 'tool', title: 'Общие', scope: 'global' },
+  { key: 'agentic', title: 'Агенты', scope: 'project' },
+  { key: 'board', title: 'Вид доски', scope: 'global' },
+  { key: 'lifecycle', title: 'Жизненный цикл', scope: 'project' },
+  { key: 'release', title: 'Выпуск', scope: 'project' },
+]
+
+// Выбранная вкладка живёт в localStorage, как порядок колонок: это привычка
+// пользователя, а не свойство проекта, и гонять её через конфиг незачем
+const TAB_KEY = 'taskboard:settingsTab'
+
+const SCOPE_NOTE = {
+  project: 'Настройки этого проекта · tasks/.taskboard.json',
+  global: 'Общие для всех проектов · ~/.taskboard/config.json',
+}
+
+// Модалка настроек. Свойства инструмента (порт, вид карточки) живут в
+// глобальном ~/.taskboard/config.json, настройки проекта (жизненный цикл,
+// среды, скрипт выпуска) — в <проект>/tasks/.taskboard.json
 export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
+  // Ключ мог остаться от вкладки, которой больше нет, — тогда открываем первую
+  const [tab, setTab] = useState(() => {
+    const saved = localStorage.getItem(TAB_KEY)
+    return TABS.some((t) => t.key === saved) ? saved : TABS[0].key
+  })
+
+  const openTab = (key) => {
+    setTab(key)
+    localStorage.setItem(TAB_KEY, key)
+  }
   const [config, setConfig] = useState(null)
   const [pipeline, setPipelineState] = useState(null)
   const [catalog, setCatalog] = useState([])
@@ -140,7 +172,12 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
+      {/* Высота формы фиксирована, а не подстраивается под вкладку: иначе окно
+          прыгает при каждом переключении. Короткие состояния (перезапуск,
+          миграции, вопрос про задачи) растягивать незачем — им max-h */}
+      <div className={`bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-3xl overflow-hidden flex flex-col shadow-2xl ${
+        serverAction || removals || migrations ? 'max-h-[90vh]' : 'h-[min(90vh,640px)]'
+      }`}>
         <div className="px-5 py-4 border-b border-zinc-800 text-lg font-semibold">
           {serverAction === 'restart' ? 'Перезапуск сервера' :
            serverAction === 'stop' ? 'Сервер остановлен' :
@@ -216,42 +253,45 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
             </div>
           </>
         ) : (
-          <>
-        <div className="px-5 py-4 space-y-4">
+          <div className="flex min-h-0 flex-1">
+            {/* Список вкладок слева: с ростом числа групп окно не удлиняется */}
+            <nav className="w-44 shrink-0 border-r border-zinc-800 p-2 space-y-1 overflow-y-auto">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => openTab(t.key)}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
+                    tab === t.key
+                      ? 'bg-zinc-800 text-zinc-100'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                  }`}
+                >
+                  {t.title}
+                  <span className="block text-[10px] text-zinc-600">
+                    {t.scope === 'project' ? 'проект' : 'глобально'}
+                  </span>
+                </button>
+              ))}
+            </nav>
+
+            <div className="flex min-w-0 flex-1 flex-col">
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
           {!config && !error && <div className="text-sm text-zinc-500">Загрузка…</div>}
 
           {config && (
             <>
-              <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={!!config.dnd_full_board}
-                  onChange={(e) => set('dnd_full_board', e.target.checked)}
-                  className="accent-sky-500"
-                />
-                DnD по всей доске (иначе мышью — только приём задач ↔ очередь)
-              </label>
-
-              <div>
-                <span className={label}>Порт (применится после перезапуска сервера)</span>
-                <input
-                  className={field}
-                  type="number"
-                  value={config.port}
-                  onChange={(e) => set('port', e.target.value)}
-                />
+              {/* Уровень влияния — словами, а не только подписью во вкладке:
+                  «где это сохранится» пользователь спрашивает именно тут */}
+              <div className="text-[11px] text-zinc-600">
+                {SCOPE_NOTE[TABS.find((t) => t.key === tab)?.scope]}
               </div>
 
-              {/* Полей «файл доски», «скрипт создания/смены статуса» и «папка
-                  логов» здесь больше нет: имена системных артефактов перестали
-                  быть настройкой (TASK-053). Переименование шло по данным, но
-                  не по текстам скиллов и правил, где имена зашиты, — и
-                  переименовавший получал скиллы, зовущие несуществующий файл */}
-
+              {tab === 'board' && (
+              <>
               {/* Превью задачи. Границы приходят с бэкенда (card_limits) — он же
                   их и проверяет: числа, вписанные сюда руками, разъехались бы
                   с проверкой при первой правке диапазона */}
-              <div className="border-t border-zinc-800 pt-4">
+              <div>
                 <span className={label}>Превью задачи на доске</span>
                 <div className="grid grid-cols-3 gap-3">
                   {[['card_title_size', 'Заголовок, px'],
@@ -279,10 +319,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   })}
                 </div>
               </div>
+              </>
+              )}
 
               {/* Состав агентского окружения проверяется по выбранным средам:
                   выключенная среда молчит, включённая — требует полного набора */}
-              <div className="border-t border-zinc-800 pt-4">
+              {tab === 'agentic' && (
+              <div>
                 <span className={label}>Среды агентов</span>
                 <div className="space-y-2">
                   {[['claude', 'Claude Code', '.claude/skills · CLAUDE.md'],
@@ -330,6 +373,21 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   )}
                 </div>
               </div>
+              )}
+
+              {tab === 'lifecycle' && (
+              <>
+              {/* Перетаскивание — правило движения задач, поэтому живёт рядом
+                  с маршрутом, а не среди свойств внешнего вида */}
+              <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={!!config.dnd_full_board}
+                  onChange={(e) => set('dnd_full_board', e.target.checked)}
+                  className="accent-sky-500"
+                />
+                DnD по всей доске (иначе мышью — только приём задач ↔ очередь)
+              </label>
 
               {pipeline && (
                 <div className="border-t border-zinc-800 pt-4">
@@ -347,11 +405,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   />
                 </div>
               )}
+              </>
+              )}
 
-              {/* Отдельным блоком, а не третьим полем к скриптам выше: те —
-                  имена артефактов, которые разворачивает сам инструмент, а этот
-                  скрипт пишет пользователь, и его может не быть вовсе */}
-              <div className="border-t border-zinc-800 pt-4">
+              {/* Скрипт выпуска пишет пользователь, и его может не быть вовсе —
+                  поэтому отдельная вкладка, а не поле среди свойств проекта */}
+              {tab === 'release' && (
+              <div>
                 <span className={label}>Скрипт выпуска версии</span>
                 <input
                   className={field}
@@ -372,10 +432,18 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   )}
                 </div>
               </div>
+              )}
 
-              <div className="text-[11px] text-zinc-600">
-                Порт и тема — глобально (~/.taskboard/config.json), жизненный цикл и имена
-                артефактов — в проекте (tasks/.taskboard.json, вне git)
+              {tab === 'tool' && (
+              <>
+              <div>
+                <span className={label}>Порт (применится после перезапуска сервера)</span>
+                <input
+                  className={field}
+                  type="number"
+                  value={config.port}
+                  onChange={(e) => set('port', e.target.value)}
+                />
               </div>
 
               <div className="border-t border-zinc-800 pt-4">
@@ -398,12 +466,16 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   Перезапуск применяет смену порта и перечитывает конфиги
                 </div>
               </div>
+              </>
+              )}
             </>
           )}
 
           {error && <div className="text-sm text-rose-400">{error}</div>}
         </div>
 
+        {/* Кнопки сохранения общие для всех вкладок: конфиг уходит целиком,
+            и «сохранил на одной вкладке, потерял на другой» невозможно */}
         <div className="px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">
             Отмена
@@ -416,7 +488,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
             {busy ? 'Сохраняю…' : 'Сохранить'}
           </button>
         </div>
-          </>
+            </div>
+          </div>
         )}
       </div>
     </div>
