@@ -80,11 +80,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
   const updates = () => ({
     port: Number(config.port) || 8765,
     dnd_full_board: !!config.dnd_full_board,
-    board_file: config.board_file,
-    create_script: config.create_script,
-    status_script: config.status_script,
     release_script: (config.release_script || '').trim(),
-    logs_dir: config.logs_dir,
     // Размеры превью: пустое поле — «не меняли», иначе бэкенд получит ноль
     ...Object.fromEntries(['card_title_size', 'card_title_lines', 'card_meta_size']
       .filter((k) => config[k] !== '' && config[k] != null)
@@ -246,26 +242,11 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                 />
               </div>
 
-              <div>
-                <span className={label}>Файл доски</span>
-                <input className={field} value={config.board_file} onChange={(e) => set('board_file', e.target.value)} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <span className={label}>Скрипт создания задач</span>
-                  <input className={field} value={config.create_script} onChange={(e) => set('create_script', e.target.value)} />
-                </div>
-                <div>
-                  <span className={label}>Скрипт смены статуса</span>
-                  <input className={field} value={config.status_script} onChange={(e) => set('status_script', e.target.value)} />
-                </div>
-              </div>
-
-              <div>
-                <span className={label}>Папка логов</span>
-                <input className={field} value={config.logs_dir} onChange={(e) => set('logs_dir', e.target.value)} />
-              </div>
+              {/* Полей «файл доски», «скрипт создания/смены статуса» и «папка
+                  логов» здесь больше нет: имена системных артефактов перестали
+                  быть настройкой (TASK-053). Переименование шло по данным, но
+                  не по текстам скиллов и правил, где имена зашиты, — и
+                  переименовавший получал скиллы, зовущие несуществующий файл */}
 
               {/* Превью задачи. Границы приходят с бэкенда (card_limits) — он же
                   их и проверяет: числа, вписанные сюда руками, разъехались бы

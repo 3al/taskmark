@@ -24,7 +24,7 @@ from backend.config import (CARD_LIMITS, PROJECT_KEYS, add_criteria_preset,
 from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import (apply_config_migrations, migrate_global_config,
-                                pipeline_removals)
+                                pipeline_removals, retire_artifact_names)
 from backend.pipeline_sources import list_sources
 from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
@@ -307,9 +307,10 @@ def api_get_config() -> dict:
 @app.post("/api/config")
 def api_save_config(body: ConfigIn) -> dict:
     # Защита от мусора: разрешаем только известные ключи
-    allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "board_file",
-               "create_script", "status_script", "release_script", "logs_dir", "queue_section",
-               "queued_status", "statuses", "pipeline", "actions", "harnesses",
+    # Имён системных артефактов здесь нет: они перестали быть настройкой
+    # (TASK-053) — переименование не доезжало до текстов скиллов и правил
+    allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "release_script",
+               "statuses", "pipeline", "actions", "harnesses",
                "vault", "update_check", "release_manifest_url",
                *CARD_LIMITS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
@@ -811,6 +812,15 @@ def _startup() -> None:
     # Разовая чистка: прежние версии писали в глобальный конфиг слепок всех
     # дефолтов, и правки поставки переставали доезжать (TASK-088)
     migrate_global_config()
+    # Имена системных артефактов перестали быть настройкой (TASK-053):
+    # у кого они переименованы, возвращаем к именам поставки. Проходим по
+    # всем проектам реестра, а не только по активному, — иначе миграция
+    # ждала бы переключения на проект, где скиллы уже сломаны
+    for proj in registry.list_projects().get("projects", []):
+        try:
+            retire_artifact_names(Path(proj["tasks_dir"]))
+        except Exception:
+            pass
     # Проверка обновлений — фоном и только при согласии (update_check: auto).
     # В путь запроса доски сеть не попадает никогда
     updater.check_in_background(load_global_config())

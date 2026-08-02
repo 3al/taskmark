@@ -92,9 +92,12 @@ def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
 
 # Ключи, которые имеет смысл держать на уровне проекта: жизненный цикл у каждого
 # проекта свой, а порт и тема — свойства инструмента, а не репозитория
-PROJECT_KEYS = {"pipeline", "actions", "statuses", "board_file", "create_script",
-                "status_script", "release_script", "logs_dir", "queue_section",
-                "queued_status", "lost_section", "dnd_full_board", "harnesses", "vault"}
+# Имена системных артефактов сюда не входят: они перестали быть настройкой
+# (TASK-053). Переименование шло по данным, но не по текстам скиллов и правил,
+# где имена зашиты, — переименовавший получал скиллы, зовущие несуществующий
+# файл. `release_script` остаётся: это не переименование, а точка расширения
+PROJECT_KEYS = {"pipeline", "actions", "statuses", "release_script",
+                "dnd_full_board", "harnesses", "vault"}
 
 
 def lost_section(cfg: dict) -> str:

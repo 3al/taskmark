@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -34,6 +35,59 @@ def migrate_global_config() -> list[str]:
     if removed:
         config.write_stored_global(kept)
     return removed
+
+
+# Имена системных артефактов, переставшие быть настройкой (TASK-053).
+# Ключ → имя поставки; файловые идут первыми, у остальных переименовывать нечего.
+RETIRED_NAMES: dict[str, str] = {
+    "board_file": "board.md",
+    "create_script": "create_task.py",
+    "status_script": "set_status.py",
+    "logs_dir": "logs",
+    "queue_section": "Queue",
+    "queued_status": "queued",
+    "lost_section": "Потерянные",
+}
+_RETIRED_FILES = ("board_file", "create_script", "status_script", "logs_dir")
+
+
+def retire_artifact_names(tasks_dir: Path) -> list[str]:
+    """Вернуть переименованные артефакты проекта к именам поставки (TASK-053).
+
+    Переименование обещало то, чего не делало: данные за конфигом шли, а
+    тексты, по которым работает агент, остались с зашитыми именами —
+    `set_status.py` упомянут в скиллах и правилах десятками мест, и
+    `render_rules` подставляет статусы, но не имена файлов. Переименовавший
+    получал скиллы, зовущие несуществующий файл.
+
+    Настройка убрана, а уже переименованное возвращается сюда: файл со
+    старым именем переезжает на имя поставки, ключ уходит из конфига.
+    Занятое имя не трогаем — чужую доску затирать нельзя, пусть лучше
+    останется расхождение, которое видно.
+
+    Возвращает список выполненных переименований (пусто — их не было).
+    """
+    actions: list[str] = []
+    path = config.project_config_path(tasks_dir)
+    stored = config._read_json(path)
+    if not any(key in stored for key in RETIRED_NAMES):
+        return actions
+
+    for key in _RETIRED_FILES:
+        current, default = stored.get(key), RETIRED_NAMES[key]
+        if not current or current == default:
+            continue
+        src, dst = tasks_dir / current, tasks_dir / default
+        if src.exists() and not dst.exists():
+            src.rename(dst)
+            actions.append(f"Возвращено имя поставки: {current} → {default}")
+
+    kept = {k: v for k, v in stored.items() if k not in RETIRED_NAMES}
+    try:
+        path.write_text(json.dumps(kept, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return actions
 
 
 def apply_config_migrations(tasks_dir: Path, old: dict, new: dict,
