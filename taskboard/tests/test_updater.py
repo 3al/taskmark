@@ -266,60 +266,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestCdnCache(Base):
-    """Манифест не должен приезжать из кэша CDN (TASK-127).
-
-    `raw.githubusercontent.com` отдаёт файл с `Cache-Control: max-age=300`, и
-    пограничный узел пять минут отвечает не спрашивая источник. Ключ кэша —
-    точный URL, поэтому запрос по неизменному адресу попадает в кэш идеально:
-    сразу после публикации проверка честно сообщает старую версию.
-    """
-
-    def test_запрос_несёт_метку_свежести(self):
-        seen = {}
-
-        def fake_urlopen(request, timeout=None):
-            seen["url"] = request.full_url
-            raise OSError("сеть не нужна: проверяем только адрес")
-
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
-            with self.assertRaises(OSError):
-                updater.fetch_manifest("https://example.invalid/release.json")
-
-        self.assertNotEqual(seen["url"], "https://example.invalid/release.json",
-                            "адрес не меняется — узел CDN ответит из кэша")
-        self.assertIn("?", seen["url"], "к адресу не добавлен параметр свежести")
-
-    def test_метка_разная_у_соседних_запросов(self):
-        urls = []
-
-        def fake_urlopen(request, timeout=None):
-            urls.append(request.full_url)
-            raise OSError("сеть не нужна")
-
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
-            for _ in range(2):
-                with self.assertRaises(OSError):
-                    updater.fetch_manifest("https://example.invalid/release.json")
-                time.sleep(0.01)
-
-        self.assertNotEqual(urls[0], urls[1], "метка повторяется — кэш снова сработает")
-
-    def test_адрес_с_параметрами_не_ломается(self):
-        seen = {}
-
-        def fake_urlopen(request, timeout=None):
-            seen["url"] = request.full_url
-            raise OSError("сеть не нужна")
-
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
-            with self.assertRaises(OSError):
-                updater.fetch_manifest("https://example.invalid/r.json?ref=main")
-
-        self.assertIn("ref=main", seen["url"], "чужой параметр адреса потерялся")
-        self.assertEqual(seen["url"].count("?"), 1, "в адресе два знака вопроса")
-
-
 class TestPeriodicCheck(Base):
     """Режим `auto` обязан проверять сам, а не при следующем запуске (TASK-125).
 

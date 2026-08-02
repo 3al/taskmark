@@ -25,7 +25,6 @@ import subprocess
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -140,27 +139,21 @@ def cache_is_fresh(cache: dict, now: float | None = None) -> bool:
 # --- Сеть ------------------------------------------------------------------
 
 
-def _fresh_url(url: str) -> str:
-    """Адрес с меткой свежести: `?t=<секунды>` (или `&t=`, если параметры есть).
-
-    Манифест лежит за CDN (`raw.githubusercontent.com` отдаёт его с
-    `Cache-Control: max-age=300`), а ключ кэша — точный URL. Запрос по
-    неизменному адресу пять минут обслуживает пограничный узел, не спрашивая
-    источник, — и сразу после публикации проверка честно сообщает старую
-    версию. Новая метка = новый ключ: узел вынужден сходить за файлом.
-    `ETag` тут не помощник — его сверяют уже после истечения `max-age`.
-    """
-    separator = "&" if urllib.parse.urlparse(url).query else "?"
-    return f"{url}{separator}t={int(time.time() * 1000)}"
-
-
 def fetch_manifest(url: str, timeout: int = TIMEOUT) -> dict:
     """Скачать и разобрать манифест релиза.
 
     Наружу отдаётся только статичный User-Agent: ни о проекте, ни о пользователе
     не сообщается ничего.
+
+    **Свежесть ответа нам не подвластна.** `raw.githubusercontent.com` отдаёт
+    файл через CDN с `Cache-Control: max-age=300`, и первые пять минут после
+    публикации узел отвечает старой версией. Пробить это со стороны клиента
+    нельзя: query-строка в ключ кэша не входит (проверено — `?t=<мс>` даёт
+    `X-Cache: HIT`), клиентский `no-cache` игнорируется. Лечится только сменой
+    источника (например, на GitHub API релизов с `max-age=60`), а пять минут
+    задержки на редких релизах того не стоят (TASK-127).
     """
-    request = urllib.request.Request(_fresh_url(url), headers={"User-Agent": USER_AGENT})
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         raw = response.read(MAX_MANIFEST_BYTES + 1)
     if len(raw) > MAX_MANIFEST_BYTES:
