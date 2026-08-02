@@ -255,6 +255,91 @@ class TypeEditFromUiTest(unittest.TestCase):
         self.assertIn("set_task_type", text, "PATCH задачи не умеет менять тип")
 
 
+class BacklogSectionsTest(ProjectCase):
+    """Рубрики бэклога — те же типы задач, а не второй список (TASK-119)."""
+
+    def test_sections_come_from_catalog(self) -> None:
+        from backend.scaffold import BACKLOG_SUBSECTIONS
+        self.assertEqual(list(BACKLOG_SUBSECTIONS),
+                         [meta["section"] for meta in TASK_TYPES.values()],
+                         "перечень рубрик разошёлся с каталогом типов")
+
+    def test_every_type_has_its_rubric_on_the_board(self) -> None:
+        board = (self.tasks_dir / "board.md").read_text(encoding="utf-8")
+        for key, meta in TASK_TYPES.items():
+            self.assertIn(f"### {meta['section']}", board,
+                          f"развёрнутая доска без рубрики для типа {key}")
+
+    def test_task_lands_in_rubric_of_its_type(self) -> None:
+        """Задача любого типа попадает в свою рубрику, а не в конец раздела."""
+        for key, meta in TASK_TYPES.items():
+            with self.subTest(type=key):
+                self.assertEqual(self.create("--type", key).returncode, 0)
+                board = (self.tasks_dir / "board.md").read_text(encoding="utf-8")
+                after = board[board.index(f"### {meta['section']}"):]
+                head = after[:after.index("###", 3)] if "###" in after[3:] else after
+                self.assertIn("TASK-", head,
+                              f"задача типа {key} не попала в рубрику «{meta['section']}»")
+
+    def test_missing_rubric_is_created(self) -> None:
+        """Рубрики типа на доске нет — она заводится, а не «просто в конец».
+
+        «Конец раздела приёма» физически лежит **внутри последнего
+        подраздела**: задачи-обсуждения так оказывались в «Дизайне». У досок,
+        развёрнутых до появления типа, рубрики нет по построению, поэтому
+        случай не редкий, а обычный.
+        """
+        board_path = self.tasks_dir / "board.md"
+        rubric = TASK_TYPES["discussion"]["section"]
+        board = board_path.read_text(encoding="utf-8")
+        board_path.write_text(board.replace(f"### {rubric}\n\n_(нет)_\n", ""),
+                              encoding="utf-8")
+        self.assertEqual(self.create("--type", "discussion").returncode, 0)
+
+        board = board_path.read_text(encoding="utf-8")
+        self.assertIn(f"### {rubric}", board, "рубрика не заведена")
+        after = board[board.index(f"### {rubric}"):]
+        head = after[:after.index("\n## ")] if "\n## " in after else after
+        self.assertIn("TASK-", head, "задача легла не в свою рубрику")
+        design = board[board.index(f"### {TASK_TYPES['design']['section']}"):
+                       board.index(f"### {rubric}")]
+        self.assertNotIn("TASK-", design, "задача-обсуждение снова попала в «Дизайн»")
+
+    def test_board_without_rubrics_at_all(self) -> None:
+        """Подразделов нет вовсе (человек их снёс) — навязывать не начинаем."""
+        board_path = self.tasks_dir / "board.md"
+        board = board_path.read_text(encoding="utf-8")
+        lines = [ln for ln in board.splitlines(keepends=True) if not ln.startswith("### ")]
+        board_path.write_text("".join(lines), encoding="utf-8")
+        result = self.create("--type", "bug")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        board = board_path.read_text(encoding="utf-8")
+        self.assertNotIn("### ", board, "на доске без рубрик появился подраздел")
+        self.assertIn("TASK-", board)
+
+
+class BacklogSectionFieldGoneTest(unittest.TestCase):
+    """Раздел определяется типом, поэтому отдельного поля в форме нет (TASK-124)."""
+
+    def test_form_has_no_section_field(self) -> None:
+        text = (FRONTEND / "components" / "NewTaskModal.jsx").read_text(encoding="utf-8")
+        self.assertNotIn("Раздел бэклога", text,
+                         "в форме осталось поле раздела — оно спорит с типом")
+        self.assertNotIn("backlogSections", text,
+                         "форма всё ещё принимает список подразделов доски")
+
+    def test_api_does_not_take_section(self) -> None:
+        text = (Path(__file__).resolve().parent.parent / "backend" / "app.py").read_text(
+            encoding="utf-8")
+        model = text[text.index("class TaskIn"):text.index("class TaskUpdateIn")]
+        self.assertNotIn("section", model, "API создания задачи всё ещё принимает раздел")
+
+    def test_runner_does_not_pass_section(self) -> None:
+        text = (Path(__file__).resolve().parent.parent / "backend"
+                / "create_task_runner.py").read_text(encoding="utf-8")
+        self.assertNotIn("--section", text, "раннер всё ещё передаёт раздел скрипту")
+
+
 class TypeUiTest(unittest.TestCase):
     """Тип видно там, где на него смотрят: превью и окно задачи."""
 

@@ -15,7 +15,8 @@ from pydantic import BaseModel
 from backend import changelog, help_docs, lifecycle, registry, updater, version
 from backend.board_parser import parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
-from backend.config import (CARD_LIMITS, PROJECT_KEYS, add_criteria_preset,
+from backend.config import (CARD_LIMITS, DEFAULT_TASK_TYPE, PROJECT_KEYS,
+                            add_criteria_preset,
                             card_style, criteria_presets,
                             custom_criteria_presets, load_global_config,
                             load_project_config, remove_criteria_preset,
@@ -88,9 +89,10 @@ class TaskIn(BaseModel):
     # Ключ эпика и его имя: имя нужно, только когда ключ ещё не в реестре
     epic: str = ""
     epic_name: str = ""
-    task_type: str = "feature"
-    section: str = "feature"
-    # Куда добавить: backlog (в подраздел section) или сразу в живую очередь
+    # Тип задачи. Рубрику бэклога он же и задаёт — отдельного поля «раздел»
+    # у формы нет: два способа сказать одно и то же расходились (TASK-124)
+    task_type: str = DEFAULT_TASK_TYPE
+    # Куда добавить: в раздел приёма или сразу в живую очередь
     target: str = "backlog"
     # Позиция в очереди при target=queue: start | end
     queue_position: str = "end"

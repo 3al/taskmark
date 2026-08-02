@@ -8,6 +8,7 @@ import shutil
 from datetime import date
 from pathlib import Path, PurePosixPath
 
+from backend.config import TASK_TYPES
 from backend.epics import EPICS_FILE
 from backend.statuses import load_pipeline
 
@@ -48,8 +49,10 @@ VAULT_SYSTEM_DIRS = tuple(dict.fromkeys(
 # Маркер наличия секции правил в агентском файле
 RULES_MARKER = "TASK MANAGEMENT"
 
-# Рубрики внутри раздела создания задач: по ним create_task.py раскладывает новое
-BACKLOG_SUBSECTIONS = ("Новый функционал", "Рефакторинг", "Баги", "Уборка", "Дизайн")
+# Рубрики внутри раздела создания задач: по ним create_task.py раскладывает
+# новое. Выводятся из каталога типов — рубрика и тип это одно и то же понятие,
+# и вторым списком оно уже разъезжалось (TASK-119)
+BACKLOG_SUBSECTIONS = tuple(meta["section"] for meta in TASK_TYPES.values())
 
 # Эталон структуры файла задачи: его же копирует человек вручную, на него
 # ссылаются скиллы, и из него create_task.py собирает новую задачу

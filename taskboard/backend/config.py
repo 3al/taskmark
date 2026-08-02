@@ -68,13 +68,22 @@ CARD_LIMITS: dict[str, tuple[int, int]] = {
 # должны различаться (проверяется тестом). color — имя палитры фронта: цвета
 # тоже обязаны быть разными и **различимыми** — дизайн начинал с cyan и сливался
 # с sky у нового функционала, поэтому ушёл в фуксию.
+# section — заголовок рубрики бэклога: тот же тип, только во множественном
+# числе («Баги», а не «Баг»). Рубрики выводятся отсюда, второго списка нет:
+# он уже разъезжался — `discussion` не имел рубрики вовсе (TASK-119).
 TASK_TYPES: dict[str, dict] = {
-    "feature":    {"label": "Новый функционал", "letter": "Н", "color": "sky"},
-    "bug":        {"label": "Баг",              "letter": "Б", "color": "rose"},
-    "refactor":   {"label": "Рефакторинг",      "letter": "Р", "color": "violet"},
-    "cleanup":    {"label": "Уборка",           "letter": "У", "color": "emerald"},
-    "discussion": {"label": "Обсуждение",       "letter": "О", "color": "amber"},
-    "design":     {"label": "Дизайн",           "letter": "Д", "color": "fuchsia"},
+    "feature":    {"label": "Новый функционал", "section": "Новый функционал",
+                   "letter": "Н", "color": "sky"},
+    "bug":        {"label": "Баг",              "section": "Баги",
+                   "letter": "Б", "color": "rose"},
+    "refactor":   {"label": "Рефакторинг",      "section": "Рефакторинг",
+                   "letter": "Р", "color": "violet"},
+    "cleanup":    {"label": "Уборка",           "section": "Уборка",
+                   "letter": "У", "color": "emerald"},
+    "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
+                   "letter": "О", "color": "amber"},
+    "design":     {"label": "Дизайн",           "section": "Дизайн",
+                   "letter": "Д", "color": "fuchsia"},
 }
 
 DEFAULT_TASK_TYPE = "feature"

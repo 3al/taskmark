@@ -772,11 +772,6 @@ export default function App() {
       )}
       {showNewTask && (
         <NewTaskModal
-          backlogSections={
-            (board?.columns.find((c) => c.status === createStatus)?.groups || [])
-              .filter((g) => g.title)
-              .map((g) => g.title)
-          }
           onClose={() => setShowNewTask(false)}
           onCreated={refresh}
         />

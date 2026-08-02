@@ -9,7 +9,7 @@
 
 Использование (с аргументами):
   py tasks/create_task.py -t "Название" -d "Описание" -c "Критерии"
-  py tasks/create_task.py -t "Название" --type refactor --section refactor -e "E056-18500"
+  py tasks/create_task.py -t "Название" --type refactor -e "E056-18500"
 
 Параметры:
   -t, --title TEXT        Название задачи (обязательно)
@@ -20,8 +20,8 @@
   --type TYPE             Тип задачи: feature | bug | refactor | cleanup |
                           discussion | design (влияет на чеклист и остаётся
                           в поле `type` задачи; default: feature)
-  --section SECTION       Подраздел Backlog: refactor | feature
-                          (влияет на позицию в board.md; default: feature)
+  --section SECTION       Подраздел Backlog. По умолчанию — рубрика типа
+                          задачи: «Баги» для bug, «Обсуждения» для discussion
 """
 
 import sys
@@ -61,19 +61,44 @@ def intake_status(tasks_dir: Path, cfg: dict) -> tuple[str, str]:
     и второй копии каталога статусов в tasks/ быть не должно. Скрипта нет или
     он старый — работаем как раньше, по бэклогу.
     """
-    script = tasks_dir / cfg.get("status_script", "set_status.py")
+    module = status_module(tasks_dir, cfg)
     try:
-        spec = importlib.util.spec_from_file_location("_set_status", script)
-        module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
-        pipeline = module.pipeline_of(cfg)
-        key = module.actions_of(cfg, pipeline).get("create")
+        pipeline = module.pipeline_of(cfg)  # type: ignore[union-attr]
+        key = module.actions_of(cfg, pipeline).get("create")  # type: ignore[union-attr]
         for meta in pipeline:
             if meta["key"] == key:
                 return key, meta["section"]
     except Exception:
         pass
     return "backlog", "Backlog"
+
+
+def status_module(tasks_dir: Path, cfg: dict):
+    """Соседний set_status.py как модуль (None, если его нет или он старый).
+
+    В нём живут и пайплайн, и каталог типов задач: второй копии этих справочников
+    в tasks/ быть не должно.
+    """
+    script = tasks_dir / cfg.get("status_script", "set_status.py")
+    try:
+        spec = importlib.util.spec_from_file_location("_set_status", script)
+        module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        return module
+    except Exception:
+        return None
+
+
+def section_of_type(task_type: str) -> str | None:
+    """Рубрика бэклога для типа задачи — из каталога соседнего set_status.py.
+
+    Рубрика и тип — одно понятие: «Баги» это раздел для `bug`. Скрипта нет или
+    он старый — вернём None, и задача ляжет в конец раздела приёма.
+    """
+    tasks_dir = Path(__file__).parent
+    module = status_module(tasks_dir, load_config(tasks_dir))
+    meta = getattr(module, "TASK_TYPES", {}).get(task_type) if module else None
+    return meta.get("section") if meta else None
 
 # UTF-8 encoding для консоли
 if sys.platform == "win32":
@@ -289,23 +314,53 @@ def _append_to_block(board_content: str, heading: str, new_entry: str) -> str | 
     return f"{board_content[:end]}\n{new_entry}{board_content[end:]}"
 
 
+def _add_rubric(board_content: str, heading: str, new_entry: str,
+                intake_section: str) -> str | None:
+    """Завести рубрику в конце раздела приёма и положить в неё запись.
+
+    None — если раздела приёма нет или человек убрал подразделы вовсе: пустая
+    доска без рубрик это его выбор, и наводить их за него мы не станем.
+    """
+    marker = re.search(rf"^##\s+{re.escape(intake_section)}\s*$", board_content,
+                       flags=re.MULTILINE)
+    if not marker:
+        return None
+    rest = board_content[marker.end():]
+    nxt = re.search(r"^##\s+", rest, flags=re.MULTILINE)
+    intake = rest[:nxt.start()] if nxt else rest
+    if not re.search(r"^### ", intake, flags=re.MULTILINE):
+        return None
+
+    at = marker.end() + (nxt.start() if nxt else len(rest))
+    return (board_content[:at].rstrip()
+            + f"\n\n{heading}\n\n{new_entry}\n\n"
+            + board_content[at:])
+
+
 def insert_into_board(board_content: str, new_entry: str, section: str,
                       intake_section: str = "Backlog") -> str:
     """
     Вставить новую задачу в нужный подраздел раздела приёма задач.
 
-    section — заголовок подраздела ### (полный текст) либо легаси-алиас:
-    "refactor" → ### Рефакторинг, "feature" → ### Новый функционал.
+    section — заголовок подраздела ### (полный текст) либо ключ типа задачи:
+    рубрика бэклога и есть тип, и берётся она из каталога (`--types`).
+
+    Рубрики типа на доске нет — она **заводится**: у досок, развёрнутых до
+    появления типов, её нет по построению, а «просто в конец раздела приёма»
+    означает «внутрь последнего подраздела» — обсуждения так падали в «Дизайн».
+    Доска без подразделов вовсе — решение человека: там рубрики не наводим.
     Fallback → в конец раздела приёма (его имя задаёт пайплайн проекта).
     """
-    aliases = {
-        "refactor": "Рефакторинг",
-        "feature": "Новый функционал",
-    }
-    heading = f"### {aliases.get(section, section)}"
+    rubric = section_of_type(section)
+    heading = f"### {rubric or section}"
     updated = _append_to_block(board_content, heading, new_entry)
     if updated is not None:
         return updated
+
+    if rubric:
+        created = _add_rubric(board_content, heading, new_entry, intake_section)
+        if created is not None:
+            return created
 
     # Fallback: в конец раздела приёма — перед следующим разделом ##
     marker = re.search(rf"^##\s+{re.escape(intake_section)}\s*$", board_content,
@@ -326,8 +381,8 @@ def create_task(
     criteria: str | None = None,
     blocked_by: str | None = None,
     epic: str | None = None,
-    task_type: str = "feature",
-    section: str = "feature",
+    task_type: str = DEFAULT_TASK_TYPE,
+    section: str | None = None,
 ) -> None:
     """Главная функция создания задачи."""
     print("\n=== Создание новой задачи ===\n")
@@ -360,6 +415,10 @@ def create_task(
         epic = ask_input("Эпик (Jira-ключ, опционально — пусто = нет)", default="") if interactive else ""
 
     # Генерировать номер и имя файла
+    # Рубрика бэклога — это тип задачи: отдельного «куда положить» у неё нет,
+    # но нестандартную доску можно указать явным --section
+    section = section or task_type
+
     task_num = get_next_task_number()
     slug = slugify(title)
     filename = f"TASK-{task_num:03d}-{slug}.md"
@@ -477,10 +536,12 @@ if __name__ == "__main__":
         default=DEFAULT_TASK_TYPE,
         help="Тип задачи (влияет на чеклист и остаётся в поле type)",
     )
+    # Рубрику задаёт тип задачи; флаг остаётся ради нестандартных досок,
+    # где подразделы названы по-своему
     parser.add_argument(
         "--section",
-        default="feature",
-        help="Подраздел Backlog: полный заголовок ### или алиас refactor|feature",
+        default=None,
+        help="Подраздел Backlog (по умолчанию — рубрика типа задачи)",
     )
     args = parser.parse_args()
 

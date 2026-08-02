@@ -4,9 +4,9 @@ import { FORM_FIELD } from '../fields'
 import { TASK_TYPES } from '../taskTypes'
 import TaskPicker from './TaskPicker'
 
-// Модалка создания задачи (вызов create_task.py через API)
-// backlogSections — реальные подразделы ### колонки Backlog из board.md
-export default function NewTaskModal({ backlogSections = [], onClose, onCreated }) {
+// Модалка создания задачи (вызов create_task.py через API).
+// Рубрику бэклога выбирать не нужно: её задаёт тип задачи (TASK-124)
+export default function NewTaskModal({ onClose, onCreated }) {
   const [form, setForm] = useState({
     title: '',
     description: '',
@@ -16,7 +16,6 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
     epic_name: '',
     task_type: 'feature',
     target: 'backlog',
-    section: backlogSections[0] || '',
     queue_position: 'end',
   })
   const [busy, setBusy] = useState(false)
@@ -93,8 +92,6 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
       const payload = { ...form, title: form.title.trim() }
       // В поле может лежать «ключ · название» — на бэкенд уходит только ключ
       if (knownEpic) payload.epic = knownEpic.key
-      // section имеет смысл только для бэклога
-      if (payload.target !== 'backlog') delete payload.section
       const result = await api.createTask(payload)
       onCreated(result.id)
       onClose()
@@ -282,17 +279,6 @@ export default function NewTaskModal({ backlogSections = [], onClose, onCreated 
               </div>
             </div>
           </div>
-
-          {form.target === 'backlog' && backlogSections.length > 0 && (
-            <label className="block text-xs text-zinc-500">
-              Раздел бэклога
-              <select className={`${field} mt-1`} value={form.section} onChange={set('section')}>
-                {backlogSections.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </label>
-          )}
 
           {form.target === 'queue' && (
             <label className="block text-xs text-zinc-500">

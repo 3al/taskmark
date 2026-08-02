@@ -110,13 +110,20 @@ CATALOG = {
 # от статусов это **не** библиотека дефолтов, а закрытый список: тип отвечает
 # на вопрос «что это за работа», и ответ не зависит от жизненного цикла проекта.
 # letter — буква кружка на превью доски, буквы не повторяются
+# section — заголовок рубрики бэклога, куда create_task.py кладёт новую задачу
 TASK_TYPES = {
-    "feature":    {"label": "Новый функционал", "letter": "Н", "color": "sky"},
-    "bug":        {"label": "Баг",              "letter": "Б", "color": "rose"},
-    "refactor":   {"label": "Рефакторинг",      "letter": "Р", "color": "violet"},
-    "cleanup":    {"label": "Уборка",           "letter": "У", "color": "emerald"},
-    "discussion": {"label": "Обсуждение",       "letter": "О", "color": "amber"},
-    "design":     {"label": "Дизайн",           "letter": "Д", "color": "fuchsia"},
+    "feature":    {"label": "Новый функционал", "section": "Новый функционал",
+                   "letter": "Н", "color": "sky"},
+    "bug":        {"label": "Баг",              "section": "Баги",
+                   "letter": "Б", "color": "rose"},
+    "refactor":   {"label": "Рефакторинг",      "section": "Рефакторинг",
+                   "letter": "Р", "color": "violet"},
+    "cleanup":    {"label": "Уборка",           "section": "Уборка",
+                   "letter": "У", "color": "emerald"},
+    "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
+                   "letter": "О", "color": "amber"},
+    "design":     {"label": "Дизайн",           "section": "Дизайн",
+                   "letter": "Д", "color": "fuchsia"},
 }
 
 
