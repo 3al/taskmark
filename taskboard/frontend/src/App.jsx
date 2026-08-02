@@ -107,6 +107,28 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [query, board])
 
+  // Удаление задачи крестиком — только когда включено в настройках проекта.
+  // Карточка сначала спрашивает план (кого задача держит), потом подтверждение
+  const deleteTask = health?.config?.delete_tasks ? {
+    plan: async (id) => {
+      try {
+        return await api.deleteTaskPlan(id)
+      } catch (e) {
+        setError(e.message)
+        return { blocks: [] }
+      }
+    },
+    remove: async (id) => {
+      try {
+        await api.deleteTask(id)
+        if (openTask === id) setOpenTask(null)
+        refresh()
+      } catch (e) {
+        setError(e.message)
+      }
+    },
+  } : null
+
   const saveColumnOrder = (order) => {
     setColumnOrder(order)
     const key = orderKey(projects.active)
@@ -168,6 +190,10 @@ export default function App() {
     root.style.setProperty('--card-title-size', `${style.card_title_size}px`)
     root.style.setProperty('--card-title-lines', String(style.card_title_lines))
     root.style.setProperty('--card-meta-size', `${style.card_meta_size}px`)
+    // Видимость метки типа — тем же способом: показ/скрытие одного элемента
+    // не стоит того, чтобы тащить флаг пропсами через колонку в каждую карточку
+    root.style.setProperty('--card-type-display',
+      style.card_show_type === false ? 'none' : 'inline-flex')
   }, [board?.config?.card_style])
 
   // Точка «есть новая версия» — из кэша сервера, один раз при открытии доски.
@@ -623,6 +649,7 @@ export default function App() {
                   query={query}
                   matches={found}
                   filtered={filtered}
+                  onDelete={deleteTask}
                   columnIndicator={
                     activeDrag?.column && colDropTarget?.status === col.status
                       ? (colDropTarget.side === 'after' ? 'right' : 'left')

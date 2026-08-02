@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { statusStyle } from '../statuses'
 import { taskType } from '../taskTypes'
@@ -20,11 +21,23 @@ const STALL_STRIPE = {
   stale: 'bg-zinc-500/60',
 }
 
-// Кружок метки типа. Только у типа: пауза остаётся значком «как есть» —
-// в кружке она сливалась с типами, у которых тот же жёлтый (обсуждение).
+// Правый угол верхней строки — три значка подряд (тип, пауза, крестик), и
+// разъезжаться по размеру и базовой линии им нельзя: значок паузы и буква в
+// кружке сами по себе разной высоты. Поэтому у всех один бокс с центрированием —
+// различаются только заливкой и кеглем глифа внутри.
 // Размер в em: строка номера масштабируется настройкой превью (--card-meta-size)
-const MARK = `inline-flex items-center justify-center rounded-full shrink-0
-  w-[1.4em] h-[1.4em] ring-1 leading-none`
+const SLOT = `inline-flex items-center justify-center shrink-0
+  w-[1.4em] h-[1.4em] leading-none`
+
+// Кегль глифов паузы и крестика: символы рисуются мельче своего кегля, и при
+// одном размере с буквой типа выглядели бы меньше её
+const GLYPH = { fontSize: '0.95em' }
+
+// Кружок метки типа. Только у типа: пауза в кружке сливалась с типами, у
+// которых тот же жёлтый (обсуждение).
+// display переменной, а не условием: метку типа можно выключить в настройках
+// (TASK-122), и флаг ради одного элемента незачем тащить пропсами
+const MARK = `${SLOT} rounded-full ring-1`
 
 function stripeKind(task) {
   if (task.stall_stale) return 'stale'
@@ -35,10 +48,19 @@ function stripeKind(task) {
 }
 
 export default function TaskCard({ task, status, onOpen, indicatorAllowed = true,
-                                   query, match }) {
+                                   query, match, onDelete }) {
   const style = statusStyle(status)
   const stripe = stripeKind(task)
   const type = taskType(task.type)
+  // Удаление необратимо, поэтому крестик сначала превращается в вопрос — как
+  // «Забыть проект» в шапке. Что именно заденет удаление, спрашиваем у бэкенда
+  // в момент первого клика: держит ли задача другие, видно только по файлам
+  const [confirming, setConfirming] = useState(null)
+
+  const askDelete = async (e) => {
+    e.stopPropagation()
+    setConfirming(await onDelete.plan(task.id))
+  }
   const dragId = `task:${task.id}`
   const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
     id: dragId,
@@ -60,7 +82,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         {...listeners}
         {...attributes}
         onClick={() => onOpen(task.id)}
-        className={`${style.card} relative overflow-hidden border rounded-lg px-3.5 py-2.5
+        className={`${style.card} group/card relative overflow-hidden border rounded-lg px-3.5 py-2.5
           cursor-grab ${style.cardHover} transition select-none touch-none
           outline-none ${style.cardFocus}
           ${isDragging ? 'opacity-40' : ''} ${task.struck ? 'opacity-45 border-dashed' : ''}`}
@@ -68,6 +90,24 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         {stripe && (
           <span aria-hidden="true"
                 className={`absolute left-0 top-0 bottom-0 w-0.5 ${STALL_STRIPE[stripe]}`} />
+        )}
+        {/* Крестик живёт в самом углу и вне потока: в ряду значков он спорил
+            с меткой типа и паузой — те рассказывают о задаче, а он делает с
+            ней необратимое. Пока мышь не в углу, он почти прозрачен: место
+            под него не резервируется, композицию строки он не трогает.
+            Размер маленький намеренно: бокс должен уместиться в поле отступа
+            карточки (px-3.5 / py-2.5), иначе крестик наезжает на значки строки */}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={askDelete}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute top-0 right-0 z-10 w-4 h-4 flex items-center justify-center
+              text-[10px] leading-none text-zinc-600 opacity-0 group-hover/card:opacity-40
+              hover:!opacity-100 hover:text-rose-300 focus-visible:opacity-100 transition"
+            title="Удалить задачу">
+            ✕
+          </button>
         )}
         {/* Верх карточки — состояние: номер и почему задача стоит. Взгляд идёт
             по колонке сверху вниз, и «чего она ждёт» должно читаться до
@@ -107,7 +147,8 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
                   название типа — в окне задачи и в подсказке */}
               {type && (
                 <span className={`${MARK} ${type.dot}`}
-                      style={{ fontSize: '0.85em' }}
+                      style={{ fontSize: '0.85em',
+                               display: 'var(--card-type-display, inline-flex)' }}
                       title={`Тип: ${type.label}`}>
                   {type.letter}
                 </span>
@@ -115,8 +156,10 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
               {/* Пауза — значок без заливки: в кружке её путали с типом
                   (у обсуждения тот же жёлтый) */}
               {task.paused && (
-                <span className={`shrink-0 normal-case ${task.stall_stale
-                  ? 'text-zinc-500 grayscale opacity-80' : 'text-amber-300/90'}`}
+                <span className={`${SLOT} rounded-full ring-1 normal-case ${task.stall_stale
+                  ? 'text-zinc-500 ring-zinc-600/60 grayscale opacity-80'
+                  : 'text-amber-300 ring-amber-400/40'}`}
+                      style={GLYPH}
                       title={task.stall_stale
                         ? `Пометку можно снять: ${task.paused}`
                         : `Пауза: ${task.paused}`}>
@@ -126,6 +169,37 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             </span>
           )}
         </div>
+        {/* Подтверждение поверх карточки: удаление необратимо, и одного клика
+            для него мало. Здесь же — что оно заденет: у задач, которые ждали
+            эту, пометка будет снята */}
+        {confirming && (
+          <div className="mt-1.5 rounded-lg border border-rose-900/70 bg-rose-950/40 px-2 py-1.5
+            text-[11px] text-rose-200"
+               onClick={(e) => e.stopPropagation()}
+               onPointerDown={(e) => e.stopPropagation()}>
+            <div>Удалить задачу и её файл?</div>
+            {confirming.blocks?.length > 0 && (
+              <div className="text-rose-300/80 mt-0.5">
+                снимет блокировку у {confirming.blocks.join(', ')}
+              </div>
+            )}
+            <div className="flex items-center gap-2 mt-1.5">
+              <button
+                type="button"
+                className="px-2 py-0.5 rounded border border-rose-800 bg-rose-950/60
+                  hover:bg-rose-900/60 transition"
+                onClick={() => { setConfirming(null); onDelete.remove(task.id) }}>
+                Удалить
+              </button>
+              <button
+                type="button"
+                className="px-1.5 py-0.5 rounded text-zinc-400 hover:text-zinc-200 transition"
+                onClick={() => setConfirming(null)}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
         {/* Заголовок превью чуть мягче интерфейсных надписей: карточек на доске
             десятки, полная яркость превращает колонку в стену текста */}
         {/* Размеры превью настраиваются (TASK-097) и приезжают CSS-переменными

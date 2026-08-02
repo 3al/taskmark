@@ -28,6 +28,9 @@ DEFAULTS: dict = {
     # починка не удаляет чужие записи, а сносит их сюда. Колонкой не показывается
     "lost_section": "Потерянные",
     "dnd_full_board": True,
+    # Удаление задачи крестиком: необратимая операция над файлами пользователя,
+    # поэтому выключена по умолчанию и включается осознанно (TASK-043)
+    "delete_tasks": False,
     # Жизненный цикл задачи: порядок статусов и цели действий скиллов.
     # Разбор и дефолты оформления — в backend/statuses.py
     "pipeline": ["backlog", "queued", "development", "review", "testing", "completed"],
@@ -45,6 +48,10 @@ DEFAULTS: dict = {
     "card_title_size": 14,
     "card_title_lines": 3,
     "card_meta_size": 12,
+    # Метка типа на превью. По умолчанию включена: выключенная по умолчанию
+    # возможность остаётся незамеченной. Флаг, а не число, поэтому границ у
+    # него нет — но живёт он там же, рядом с видом карточки
+    "card_show_type": True,
 }
 
 # Границы вида карточки: за ними превью разваливается — заголовок перестаёт
@@ -89,9 +96,17 @@ TASK_TYPES: dict[str, dict] = {
 DEFAULT_TASK_TYPE = "feature"
 
 
+# Вид превью: числа с границами (CARD_LIMITS) плюс переключатели
+CARD_FLAGS = ("card_show_type",)
+
+
 def card_style(cfg: dict) -> dict:
     """Значения вида карточки — с подстановкой дефолтов вместо пропусков."""
-    return {k: cfg.get(k, DEFAULTS[k]) for k in CARD_LIMITS}
+    keys = (*CARD_LIMITS, *CARD_FLAGS)
+    out = {k: cfg.get(k, DEFAULTS[k]) for k in keys}
+    for flag in CARD_FLAGS:
+        out[flag] = bool(out[flag])
+    return out
 
 
 def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
@@ -128,7 +143,7 @@ def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
 # где имена зашиты, — переименовавший получал скиллы, зовущие несуществующий
 # файл. `release_script` остаётся: это не переименование, а точка расширения
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "release_script",
-                "dnd_full_board", "harnesses", "vault"}
+                "dnd_full_board", "harnesses", "vault", "delete_tasks"}
 
 
 def lost_section(cfg: dict) -> str:

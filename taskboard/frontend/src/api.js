@@ -62,6 +62,9 @@ export const api = {
   // blockerFor — кем можно заблокировать эту задачу (список считает бэкенд)
   tasksList: (blockerFor = '') =>
     request(`/api/tasks/list${blockerFor ? `?blocker_for=${encodeURIComponent(blockerFor)}` : ''}`),
+  deleteTaskPlan: (id) => request(`/api/tasks/${encodeURIComponent(id)}/delete-plan`),
+  deleteTask: (id) =>
+    request(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   updateTask: (id, updates) =>
     request(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
   criteriaPresets: () => request('/api/criteria-presets'),

@@ -147,7 +147,10 @@ class CardMarkerTest(unittest.TestCase):
         self.assertIn("both", self.src)
         self.assertIn("from-rose-500/70", self.src)
         self.assertIn("to-amber-400/70", self.src)
-        self.assertNotIn("right-0", self.src, "появилась вторая полоска у правого края")
+        # Ищем именно полоску во всю высоту: `right-0` сам по себе теперь есть
+        # у крестика удаления, который живёт в углу карточки
+        self.assertNotIn("right-0 top-0 bottom-0", self.src,
+                         "появилась вторая полоска у правого края")
 
     def test_pause_sits_in_the_corner(self) -> None:
         """У значка без номера постоянное место читается лучше, чем позиция,
@@ -156,17 +159,35 @@ class CardMarkerTest(unittest.TestCase):
         Правый угол строки делят метка типа и пауза (TASK-054), поэтому к краю
         прижата их общая группа, а сама пауза остаётся крайней справа.
         """
-        corner = self.src[self.src.index("(type || task.paused)"):self.src.index("⏸")]
+        corner = self.src[self.src.index("(type || task.paused)"):
+                          self.src.index("⏸")]
         self.assertIn("ml-auto", corner, "правый угол строки не прижат к краю")
         self.assertLess(self.src.index("type.letter"), self.src.index("⏸"),
                         "пауза перестала быть крайней справа")
 
-    def test_pause_is_not_a_circle(self) -> None:
-        """Пауза остаётся значком без заливки: в кружке её путали с меткой
-        типа — у обсуждения тот же жёлтый цвет."""
+    def test_corner_marks_share_one_box(self) -> None:
+        """Три значка в углу (тип, пауза, крестик) — одного размера и по одной
+        линии: у каждого свой бокс они разъезжались по высоте и кеглю."""
+        self.assertIn("const SLOT", self.src, "общего бокса значков нет")
+        # Метка типа берёт тот же бокс через MARK — кружок это SLOT с заливкой
+        self.assertRegex(self.src, r"const MARK = `\$\{SLOT\}",
+                         "кружок типа построен не на общем боксе")
+        corner = self.src[self.src.index("(type || task.paused)"):
+                          self.src.index("Заголовок превью")]
+        self.assertEqual(corner.count("SLOT") + corner.count("MARK"), 2,
+                         "тип и пауза используют разные боксы")
+
+    def test_pause_is_outlined_not_filled(self) -> None:
+        """Пауза — кольцо, тип — заливка: форма общая, вес разный.
+
+        Сплошной жёлтый кружок паузы был неотличим от метки обсуждения (тот же
+        цвет), а голый значок рядом с кружком типа выглядел разнобоем. Кольцо
+        без заливки решает оба: размер и форма те же, пятно — нет.
+        """
         pause = self.src[self.src.index("task.paused && ("):self.src.index("⏸")]
-        self.assertNotIn("MARK", pause, "пауза снова оформлена кружком типа")
-        self.assertIn("text-amber-300/90", pause, "значок паузы потерял свой цвет")
+        self.assertIn("rounded-full ring-1", pause, "пауза потеряла общую форму")
+        self.assertNotIn("bg-amber", pause, "у паузы снова сплошная заливка")
+        self.assertIn("text-amber-300", pause, "значок паузы потерял свой цвет")
 
     def test_stall_above_epic(self) -> None:
         """Пометки простоя — наверху, эпик — вниз.

@@ -149,3 +149,44 @@ class FrontendTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class ShowTypeToggleTest(unittest.TestCase):
+    """Метку типа на превью можно выключить (TASK-122).
+
+    Настройка глобальная, рядом с размерами: это свойство глаз и монитора,
+    а не репозитория. По умолчанию метка включена — иначе появившийся тип
+    остался бы незамеченным.
+    """
+
+    def test_default_is_on(self) -> None:
+        self.assertIs(DEFAULTS.get("card_show_type"), True,
+                      "по умолчанию тип на превью должен показываться")
+
+    def test_card_style_carries_the_flag(self) -> None:
+        self.assertIs(card_style({})["card_show_type"], True)
+        self.assertIs(card_style({"card_show_type": False})["card_show_type"], False)
+
+    def test_flag_is_saveable(self) -> None:
+        """Переключатели разрешены к сохранению не поимённо, а реестром."""
+        from backend.config import CARD_FLAGS
+        self.assertIn("card_show_type", CARD_FLAGS)
+        text = APP_PY.read_text(encoding="utf-8")
+        allowed = text[text.index("allowed = {"):text.index("updates = {k: v")]
+        self.assertIn("CARD_FLAGS", allowed, "настройка не сохраняется через API")
+
+    def test_flag_is_not_a_project_key(self) -> None:
+        from backend.config import PROJECT_KEYS
+        self.assertNotIn("card_show_type", PROJECT_KEYS,
+                         "настройка вида уехала в репозиторий задач")
+
+    def test_card_hides_type_by_variable(self) -> None:
+        """Переменная на корне, как у размеров: пропсами это тащить незачем."""
+        self.assertIn("--card-type-display", APP_JSX.read_text(encoding="utf-8"),
+                      "App не ставит переменную видимости типа")
+        self.assertIn("--card-type-display", CARD.read_text(encoding="utf-8"),
+                      "превью не смотрит на переменную видимости типа")
+
+    def test_settings_have_the_checkbox(self) -> None:
+        text = SETTINGS.read_text(encoding="utf-8")
+        self.assertIn("card_show_type", text, "в настройках нет галочки типа")

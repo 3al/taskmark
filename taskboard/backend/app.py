@@ -15,7 +15,8 @@ from pydantic import BaseModel
 from backend import changelog, help_docs, lifecycle, registry, updater, version
 from backend.board_parser import parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
-from backend.config import (CARD_LIMITS, DEFAULT_TASK_TYPE, PROJECT_KEYS,
+from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
+                            PROJECT_KEYS,
                             add_criteria_preset,
                             card_style, criteria_presets,
                             custom_criteria_presets, load_global_config,
@@ -35,6 +36,7 @@ from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            move_confirmation, set_blocked_by, set_paused,
                            stall_details, stalled_tasks)
 from backend.statuses import CATALOG, load_pipeline
+from backend.tasks_delete import delete_plan, delete_task
 from backend.task_parser import (EDITABLE_SECTIONS, annotate_types,
                                  list_all_tasks, parse_task, set_task_section,
                                  set_task_title, set_task_type)
@@ -311,13 +313,15 @@ def api_get_config() -> dict:
 
 @app.post("/api/config")
 def api_save_config(body: ConfigIn) -> dict:
-    # Защита от мусора: разрешаем только известные ключи
+    # Защита от мусора: разрешаем только известные ключи.
+    # Проектные ключи берём реестром (PROJECT_KEYS), а не списком: перечисленные
+    # руками расходились с ним молча — новая настройка проекта сохранялась в
+    # форме, но до конфига не доезжала (TASK-043).
     # Имён системных артефактов здесь нет: они перестали быть настройкой
     # (TASK-053) — переименование не доезжало до текстов скиллов и правил
-    allowed = {"port", "theme", "dnd_full_board", "tasks_dir", "release_script",
-               "statuses", "pipeline", "actions", "harnesses",
-               "vault", "update_check", "release_manifest_url",
-               *CARD_LIMITS}
+    allowed = {"port", "theme", "tasks_dir", "update_check",
+               "release_manifest_url",
+               *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
     # Размеры превью проверяет бэкенд, а не только форма: за границами диапазона
@@ -601,6 +605,33 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
             raise HTTPException(400, paused.get("error", "Ошибка простановки паузы"))
         result["paused"] = paused["paused"]
 
+    return result
+
+
+@app.get("/api/tasks/{task_id}/delete-plan")
+def api_delete_plan(task_id: str) -> dict:
+    """Что заденет удаление: название, статус и кого задача держит.
+
+    Диалог подтверждения называет последствия до удаления, а не после.
+    """
+    tasks_dir, _cfg = _ctx()
+    plan = delete_plan(tasks_dir, task_id)
+    if not plan.get("ok"):
+        raise HTTPException(404, plan.get("error", "Задача не найдена"))
+    return plan
+
+
+@app.delete("/api/tasks/{task_id}")
+def api_delete_task(task_id: str) -> dict:
+    """Удалить задачу: файл и строку доски за одно действие.
+
+    Возможность выключена по умолчанию — проверку делает сам модуль удаления,
+    чтобы правило было одним для доски и для любого другого клиента.
+    """
+    tasks_dir, cfg = _ctx()
+    result = delete_task(tasks_dir, cfg, task_id)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Ошибка удаления задачи"))
     return result
 
 

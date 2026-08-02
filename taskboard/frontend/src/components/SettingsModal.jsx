@@ -112,11 +112,14 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
   const updates = () => ({
     port: Number(config.port) || 8765,
     dnd_full_board: !!config.dnd_full_board,
+    delete_tasks: !!config.delete_tasks,
     release_script: (config.release_script || '').trim(),
     // Размеры превью: пустое поле — «не меняли», иначе бэкенд получит ноль
     ...Object.fromEntries(['card_title_size', 'card_title_lines', 'card_meta_size']
       .filter((k) => config[k] !== '' && config[k] != null)
       .map((k) => [k, Number(config[k])])),
+    // Переключатель, а не число: пустого значения у него не бывает
+    card_show_type: config.card_show_type !== false,
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
@@ -318,6 +321,23 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                     )
                   })}
                 </div>
+                {/* Метка типа — не размер, но живёт там же: это про то, что
+                    видно на превью. По умолчанию включена */}
+                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">
+                  <input
+                    type="checkbox"
+                    checked={config.card_show_type !== false}
+                    onChange={(e) => set('card_show_type', e.target.checked)}
+                    className="mt-0.5 accent-sky-500"
+                  />
+                  <span>
+                    Метка типа задачи
+                    <div className="text-[11px] text-zinc-500">
+                      кружок с буквой в правом верхнем углу превью; в открытой
+                      задаче тип виден всегда
+                    </div>
+                  </span>
+                </label>
               </div>
               </>
               )}
@@ -387,6 +407,24 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   className="accent-sky-500"
                 />
                 DnD по всей доске (иначе мышью — только приём задач ↔ очередь)
+              </label>
+
+              {/* Удаление необратимо и трогает файлы пользователя, поэтому
+                  выключено по умолчанию: крестика на карточках просто нет */}
+              <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={!!config.delete_tasks}
+                  onChange={(e) => set('delete_tasks', e.target.checked)}
+                  className="mt-0.5 accent-sky-500"
+                />
+                <span>
+                  Удаление задач крестиком
+                  <div className="text-[11px] text-zinc-500">
+                    крестик в углу превью убирает задачу с доски и удаляет её файл;
+                    спрашивает подтверждение
+                  </div>
+                </span>
               </label>
 
               {pipeline && (
