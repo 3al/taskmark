@@ -247,6 +247,21 @@ class GateTest(RequirementsTestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("verified", result.stderr)
 
+    def test_refusal_hint_names_the_task(self) -> None:
+        """Подсказку из отказа копируют как есть — значит в ней обязан быть TASK-NNN.
+
+        Трение обкатки (TASK-112): без идентификатора буквальный запуск даёт
+        «нужен TASK-NNN для --confirm», то есть отказ учит команде, которая не
+        работает. Имя интерпретатора человек только что набрал сам, а вот номер
+        задачи подставить за него может только скрипт — он его знает.
+        """
+        self._task(status="testing")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertIn("TASK-001 --confirm verified", result.stderr)
+        self.assertIn("TASK-001 --waive", result.stderr)
+
     def test_stage_passed_by_hand_is_still_owed(self) -> None:
         """Перенос мышью гейт не проходит — но и не отменяет требование навсегда.
 
@@ -561,6 +576,30 @@ class RecommendationTest(RequirementsTestCase):
         self.assertIn(wording, reminded.stdout)
         self.assertIn(wording, refused.stderr)
 
+    def test_reminder_hint_names_the_task_too(self) -> None:
+        """Напоминание — та же подсказка, значит и его команда должна работать."""
+        self._task(status="testing")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertIn("TASK-001 --confirm verified", result.stdout)
+
+    def test_reminder_names_the_stage_not_the_current_move(self) -> None:
+        """Незакрытым остаётся этап, а не тот, с которого задачу двигают.
+
+        Трение обкатки (TASK-112): «уходя из „X“» врёт, когда долг пришёл с
+        этапа, пройденного раньше. Задача уже стоит в «Готово к выпуску», не
+        подтвердив проверку, — уходит она из «Готово к выпуску», а незакрытым
+        остался «Testing».
+        """
+        self._task(status="ready_for_release")
+
+        result = self._run("TASK-001", "release_notes", "--agent", "Тест")
+
+        self.assertIn("«Testing»", result.stdout)
+        self.assertIn("остался незакрытым", result.stdout)
+        self.assertNotIn("уходя из", result.stdout)
+
     def test_met_recommendation_is_silent(self) -> None:
         """Шум равен тому, что не сделано."""
         path = self._task(status="testing")
@@ -606,6 +645,36 @@ class ReportingTest(RequirementsTestCase):
         out = json.loads(self._run("--debt", "TASK-001").stdout)
 
         self.assertEqual([r["id"] for r in out["debt"]], ["verified"])
+
+    def test_debt_accepts_the_task_positionally(self) -> None:
+        """Долг спрашивают той же формой, что и всё остальное над задачей.
+
+        Трение обкатки (TASK-112): остальные операции берут `TASK-NNN`
+        позиционно, а долг требовал его значением флага — и `TASK-001 --debt`
+        отвечал простынёй `usage`, из которой не видно, что номер надо
+        переставить. Старая форма при этом остаётся рабочей.
+        """
+        self._requires({"testing": [{"id": "verified", "check": "confirm"}]})
+        self._task(status="ready_for_release")
+
+        out = json.loads(self._run("TASK-001", "--debt").stdout)
+
+        self.assertEqual([r["id"] for r in out["debt"]], ["verified"])
+
+    def test_targets_accept_the_task_positionally(self) -> None:
+        """Второй флаг той же группы обязан понимать обе формы — иначе рука
+        снова ошибётся, только уже на соседней команде."""
+        self._task(status="testing")
+
+        out = json.loads(self._run("TASK-001", "--targets").stdout)
+
+        self.assertEqual(out["task"], "TASK-001")
+
+    def test_debt_without_any_task_is_an_error(self) -> None:
+        result = self._run("--debt")
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("TASK-NNN", result.stderr)
 
     def test_entering_stage_announces_its_requirements(self) -> None:
         self._requires({"testing": [{"id": "verified", "check": "confirm",

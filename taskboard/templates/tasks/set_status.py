@@ -16,7 +16,11 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   py tasks/set_status.py TASK-004 completed --position end
   py tasks/set_status.py TASK-004 cancelled --reason "дублирует TASK-002"
   py tasks/set_status.py --list             # пайплайн статусов проекта (JSON)
-  py tasks/set_status.py --targets TASK-004 # куда можно двинуть задачу (JSON)
+  py tasks/set_status.py TASK-004 --targets # куда можно двинуть задачу (JSON)
+  py tasks/set_status.py TASK-004 --debt    # чем задача должна этапам (JSON)
+
+Номер задачи в справочных режимах можно давать и значением флага
+(`--targets TASK-004`) — обе формы работают.
 
 Заметку агента тоже пишет скрипт: время он берёт из системы (выставить его
 задним числом «на глаз» нельзя), строку ставит в конец секции, а снесённый
@@ -565,7 +569,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             "reminders": reminders,
             # Отдельным ключом от reminders: это разные механизмы — конец работы
             # напоминает о хвостах задачи, этап говорит о невыполненном на выходе
-            "stage_reminders": stage_reminders(pipeline, from_status, pending),
+            "stage_reminders": stage_reminders(pipeline, from_status, pending, task_id),
             # Что потребует новый этап — сказанное на входе, а не в момент отказа
             "announce": stage_announcement(cfg, pipeline, status),
             # Смена статуса — единственный момент, когда файл задачи заведомо
@@ -1309,10 +1313,17 @@ def _label_of(pipeline: list[dict], status: str) -> str:
     return next((s.get("label", status) for s in pipeline if s["key"] == status), status)
 
 
-def _requirement_line(req: dict) -> str:
-    """Строка о невыполненном требовании: чем оно гасится, сказано тут же."""
+def _requirement_line(req: dict, task_id: str = "") -> str:
+    """Строка о невыполненном требовании: чем оно гасится, сказано тут же.
+
+    Идентификатор задачи входит в подсказку: её копируют как есть, а без
+    `TASK-NNN` буквальный запуск отвечает «нужен TASK-NNN для --confirm». Имя
+    интерпретатора читающий только что набрал сам, номер задачи за него может
+    подставить только скрипт.
+    """
     rid = _one_line(req.get("id"))
-    how = (f"отметить: --confirm {rid} \"как подтвердили\""
+    task = f"{task_id} " if task_id else ""
+    how = (f"отметить: {task}--confirm {rid} \"как подтвердили\""
            if _one_line(req.get("check")) == "confirm"
            else "сделать и повторить")
     return f"{requirement_wording(req)} — {how}"
@@ -1326,22 +1337,28 @@ def gate_message(task_id: str, pipeline: list[dict], current: str,
     числе с пройденных мимо гейта — рукой на доске.
     """
     lines = [f"{task_id} → {target}: не закрыты требования пройденных этапов:"]
-    lines += [f"  - {_requirement_line(r)} [{r.get('stage_label') or r.get('stage')}]"
+    lines += [f"  - {_requirement_line(r, task_id)} "
+              f"[{r.get('stage_label') or r.get('stage')}]"
               for r in blocked]
-    lines.append("Пропустить намеренно: --waive <id> --reason \"почему\" "
+    lines.append(f"Пропустить намеренно: {task_id} --waive <id> --reason \"почему\" "
                  "(останется строкой в заметках агента)")
     return "\n".join(lines)
 
 
-def stage_reminders(pipeline: list[dict], current: str, pending: list[dict]) -> list[str]:
+def stage_reminders(pipeline: list[dict], current: str, pending: list[dict],
+                    task_id: str = "") -> list[str]:
     """Напоминания о невыполненных рекомендациях — теми же словами, что и отказ.
 
     Печатается только невыполненное и только на движении вперёд: шум равен тому,
     что не сделано. Это то, чем раньше был обвес скиллов, — но работает у всех,
     включая тех, кто ничего не настраивал.
+
+    Называется **этап требования**, а не покидаемый: долг приходит и с этапов,
+    пройденных раньше, и «уходя из „X“» в таком случае врёт про момент —
+    человек начинает искать причину не там.
     """
-    return [f"уходя из «{r.get('stage_label') or _label_of(pipeline, current)}»: "
-            f"{_requirement_line(r)}"
+    return [f"этап «{r.get('stage_label') or _label_of(pipeline, current)}» остался "
+            f"незакрытым: {_requirement_line(r, task_id)}"
             for r in pending if not r.get("mandatory")]
 
 
@@ -1634,7 +1651,10 @@ def main() -> None:
     parser.add_argument("status", nargs="?", help="Новый статус")
     parser.add_argument("--list", action="store_true",
                         help="Показать пайплайн статусов проекта (JSON)")
-    parser.add_argument("--targets", metavar="TASK-NNN", default=None,
+    # nargs="?" — номер задачи можно дать и позиционно (`TASK-004 --targets`):
+    # так выглядят все остальные операции над задачей, и рука тянется туда же
+    parser.add_argument("--targets", metavar="TASK-NNN", nargs="?", const="",
+                        default=None,
                         help="Законные цели перехода для задачи (JSON)")
     parser.add_argument("--queue", action="store_true",
                         help="Живая очередь доски прямо сейчас (JSON)")
@@ -1654,7 +1674,8 @@ def main() -> None:
                         help="каталог типов задач (JSON)")
     parser.add_argument("--stalled", action="store_true",
                         help="Что сейчас стоит и почему (JSON)")
-    parser.add_argument("--debt", metavar="TASK-NNN", default=None,
+    parser.add_argument("--debt", metavar="TASK-NNN", nargs="?", const="",
+                        default=None,
                         help="Долг задачи: требования пройденных этапов (JSON)")
     parser.add_argument("--confirm", nargs=2, metavar=("ID", "ЧТО СКАЗАЛ ЧЕЛОВЕК"),
                         default=None,
@@ -1693,16 +1714,22 @@ def main() -> None:
         print(json.dumps(stalled(tasks_dir), ensure_ascii=False, indent=2))
         return
 
-    if args.debt:
-        result = task_debt(tasks_dir, args.debt)
+    if args.debt is not None:
+        task_id = args.debt or args.task_id
+        if not task_id:
+            parser.error("нужен TASK-NNN для --debt")
+        result = task_debt(tasks_dir, task_id)
         if not result.get("ok"):
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
-    if args.list or args.targets:
-        print(json.dumps(describe(tasks_dir, args.targets), ensure_ascii=False, indent=2))
+    if args.list or args.targets is not None:
+        task_id = (args.targets or args.task_id) if args.targets is not None else None
+        if args.targets is not None and not task_id:
+            parser.error("нужен TASK-NNN для --targets")
+        print(json.dumps(describe(tasks_dir, task_id), ensure_ascii=False, indent=2))
         return
 
     # Подтверждение и списание — факты о задаче, а не этап: идут и сами по себе,

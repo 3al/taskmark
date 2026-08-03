@@ -102,7 +102,8 @@
 py tasks/set_status.py TASK-004 development --agent "Имя (модель)"
 python tasks/set_status.py TASK-004 development --agent "Имя (модель)"
 py tasks/set_status.py --list              # пайплайн проекта
-py tasks/set_status.py --targets TASK-004  # куда можно двинуть задачу
+py tasks/set_status.py TASK-004 --targets  # куда можно двинуть задачу
+py tasks/set_status.py TASK-004 --debt     # чем задача должна этапам
 py tasks/set_status.py --queue             # очередь прямо сейчас (--limit 0 — вся)
 py tasks/set_status.py TASK-004 --note "суть" --agent "Имя (модель)"  # заметка агента
 ```
