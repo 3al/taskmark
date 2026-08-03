@@ -457,9 +457,17 @@ class ScriptContractTest(unittest.TestCase):
         })
         self.script = self.tasks / "set_status.py"
 
-    def _warnings(self) -> list[str]:
+    def _degraded(self) -> list[dict]:
         from backend.validator import validate_project
-        return validate_project(self.tasks, self.cfg)["warnings"]
+        return validate_project(self.tasks, self.cfg)["degraded"]
+
+    def _requires_issue(self) -> list[dict]:
+        """Сообщения о расхождении «конфиг объявил / скрипт не умеет».
+
+        Это деградация, а не мягкое расхождение данных: объявленная проверка не
+        работает, и чинится она кнопкой — а кнопку UI берёт по коду.
+        """
+        return [d for d in self._degraded() if d["code"] == "requires_unsupported"]
 
     def _deploy_capabilities(self, names: set[str] | None) -> None:
         """Подменить развёрнутую копию скриптом с заданным набором возможностей.
@@ -491,27 +499,51 @@ class ScriptContractTest(unittest.TestCase):
 
     def test_silent_until_requirements_declared(self) -> None:
         self._deploy_capabilities(set())
-        self.assertEqual([w for w in self._warnings() if "требован" in w.lower()], [])
+        self.assertEqual(self._requires_issue(), [])
 
     def test_declared_requirements_without_support_reported(self) -> None:
         self.cfg["requires"] = {"testing": [{"id": "verified", "check": "confirm"}]}
         self._deploy_capabilities({"stall"})
 
-        found = [w for w in self._warnings() if "требован" in w.lower()]
-        self.assertTrue(found, "расхождение конфига и скрипта не попало в проблемы данных")
-        self.assertIn("set_status.py", found[0])
+        found = self._requires_issue()
+        self.assertTrue(found, "расхождение конфига и скрипта осталось незамеченным")
+        self.assertIn("set_status.py", found[0]["message"])
+        self.assertIn("requires", found[0]["message"],
+                      "человеку надо знать, что именно объявлено и где")
+
+    def test_absent_script_says_it_once(self) -> None:
+        """Файла нет — про это уже сказано своей строкой с кнопкой «Создать».
+
+        Вторая строка советовала бы «обновить» то, чего не существует.
+        """
+        self.cfg["requires"] = {"testing": [{"id": "verified", "check": "confirm"}]}
+        self.script.unlink()
+
+        self.assertEqual(self._requires_issue(), [])
 
     def test_supported_requirements_are_silent(self) -> None:
         self.cfg["requires"] = {"testing": [{"id": "verified", "check": "confirm"}]}
         self._deploy_capabilities({"requires"})
 
-        self.assertEqual([w for w in self._warnings() if "требован" in w.lower()], [])
+        self.assertEqual(self._requires_issue(), [])
+
+    def test_ui_knows_the_button_for_this_code(self) -> None:
+        """Деградация без кнопки — сообщение, из которого не выйти.
+
+        Код и его кнопка живут в разных файлах (backend/validator.py и
+        DEGRADED_FIX в App.jsx) и расходятся молча — реестры такого рода
+        правятся только вместе.
+        """
+        app = (Path(__file__).resolve().parent.parent
+               / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+        self.assertIn("requires_unsupported:", app,
+                      "код деградации не заведён в DEGRADED_FIX — строка будет без кнопки")
 
     def test_empty_requirements_are_silent(self) -> None:
         self.cfg["requires"] = {}
         self._deploy_capabilities({"stall"})
 
-        self.assertEqual([w for w in self._warnings() if "требован" in w.lower()], [])
+        self.assertEqual(self._requires_issue(), [])
 
 
 if __name__ == "__main__":

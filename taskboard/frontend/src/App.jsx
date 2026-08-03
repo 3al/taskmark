@@ -452,6 +452,9 @@ export default function App() {
     outdated_script: { part: 'create_script', label: 'Обновить' },
     no_status_script: { part: 'status_script', label: 'Создать' },
     outdated_status_script: { part: 'status_script', label: 'Обновить' },
+    // Скрипт не знает про объявленные требования этапов — чинится тем же
+    // обновлением: пользователю всё равно, какую из двух кнопок нажать
+    requires_unsupported: { part: 'status_script', label: 'Обновить' },
     // Правила — часть механизма, а не опция: без них агент не знает процесса
     no_rules: { part: 'rules', label: 'Развернуть', help: 'agentic' },
     // Отсутствие целой части чинится так же, как её устаревание: одной кнопкой

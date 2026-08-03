@@ -141,6 +141,23 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
                          "message": _issue_message(issue),
                          "names": issue["names"]})
 
+    # Настройка, опередившая развёрнутый скрипт: требования этапов объявлены, а
+    # исполняет их он, и обновляется он отдельно — кнопкой. Это деградация, а не
+    # мягкое расхождение данных: объявленная проверка не работает, и починка у
+    # неё та же самая кнопка. Молчать нельзя — человек считал бы этап
+    # защищённым, а гейта не было бы вовсе.
+    # Файла нет вовсе — про это уже сказано своей строкой с «Создать»: вторая
+    # предлагала бы обновить то, чего не существует
+    status_script = cfg.get("status_script", "set_status.py")
+    if (cfg.get("requires") and (tasks_dir / status_script).is_file()
+            and "requires" not in script_capabilities(tasks_dir, cfg)):
+        degraded.append({
+            "code": "requires_unsupported",
+            "message": (f"Этапы требуют проверок (ключ requires в "
+                        f"tasks/.taskboard.json), но развёрнутый {status_script} "
+                        f"про них не знает: агент проходит этапы, а проверка молчит"),
+            "names": [status_script]})
+
     # Мягкие предупреждения: битые ссылки, чужие записи, расхождение раздела
     # со статусом файла и файлы вне доски. Всё это чинится одной кнопкой —
     # см. backend/board_repair.py; по флагу repairable UI решает, показывать
@@ -195,13 +212,6 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     # а исполняет их он, и обновляется он отдельно — кнопкой. Молчать тут
     # нельзя: доска показывала бы долг, которого скрипт не проверяет, то есть
     # человек считал бы этап защищённым, а гейта не было бы вовсе
-    if cfg.get("requires") and "requires" not in script_capabilities(tasks_dir, cfg):
-        status_script = cfg.get("status_script", "set_status.py")
-        warnings.append(
-            f"Требования этапов объявлены в настройках, но развёрнутый "
-            f"{status_script} их не поддерживает — обновите окружение в настройках, "
-            f"иначе агент проходит этапы без проверки")
-
     # Причины простоя (blocked_by / blocks / paused) живут во frontmatter, и
     # починка доски их не касается: битую ссылку и разъехавшиеся концы правит
     # set_status.py, а не перенос строк. Поэтому в repairable они не идут
