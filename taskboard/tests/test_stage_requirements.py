@@ -352,6 +352,38 @@ class ReturnResetsConfirmationTest(RequirementsTestCase):
                          "подтверждение прошлой итерации осталось")
         self.assertIn("снято подтверждение", result.stdout)
 
+    def test_return_leaves_a_note(self) -> None:
+        """Снятие — событие хронологии: иначе одно и то же подтверждали дважды
+        без видимой причины между двумя строками."""
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "verified"})
+
+        self._run("TASK-001", "development", "--agent", "Тест")
+
+        trace = [n for n in self._notes(path) if "снято подтверждение" in n]
+        self.assertTrue(trace, "возврат не оставил следа в заметках агента")
+        self.assertIn("verified", trace[0])
+        self.assertIn("Тест", trace[0])
+
+    def test_return_note_is_signed_without_agent(self) -> None:
+        """Без --agent событие подписывает сам скрипт: выдумывать модель нельзя."""
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "verified"})
+
+        self._run("TASK-001", "development")
+
+        trace = [n for n in self._notes(path) if "снято подтверждение" in n]
+        self.assertTrue(trace)
+        self.assertIn("set_status.py", trace[0])
+
+    def test_return_without_confirmations_is_silent(self) -> None:
+        """Снимать нечего — и писать не о чем: возврат сам по себе виден на доске."""
+        path = self._task(status="testing")
+
+        self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertEqual([n for n in self._notes(path) if "снято подтверждение" in n], [])
+
     def test_return_keeps_confirmation_of_earlier_stage(self) -> None:
         """Этапы левее цели задача заново не проходит — их подтверждения при ней."""
         path = self._task(status="ready_for_release")

@@ -539,6 +539,16 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     if (from_status in keys_all and status in keys_all
             and keys_all.index(status) < keys_all.index(from_status)):
         unconfirmed = reset_confirmations(task_file, cfg, pipeline, status)
+        if unconfirmed:
+            # Строкой в заметки, а не только в консоль: снятие объясняет, почему
+            # то же самое подтверждали дважды. Без него история показывает два
+            # подтверждения подряд без причины между ними.
+            # Имя — своё, если передано; иначе событие подписывает сам скрипт:
+            # сброс сделал он, а выдумывать за агента модель нельзя
+            add_note(tasks_dir, task_id,
+                     f"возврат в «{_label_of(pipeline, status)}»: снято подтверждение "
+                     f"{', '.join(unconfirmed)} — этап проходится заново",
+                     agent=agent or "set_status.py")
 
     # Работа кончилась — самое время сказать про волт и хвосты в файле задачи:
     # позже, при выпуске, автор деталей уже не помнит
