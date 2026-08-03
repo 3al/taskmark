@@ -79,7 +79,7 @@ def _utf8_console() -> None:
 # объявлена, скрипт про неё не знает, а человек уверен, что она работает.
 # Имена, а не номер версии, — как CAPABILITIES в backend/app.py: набор
 # расширяется, не заводя таблицы соответствия версий возможностям.
-SCRIPT_CAPABILITIES = {"stall", "task_types"}
+SCRIPT_CAPABILITIES = {"stall", "task_types", "requires"}
 
 # Дефолты дублируют backend/config.py: скрипт автономен и работает
 # без запущенного сервера, в том числе в проектах без установленного taskboard
@@ -103,9 +103,23 @@ CATALOG = {
     "local_testing": {"label": "Локальная проверка", "section": "Local Testing"},
     "review": {"label": "Review", "section": "Review"},
     "to_testing": {"label": "К тестированию", "section": "To Testing"},
-    "testing": {"label": "Testing", "section": "Testing"},
+    # recommends — что этап просит на выходе, пока проект не объявил этого
+    # требованием: печатается напоминанием, ничего не запрещая. В рекомендации
+    # попадает только то, что уже стреляло на практике (TASK-101), а не всё,
+    # что легко проверить
+    "testing": {"label": "Testing", "section": "Testing",
+                "recommends": [{"id": "verified", "check": "confirm",
+                                "ask": "проверку подтвердил человек"}]},
     "ready_for_release": {"label": "Готово к выпуску", "section": "Ready for Release"},
-    "release_notes": {"label": "Заметки о релизе", "section": "Release Notes"},
+    "release_notes": {"label": "Заметки о релизе", "section": "Release Notes",
+                      # section_present, а не filled: пустая секция — принятое
+                      # решение «пользователю сказать нечего», и требовать текст
+                      # значило бы ломать это решение
+                      "recommends": [{"id": "release_text", "check": "section_present",
+                                      "name": "Изменение для пользователя",
+                                      "ask": "тексты релиза написаны"},
+                                     {"id": "release_ok", "check": "confirm",
+                                      "ask": "тексты релиза утверждены человеком"}]},
     "to_release": {"label": "В ближайший релиз", "section": "To Release"},
     "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy"},
     "completed": {"label": "Completed", "section": "Completed"},
@@ -435,6 +449,17 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     if not board_path.is_file():
         return {"ok": False, "error": f"Файл доски не найден: {board_path}"}
 
+    # Гейт требований этапа. Стоит только здесь, на агентском пути: доска
+    # пропускает всегда, и это осознанно — у человека есть контекст, которого
+    # у агента нет. Пересечение считаем от статуса из файла: раздел доски мог
+    # разъехаться с ним, а источник правды — файл
+    from_status = current_status(tasks_dir, task_id) or ""
+    pending = unmet(move_requirements(cfg, pipeline, from_status, status), task_file)
+    blocked = [r for r in pending if r.get("mandatory")]
+    if blocked:
+        return {"ok": False,
+                "error": gate_message(task_id, pipeline, from_status, status, blocked)}
+
     lines = board_path.read_text(encoding="utf-8").splitlines()
     src_idx = _entry_index(lines, task_id)
     if src_idx is None:
@@ -516,6 +541,11 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             "file": task_file.name, "from": prev, "skipped": skipped,
             "stall_cleared": bool(cleared and cleared.get("cleared")),
             "reminders": reminders,
+            # Отдельным ключом от reminders: это разные механизмы — конец работы
+            # напоминает о хвостах задачи, этап говорит о невыполненном на выходе
+            "stage_reminders": stage_reminders(pipeline, from_status, pending),
+            # Что потребует новый этап — сказанное на входе, а не в момент отказа
+            "announce": stage_announcement(cfg, pipeline, status),
             # Смена статуса — единственный момент, когда файл задачи заведомо
             # открывают: заодно показываем, что в нём разъехалось
             "warnings": check_task_file(task_file)}
@@ -1007,6 +1037,285 @@ def stalled(tasks_dir: Path) -> dict:
     return {"total": len(tasks), "tasks": tasks}
 
 
+# --- НАЧАЛО БЛОКА: требования этапа -----------------------------------------
+# Блок обособлен маркерами намеренно: те же правила нужны бэкенду, чтобы рисовать
+# долг на карточке, и переносить их туда следует копированием, а не восстановлением
+# логики по следам.
+#
+# Чего механизм НЕ делает: он не гарантирует, что этап выполнен. Доска пропускает
+# всегда, HTTP-API открыт, `--waive` существует. Он гарантирует, что этап нельзя
+# пройти **молча**: пропуск перестаёт быть режимом умолчания и становится
+# поступком — названным и оставившим след.
+#
+# Две реакции на одно требование: рекомендация статуса (объявлена в CATALOG, в
+# конфиге проекта её нет) печатает напоминание, требование из `requires` проекта
+# даёт отказ. Слова у них одни и те же — разница в том, состоялся переход или нет.
+
+CONFIRMED_FIELD = "confirmed"
+WAIVED_FIELD = "waived"
+
+
+def _req_list(value) -> list[dict]:
+    """Объявления требований из конфига: без `id` требование не существует.
+
+    Идентификатор обязателен, потому что именно он попадает во frontmatter:
+    пользовательский текст с запятой внутри рвал бы разбор плоского списка.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [dict(r) for r in value if isinstance(r, dict) and _one_line(r.get("id"))]
+
+
+def parse_req_ids(value) -> list[str]:
+    """Идентификаторы требований из поля frontmatter — как их написал человек.
+
+    Отдельно от `parse_ids`: тот приводит к верхнему регистру, потому что разбирает
+    `TASK-NNN`. Идентификатор требования человек пишет в конфиге строчными, и в
+    файле задачи он обязан выглядеть так же — иначе конфиг и данные читаются как
+    разные вещи. Сравнение при этом регистронезависимое.
+    """
+    if isinstance(value, (list, tuple, set)):
+        value = ", ".join(str(v) for v in value)
+    out: list[str] = []
+    for part in re.split(r"[,\s]+", str(value or "")):
+        part = part.strip()
+        if not part or part == EMPTY or part.lower() in [o.lower() for o in out]:
+            continue
+        out.append(part)
+    return out
+
+
+def format_req_ids(ids) -> str:
+    """Значение поля из списка идентификаторов (пустой список — «~»)."""
+    ids = parse_req_ids(ids)
+    return ", ".join(ids) if ids else EMPTY
+
+
+def requirement_wording(req: dict) -> str:
+    """Как требование называется человеку — одинаково в отказе и напоминании."""
+    text = _one_line(req.get("ask") or req.get("name") or req.get("id"))
+    return f"«{text}» ({_one_line(req.get('id'))})"
+
+
+def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dict]:
+    """Что этап просит на выходе: объявленное проектом и рекомендованное каталогом.
+
+    `mandatory` — объявлено в `requires` и потому даёт отказ; иначе рекомендация,
+    дающая напоминание. Одноимённое объявление вытесняет рекомендацию: один и тот
+    же id не должен звучать дважды.
+    """
+    declared = [dict(r, mandatory=True)
+                for r in _req_list((cfg.get("requires") or {}).get(status))]
+    seen = {_one_line(r.get("id")).upper() for r in declared}
+    meta = next((s for s in pipeline if s["key"] == status), {})
+    recommended = [dict(r, mandatory=False) for r in _req_list(meta.get("recommends"))
+                   if _one_line(r.get("id")).upper() not in seen]
+    return declared + recommended
+
+
+def _section_filled(lines: list[str], name: str) -> bool:
+    """Есть ли в секции хоть что-то. Не то же, что «секция есть»: пустая секция
+    «Изменение для пользователя» — это принятое решение «сказать нечего»."""
+    bounds = _section_bounds(lines, name)
+    if bounds is None:
+        return False
+    start, end = bounds
+    return any(lines[i].strip() for i in range(start + 1, end))
+
+
+def requirement_met(req: dict, task_path) -> bool:
+    """Выполнено ли требование — по одному лишь файлу задачи.
+
+    Граница жёсткая: ни git, ни сети, ни обхода файловой системы. Долг считается
+    для каждой карточки доски, и предикат, лезущий наружу, превращает открытие
+    доски в ожидание.
+
+    Неизвестный предикат истинен (fail-open): непонятная декларация не должна
+    останавливать работу — про неё скажет валидатор, а не отказ посреди дела.
+    """
+    path = Path(task_path)
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return True
+
+    check = _one_line(req.get("check"))
+    name = _one_line(req.get("name"))
+    if check == "checklist_done":
+        return not _unchecked_boxes(lines)
+    if check == "section_present":
+        return bool(name) and _section_bounds(lines, name) is not None
+    if check == "section_filled":
+        return bool(name) and _section_filled(lines, name)
+    if check == "field":
+        return bool(name) and bool(_one_line(_read_meta(path).get(name)))
+    if check == "confirm":
+        done = [i.lower() for i in parse_req_ids(_read_meta(path).get(CONFIRMED_FIELD))]
+        return _one_line(req.get("id")).lower() in done
+    return True
+
+
+def unmet(reqs: list[dict], task_path) -> list[dict]:
+    """Требования, ложные сейчас и не списанные."""
+    waived = [i.lower()
+              for i in parse_req_ids(_read_meta(Path(task_path)).get(WAIVED_FIELD))]
+    return [r for r in reqs
+            if _one_line(r.get("id")).lower() not in waived
+            and not requirement_met(r, task_path)]
+
+
+def crossed(pipeline: list[dict], status: str) -> list[str]:
+    """Этапы, которые задача уже прошла: строго левее текущего, без съездов.
+
+    В съезде и в терминальном статусе пересечения нет вовсе. Без этих двух
+    ограничителей механизм навесил бы долг на всю историю проекта задним числом.
+    """
+    keys = [s["key"] for s in pipeline]
+    if status not in keys:
+        return []
+    if pipeline[keys.index(status)].get("offramp") or is_terminal(pipeline, status):
+        return []
+    return [s["key"] for s in pipeline[:keys.index(status)] if not s.get("offramp")]
+
+
+def move_requirements(cfg: dict, pipeline: list[dict],
+                      current: str, target: str) -> list[dict]:
+    """Что просят этапы на пути `[исходный … цель)`.
+
+    Только вперёд и только по маршруту: назад и в съезд не проверяется никогда —
+    возврат идёт правильно, и списывать там нечего. Прыжок через этап законен, но
+    требования пропущенного он не отменяет: они и есть то, что прыжок пропускает.
+    """
+    keys = [s["key"] for s in pipeline]
+    if current not in keys or target not in keys:
+        return []
+    if pipeline[keys.index(target)].get("offramp"):
+        return []
+    if keys.index(target) <= keys.index(current):
+        return []
+    crossing = [s["key"] for s in pipeline[keys.index(current):keys.index(target)]
+                if not s.get("offramp")]
+    return [r for key in crossing for r in stage_requirements(cfg, pipeline, key)]
+
+
+def _label_of(pipeline: list[dict], status: str) -> str:
+    return next((s.get("label", status) for s in pipeline if s["key"] == status), status)
+
+
+def _requirement_line(req: dict) -> str:
+    """Строка о невыполненном требовании: чем оно гасится, сказано тут же."""
+    rid = _one_line(req.get("id"))
+    how = (f"отметить: --confirm {rid} \"как подтвердили\""
+           if _one_line(req.get("check")) == "confirm"
+           else "сделать и повторить")
+    return f"{requirement_wording(req)} — {how}"
+
+
+def gate_message(task_id: str, pipeline: list[dict], current: str,
+                 target: str, blocked: list[dict]) -> str:
+    """Текст отказа: что не выполнено, чем гасится и как обойти намеренно."""
+    lines = [f"{task_id} → {target}: этап «{_label_of(pipeline, current)}» требует "
+             f"на выходе, а этого нет:"]
+    lines += [f"  - {_requirement_line(r)}" for r in blocked]
+    lines.append("Пропустить намеренно: --waive <id> --reason \"почему\" "
+                 "(останется строкой в заметках агента)")
+    return "\n".join(lines)
+
+
+def stage_reminders(pipeline: list[dict], current: str, pending: list[dict]) -> list[str]:
+    """Напоминания о невыполненных рекомендациях — теми же словами, что и отказ.
+
+    Печатается только невыполненное и только на движении вперёд: шум равен тому,
+    что не сделано. Это то, чем раньше был обвес скиллов, — но работает у всех,
+    включая тех, кто ничего не настраивал.
+    """
+    return [f"уходя из «{_label_of(pipeline, current)}»: {_requirement_line(r)}"
+            for r in pending if not r.get("mandatory")]
+
+
+def stage_announcement(cfg: dict, pipeline: list[dict], status: str) -> str:
+    """Что этап потребует на выходе — сказанное при входе в него.
+
+    Требование, о котором узнают в момент отказа, выглядит придиркой; то же
+    самое, сказанное на входе, — условием работы.
+    """
+    reqs = [r for r in stage_requirements(cfg, pipeline, status) if r.get("mandatory")]
+    if not reqs:
+        return ""
+    return (f"этап «{_label_of(pipeline, status)}» требует на выходе: "
+            + "; ".join(requirement_wording(r) for r in reqs))
+
+
+def task_debt(tasks_dir, task_id: str, cfg: dict | None = None) -> dict:
+    """Долг задачи в её нынешнем положении.
+
+    Долг **вычисляется, а не хранится**: хранимое производное поле разъезжается
+    молча и переживает честный возврат через ревью, где списывать нечего.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    cfg = load_config(tasks_dir) if cfg is None else cfg
+    pipeline = pipeline_of(cfg)
+    status = current_status(tasks_dir, task_id) or ""
+    reqs = [r for key in crossed(pipeline, status)
+            for r in stage_requirements(cfg, pipeline, key)]
+    pending = unmet(reqs, path)
+    return {"ok": True, "task": task_id, "status": status,
+            "debt": [r for r in pending if r.get("mandatory")],
+            "recommended": [r for r in pending if not r.get("mandatory")]}
+
+
+def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
+                      text: str, agent: str | None, what: str) -> dict:
+    """Записать факт (подтверждение или списание) и оставить строку в заметках.
+
+    Во frontmatter идёт только идентификатор — плоским списком, как `blocked_by`.
+    Человеческая причина живёт в «Заметках агента» со временем из системы: она
+    нужна тому, кто придёт к задаче позже, а не механизму.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    req_id = _one_line(req_id)
+    if not req_id:
+        return {"ok": False, "error": "Нужен идентификатор требования"}
+    text = _one_line(text)
+    if not text:
+        return {"ok": False,
+                "error": f"«{req_id}»: {what} без объяснения не выполняется — "
+                         f"причина остаётся в файле для того, кто придёт позже"}
+
+    note = add_note(tasks_dir, task_id, f"{what} «{req_id}»: {text}", agent=agent)
+    if not note.get("ok"):
+        return note
+
+    ids = parse_req_ids(_read_meta(path).get(field))
+    if req_id.lower() not in [i.lower() for i in ids]:
+        ids.append(req_id)
+        _set_fields(path, {field: format_req_ids(ids)})
+    return {"ok": True, "task": task_id, "id": req_id, "note": note["note"]}
+
+
+def confirm_requirement(tasks_dir, task_id: str, req_id: str, text: str,
+                        agent: str | None = None) -> dict:
+    """Отметить требование выполненным: подтверждение — тоже факт, не суждение."""
+    return _mark_requirement(tasks_dir, task_id, CONFIRMED_FIELD, req_id, text,
+                             agent, "подтверждено")
+
+
+def waive_requirement(tasks_dir, task_id: str, req_id: str, reason: str,
+                      agent: str | None = None) -> dict:
+    """Списать требование — единственный легальный обход, громкий и со следом."""
+    return _mark_requirement(tasks_dir, task_id, WAIVED_FIELD, req_id, reason,
+                             agent, "списано требование")
+
+
+# --- КОНЕЦ БЛОКА: требования этапа ------------------------------------------
+
+
 # --- Конец работы над задачей -----------------------------------------------
 # Правило «финализируй скиллом» записано в правилах проекта и не срабатывает:
 # напоминание, лежащее вдали от места действия, проигрывает контексту, который
@@ -1126,6 +1435,17 @@ def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
         out["task"] = task_id
         out["current"] = status
         out.update(directions(pipeline, status or ""))
+        # Долг по каждой цели — тем же вызовом, которым скилл и так спрашивает
+        # маршрут: второй команде «а можно ли туда» взяться неоткуда
+        path = find_task_file(Path(tasks_dir), task_id)
+        blocked: dict[str, list[dict]] = {}
+        if path is not None:
+            for target in out.get("forward", []):
+                rest = unmet(move_requirements(cfg, pipeline, status or "", target), path)
+                stopping = [r for r in rest if r.get("mandatory")]
+                if stopping:
+                    blocked[target] = stopping
+        out["blocked"] = blocked
     return out
 
 
@@ -1156,6 +1476,13 @@ def main() -> None:
                         help="каталог типов задач (JSON)")
     parser.add_argument("--stalled", action="store_true",
                         help="Что сейчас стоит и почему (JSON)")
+    parser.add_argument("--debt", metavar="TASK-NNN", default=None,
+                        help="Долг задачи: требования пройденных этапов (JSON)")
+    parser.add_argument("--confirm", nargs=2, metavar=("ID", "ЧТО СКАЗАЛ ЧЕЛОВЕК"),
+                        default=None,
+                        help="Отметить требование выполненным (нужен --agent)")
+    parser.add_argument("--waive", metavar="ID", default=None,
+                        help="Списать требование: нужен --reason, след — в заметках")
     parser.add_argument("--note", metavar="ТЕКСТ", default=None,
                         help="Дописать заметку агента (время — системное, строка — в конец)")
     parser.add_argument("--agent", default=None,
@@ -1184,8 +1511,40 @@ def main() -> None:
         print(json.dumps(stalled(tasks_dir), ensure_ascii=False, indent=2))
         return
 
+    if args.debt:
+        result = task_debt(tasks_dir, args.debt)
+        if not result.get("ok"):
+            print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
     if args.list or args.targets:
         print(json.dumps(describe(tasks_dir, args.targets), ensure_ascii=False, indent=2))
+        return
+
+    # Подтверждение и списание — факты о задаче, а не этап: идут и сами по себе,
+    # и вместе со сменой статуса (погасить долг и двинуть задачу за один вызов)
+    for flag, action, done in (
+        (args.confirm, lambda: confirm_requirement(
+            tasks_dir, args.task_id, args.confirm[0], args.confirm[1], agent=args.agent),
+         "подтверждено"),
+        (args.waive, lambda: waive_requirement(
+            tasks_dir, args.task_id, args.waive, args.reason, agent=args.agent),
+         "списано"),
+    ):
+        if not flag:
+            continue
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --confirm / --waive")
+        result = action()
+        if not result.get("ok"):
+            print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[OK] {result['task']}: {done} «{result['id']}»")
+        print(result["note"])
+
+    if (args.confirm or args.waive) and not args.status and args.note is None:
         return
 
     # Тип — метка работы, а не этап: по маршруту он задачу не двигает, поэтому
@@ -1267,10 +1626,12 @@ def main() -> None:
     if result.get("skipped"):
         # Не запрет, а видимость: пайплайн описывает ожидаемый маршрут
         print(f"[i] минуя {', '.join(result['skipped'])}")
+    if result.get("announce"):
+        print(f"[i] {result['announce']}")
     for warning in result.get("warnings", []):
         print(f"[!] {warning}")
     # Не гейт, а подсказка: переход уже выполнен, код возврата прежний
-    for reminder in result.get("reminders", []):
+    for reminder in result.get("stage_reminders", []) + result.get("reminders", []):
         print(f"[!] {reminder}")
 
 
