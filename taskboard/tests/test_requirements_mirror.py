@@ -146,6 +146,27 @@ class MirrorTest(unittest.TestCase):
                     path)]
                 self.assertEqual(mine, theirs)
 
+    def test_own_id_silences_recommendation_in_both_mirrors(self) -> None:
+        """Вытеснение рекомендации считается по смыслу предиката, а не по `id`,
+        и обе реализации обязаны считать его одинаково (TASK-135).
+
+        Проект объявил своё требование на этапе, у которого каталог рекомендует
+        `confirm`: рекомендация замолчала, но каталожный `id` остался бы в долге,
+        разойдись зеркала.
+        """
+        from backend.requirements import stage_requirements as backend_reqs
+
+        cfg = dict(self.cfg, requires={"testing": [
+            {"id": "qa_ok", "check": "confirm", "ask": "проверено на контуре"}]})
+        pipeline = self.script.pipeline_of(cfg)
+
+        mine = [r["id"] for r in backend_reqs(cfg, pipeline, "testing")]
+        theirs = [r["id"] for r in self.script.stage_requirements(cfg, pipeline,
+                                                                 "testing")]
+
+        self.assertEqual(mine, theirs)
+        self.assertEqual(mine, ["qa_ok"])
+
     def test_section_name_case_does_not_split_mirrors(self) -> None:
         """Имя секции пишет человек — регистр не должен менять вердикт.
 

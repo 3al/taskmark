@@ -622,6 +622,54 @@ class RecommendationTest(RequirementsTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn(rec["id"], result.stdout)
 
+    def test_own_id_with_the_same_predicate_also_silences(self) -> None:
+        """Идентификатор человек придумывает сам — угадывать чужой он не обязан.
+
+        Трение обкатки (TASK-112, Т9): вытеснение шло по совпадению `id`, поэтому
+        своё требование с тем же смыслом получало вдогонку рекомендацию каталога —
+        два ритуала там, где всё настроено верно. Совпадать должен предикат.
+        """
+        self._requires({"testing": [{"id": "qa_ok", "check": "confirm",
+                                     "ask": "проверено на контуре"}]})
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "qa_ok"})
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("[!]", result.stdout,
+                         "рекомендация того же смысла звучать не должна")
+
+    def test_recommendation_of_another_predicate_still_speaks(self) -> None:
+        """Взяв под контроль одно требование этапа, человек не теряет подсказку
+        о другом: у релизных заметок их две — секция и утверждение текстов."""
+        rec = self.mod.CATALOG["release_notes"]["recommends"]
+        confirm_rec = next(r for r in rec if r["check"] == "confirm")
+        section_rec = next(r for r in rec if r["check"] == "section_present")
+        self._requires({"release_notes": [{"id": "texts_ok", "check": "confirm",
+                                           "ask": "тексты утвердил главред"}]})
+        path = self._task(status="release_notes")
+        self.mod._set_fields(path, {"confirmed": "texts_ok"})
+
+        result = self._run("TASK-001", "done", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(section_rec["id"], result.stdout,
+                      "рекомендация другого предиката обязана прозвучать")
+        self.assertNotIn(confirm_rec["id"], result.stdout)
+
+    def test_section_parameter_matches_regardless_of_case(self) -> None:
+        """Имя секции пишет человек, и на регистре зеркала уже расходились."""
+        stage = {"key": "x", "label": "X",
+                 "recommends": [{"id": "commits", "check": "section_filled",
+                                 "name": "История коммитов"}]}
+        cfg = {"requires": {"x": [{"id": "mine", "check": "section_filled",
+                                   "name": "история КОММИТОВ"}]}}
+
+        reqs = self.mod.stage_requirements(cfg, [stage], "x")
+
+        self.assertEqual([r["id"] for r in reqs], ["mine"])
+
 
 class ReportingTest(RequirementsTestCase):
     """Долг узнаётся тем же вызовом, которым скилл и так спрашивает маршрут."""

@@ -86,11 +86,21 @@ def requirement_wording(req: dict) -> str:
     return f"«{requirement_text(req)}» ({_one_line(req.get('id'))})"
 
 
+def _requirement_kind(req: dict) -> tuple[str, str]:
+    """Отпечаток требования: что проверяется и у чего. Зеркало функции скрипта.
+
+    По `id` декларации не сопоставляются: идентификатор человек придумывает сам,
+    и вытеснение по имени заставляло угадывать идентификатор рекомендации из
+    каталога (TASK-135). Смысл задают предикат и его параметр.
+    """
+    return (_one_line(req.get("check")).lower(), _one_line(req.get("name")).lower())
+
+
 def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dict]:
     """Что этап просит на выходе: объявленное проектом и рекомендованное каталогом.
 
     `mandatory` — объявлено в `requires` и потому даёт отказ у скрипта; иначе
-    рекомендация. Одноимённое объявление вытесняет рекомендацию.
+    рекомендация. Объявленное вытесняет рекомендацию **того же смысла**.
     """
     meta = next((s for s in _rows(pipeline) if s["key"] == status), {})
     # `stage` — чьё это требование. Долг копится с разных этапов, и назвать
@@ -98,10 +108,12 @@ def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dic
     stage = {"stage": status, "stage_label": meta.get("label", status)}
     declared = [dict(r, mandatory=True, **stage)
                 for r in _req_list((cfg.get("requires") or {}).get(status))]
-    seen = {_one_line(r.get("id")).upper() for r in declared}
+    seen = {_requirement_kind(r) for r in declared}
+    seen |= {_one_line(r.get("id")).lower() for r in declared}
     recommended = [dict(r, mandatory=False, **stage)
                    for r in _req_list(meta.get("recommends"))
-                   if _one_line(r.get("id")).upper() not in seen]
+                   if _requirement_kind(r) not in seen
+                   and _one_line(r.get("id")).lower() not in seen]
     return declared + recommended
 
 
