@@ -446,6 +446,92 @@ class ReturnResetsConfirmationTest(RequirementsTestCase):
         self.assertIn("verified", result.stderr)
 
 
+class UndoFactsTest(RequirementsTestCase):
+    """Факты снимаются командой, а не правкой frontmatter руками (TASK-132).
+
+    Механизм умел ставить `confirmed` и `waived`, но не снимать: ошибочное
+    списание приходилось убирать вручную — ровно тем способом, от которого он и
+    уводит, потому что причина остаётся в комментариях, а поле уезжает отдельно.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._requires({"testing": [{"id": "verified", "check": "confirm",
+                                     "ask": "проверку подтвердил человек"},
+                                    {"id": "commits", "check": "section_filled",
+                                     "name": "История коммитов"}]})
+
+    def test_unwaive_removes_and_leaves_trace(self) -> None:
+        path = self._task(status="testing")
+        self._run("TASK-001", "--waive", "commits", "--reason", "коммитов не будет",
+                  "--agent", "Тест")
+
+        result = self._run("TASK-001", "--unwaive", "commits", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._meta(path).get("waived"), "~")
+        trace = [n for n in self._notes(path) if "снято списание" in n]
+        self.assertTrue(trace, "снятие списания не оставило следа")
+        self.assertIn("История коммитов", trace[0],
+                      "в строке должна быть формулировка, а не служебный id")
+
+    def test_unwaive_brings_the_debt_back(self) -> None:
+        """Списание снято — требование снова в долге, если оно не выполнено."""
+        path = self._task(status="ready_for_release")
+        # Требование должно быть именно невыполненным: с заполненной секцией
+        # оно истинно и без списания, и тест ничего бы не проверял
+        path.write_text(path.read_text(encoding="utf-8")
+                        .replace("- `abc1234` тестовый коммит", ""), encoding="utf-8")
+        self._run("TASK-001", "--waive", "commits", "--reason", "проверка", "--agent", "Тест")
+        self._run("TASK-001", "--unwaive", "commits", "--agent", "Тест")
+
+        debt = [r["id"] for r in self.mod.task_debt(self.tasks, "TASK-001")["debt"]]
+
+        self.assertIn("commits", debt)
+
+    def test_unconfirm_removes_confirmation(self) -> None:
+        path = self._task(status="testing")
+        self._run("TASK-001", "--confirm", "verified", "проверил", "--agent", "Тест")
+
+        self._run("TASK-001", "--unconfirm", "verified", "--agent", "Тест")
+
+        self.assertEqual(self._meta(path).get("confirmed"), "~")
+        self.assertTrue([n for n in self._notes(path) if "снято подтверждение" in n])
+
+    def test_without_id_removes_all(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"waived": "commits, verified"})
+
+        self._run("TASK-001", "--unwaive", "--agent", "Тест")
+
+        self.assertEqual(self._meta(path).get("waived"), "~")
+
+    def test_nothing_to_remove_is_not_an_error(self) -> None:
+        """Снимать нечего — это не ошибка и не повод писать в хронологию."""
+        path = self._task(status="testing")
+
+        result = self._run("TASK-001", "--unwaive", "commits", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([n for n in self._notes(path) if "снято" in n], [])
+
+    def test_keeps_other_ids(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"waived": "commits, verified"})
+
+        self._run("TASK-001", "--unwaive", "commits", "--agent", "Тест")
+
+        self.assertEqual(self.mod.parse_req_ids(self._meta(path).get("waived")),
+                         ["verified"])
+
+    def test_requires_agent(self) -> None:
+        """Строку в комментариях подписывает тот, кто снял: без модели она врёт."""
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"waived": "commits"})
+
+        self.assertEqual(self._run("TASK-001", "--unwaive", "commits").returncode, 1)
+
+
 class RecommendationTest(RequirementsTestCase):
     """Проект, ничего не объявивший, ничего не теряет — но и не молчит."""
 

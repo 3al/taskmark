@@ -1424,6 +1424,59 @@ def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
             "note": note["note"]}
 
 
+def _unmark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
+                        agent: str | None, what: str) -> dict:
+    """Снять факт (подтверждение или списание) и оставить строку в комментариях.
+
+    Пустой `req_id` снимает все. Причина здесь не спрашивается: списание требовало
+    её как обход, а снятие — возврат к честному состоянию, объяснять нечего.
+
+    Снятие такое же решение, как сам факт, поэтому оно тоже громкое: молчаливое
+    неотличимо от того, что списания и не было.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+
+    current = parse_req_ids(_read_meta(path).get(field))
+    req_id = _one_line(req_id)
+    if req_id:
+        removed = [i for i in current if i.lower() == req_id.lower()]
+    else:
+        removed = list(current)
+    if not removed:
+        return {"ok": True, "task": task_id, "removed": []}
+
+    cfg = load_config(tasks_dir)
+    named = requirement_names(cfg, pipeline_of(cfg), removed)
+    note = add_note(tasks_dir, task_id, f"{what}: {'; '.join(named)}", agent=agent)
+    if not note.get("ok"):
+        return note
+
+    kept = [i for i in current if i not in removed]
+    _set_fields(path, {field: format_req_ids(kept)})
+    return {"ok": True, "task": task_id, "removed": removed, "note": note["note"]}
+
+
+def unwaive_requirement(tasks_dir, task_id: str, req_id: str = "",
+                        agent: str | None = None) -> dict:
+    """Снять списание: требование снова считается — и снова попадёт в долг."""
+    return _unmark_requirement(tasks_dir, task_id, WAIVED_FIELD, req_id, agent,
+                               "снято списание")
+
+
+def unconfirm_requirement(tasks_dir, task_id: str, req_id: str = "",
+                          agent: str | None = None) -> dict:
+    """Снять подтверждение, не двигая задачу.
+
+    Возврат назад по маршруту снимает подтверждения сам, но это грубый
+    инструмент: он меняет статус. Подтвердили преждевременно — снимается точечно.
+    """
+    return _unmark_requirement(tasks_dir, task_id, CONFIRMED_FIELD, req_id, agent,
+                               "снято подтверждение")
+
+
 def confirm_requirement(tasks_dir, task_id: str, req_id: str, text: str,
                         agent: str | None = None) -> dict:
     """Отметить требование выполненным: подтверждение — тоже факт, не суждение."""
@@ -1608,6 +1661,10 @@ def main() -> None:
                         help="Отметить требование выполненным (нужен --agent)")
     parser.add_argument("--waive", metavar="ID", default=None,
                         help="Списать требование: нужен --reason, след — в заметках")
+    parser.add_argument("--unwaive", metavar="ID", nargs="?", const="", default=None,
+                        help="Снять списание (без значения — все)")
+    parser.add_argument("--unconfirm", metavar="ID", nargs="?", const="", default=None,
+                        help="Снять подтверждение, не двигая задачу (без значения — все)")
     parser.add_argument("--note", metavar="ТЕКСТ", default=None,
                         help="Дописать заметку агента (время — системное, строка — в конец)")
     parser.add_argument("--agent", default=None,
@@ -1657,23 +1714,36 @@ def main() -> None:
         (args.waive, lambda: waive_requirement(
             tasks_dir, args.task_id, args.waive, args.reason, agent=args.agent),
          "списано"),
+        # Снятие идёт тем же путём: это тоже факт о задаче, а не этап
+        (args.unwaive is not None, lambda: unwaive_requirement(
+            tasks_dir, args.task_id, args.unwaive, agent=args.agent), "снято списание"),
+        (args.unconfirm is not None, lambda: unconfirm_requirement(
+            tasks_dir, args.task_id, args.unconfirm, agent=args.agent),
+         "снято подтверждение"),
     ):
         if not flag:
             continue
         if not args.task_id:
-            parser.error("нужен TASK-NNN для --confirm / --waive")
+            parser.error("нужен TASK-NNN для --confirm / --waive / --unwaive / --unconfirm")
         result = action()
         if not result.get("ok"):
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
-        if result.get("already"):
+        if "removed" in result:
+            if not result["removed"]:
+                print(f"[i] {result['task']}: снимать нечего")
+            else:
+                print(f"[OK] {result['task']}: {done} — {', '.join(result['removed'])}")
+                print(result["note"])
+        elif result.get("already"):
             print(f"[i] {result['task']}: «{result['id']}» уже отмечено раньше — "
                   f"повтор ничего не изменил")
         else:
             print(f"[OK] {result['task']}: {done} «{result['id']}»")
             print(result["note"])
 
-    if (args.confirm or args.waive) and not args.status and args.note is None:
+    if ((args.confirm or args.waive or args.unwaive is not None
+         or args.unconfirm is not None) and not args.status and args.note is None):
         return
 
     # Тип — метка работы, а не этап: по маршруту он задачу не двигает, поэтому
