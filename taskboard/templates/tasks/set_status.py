@@ -532,6 +532,14 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # Доехали до конца маршрута — «ждёт» про закрытую задачу больше не правда
     cleared = clear_stall(tasks_dir, task_id) if is_terminal(pipeline, status) else None
 
+    # Возврат назад: этапы правее цели задача пройдёт заново, и подтверждения
+    # прошлой итерации к новой не относятся
+    keys_all = [s["key"] for s in pipeline]
+    unconfirmed: list[str] = []
+    if (from_status in keys_all and status in keys_all
+            and keys_all.index(status) < keys_all.index(from_status)):
+        unconfirmed = reset_confirmations(task_file, cfg, pipeline, status)
+
     # Работа кончилась — самое время сказать про волт и хвосты в файле задачи:
     # позже, при выпуске, автор деталей уже не помнит
     reminders = (finish_reminders(tasks_dir, task_id, task_file, cfg)
@@ -540,6 +548,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     return {"ok": True, "task": task_id, "status": status, "section": section,
             "file": task_file.name, "from": prev, "skipped": skipped,
             "stall_cleared": bool(cleared and cleared.get("cleared")),
+            "unconfirmed": unconfirmed,
             "reminders": reminders,
             # Отдельным ключом от reminders: это разные механизмы — конец работы
             # напоминает о хвостах задачи, этап говорит о невыполненном на выходе
@@ -1180,11 +1189,20 @@ def crossed(pipeline: list[dict], status: str) -> list[str]:
 
 def move_requirements(cfg: dict, pipeline: list[dict],
                       current: str, target: str) -> list[dict]:
-    """Что просят этапы на пути `[исходный … цель)`.
+    """Что должно быть закрыто, чтобы задача оказалась в целевом статусе.
 
-    Только вперёд и только по маршруту: назад и в съезд не проверяется никогда —
-    возврат идёт правильно, и списывать там нечего. Прыжок через этап законен, но
-    требования пропущенного он не отменяет: они и есть то, что прыжок пропускает.
+    Правило одно: **переход вперёд разрешён, если в целевой позиции долг пуст**.
+    Поэтому смотрим не на пересекаемый отрезок, а на **все пройденные этапы** —
+    требования всего, что окажется левее цели.
+
+    Так задумано с самого начала: агент, уходя с этапа, видит все незакрытые
+    долги предыдущих и гасит их. Считать только отрезок `[исходный … цель)`
+    значило бы, что этап, пройденный мимо гейта — рукой на доске, — не проверится
+    уже никогда: один перенос мышью снимал бы проверку насовсем и молча, в отличие
+    от `--waive`, который хотя бы оставляет строку.
+
+    Не проверяется никогда: движение назад и в съезд. Возврат идёт по маршруту
+    правильно, а у задачи в съезде долга нет вовсе.
     """
     keys = [s["key"] for s in pipeline]
     if current not in keys or target not in keys:
@@ -1193,9 +1211,42 @@ def move_requirements(cfg: dict, pipeline: list[dict],
         return []
     if keys.index(target) <= keys.index(current):
         return []
-    crossing = [s["key"] for s in pipeline[keys.index(current):keys.index(target)]
-                if not s.get("offramp")]
-    return [r for key in crossing for r in stage_requirements(cfg, pipeline, key)]
+    passed = [s["key"] for s in pipeline[:keys.index(target)] if not s.get("offramp")]
+    return [r for key in passed for r in stage_requirements(cfg, pipeline, key)]
+
+
+def reset_confirmations(task_path, cfg: dict, pipeline: list[dict],
+                        target: str) -> list[str]:
+    """Снять подтверждения этапов, которые задача пройдёт заново. Вернуть снятые.
+
+    Возврат назад — это признание, что этап не закрыт: задача пойдёт по нему
+    ещё раз, и подтверждение прошлой итерации к новой не относится. Оставленное,
+    оно гасит требование там, где вторая итерация принесла новое — другую
+    проверку человеком, другие коммиты, другое знание.
+
+    Подтверждения этапов **левее** цели остаются: их задача заново не проходит.
+
+    `waived` не трогаем. Списание — решение о самом требовании («оно к этой
+    задаче не относится»), а не о степени готовности; сбрасывая его, мы заставили
+    бы списывать одно и то же на каждом круге, а рутина списаний — главный
+    признак того, что механизм неверен.
+    """
+    path = Path(task_path)
+    keys = [s["key"] for s in pipeline]
+    if target not in keys:
+        return []
+    again = [s["key"] for s in pipeline[keys.index(target):] if not s.get("offramp")]
+    ids = {_one_line(r.get("id")).lower()
+           for key in again for r in stage_requirements(cfg, pipeline, key)}
+    if not ids:
+        return []
+
+    confirmed = parse_req_ids(_read_meta(path).get(CONFIRMED_FIELD))
+    dropped = [i for i in confirmed if i.lower() in ids]
+    if dropped:
+        kept = [i for i in confirmed if i.lower() not in ids]
+        _set_fields(path, {CONFIRMED_FIELD: format_req_ids(kept)})
+    return dropped
 
 
 def _label_of(pipeline: list[dict], status: str) -> str:
@@ -1623,6 +1674,9 @@ def main() -> None:
     print(f"[OK] {result['task']} → {result['status']} (раздел «{result['section']}»)")
     if result.get("stall_cleared"):
         print("[i] простой снят: задача дошла до конца маршрута")
+    if result.get("unconfirmed"):
+        print(f"[i] снято подтверждение: {', '.join(result['unconfirmed'])} — "
+              f"эти этапы задача проходит заново")
     if result.get("skipped"):
         # Не запрет, а видимость: пайплайн описывает ожидаемый маршрут
         print(f"[i] минуя {', '.join(result['skipped'])}")

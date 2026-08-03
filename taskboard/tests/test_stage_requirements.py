@@ -247,6 +247,48 @@ class GateTest(RequirementsTestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("verified", result.stderr)
 
+    def test_stage_passed_by_hand_is_still_owed(self) -> None:
+        """Перенос мышью гейт не проходит — но и не отменяет требование навсегда.
+
+        Задача уже стоит правее `testing` (её перетащили на доске), требование
+        того этапа не выполнено. Следующее движение вперёд обязано его увидеть:
+        иначе один перенос рукой снимает проверку насовсем и молча.
+        """
+        self._task(status="ready_for_release")
+
+        result = self._run("TASK-001", "release_notes", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("verified", result.stderr)
+        self.assertEqual(self.mod.current_status(self.tasks, "TASK-001"),
+                         "ready_for_release")
+
+    def test_debt_and_gate_agree(self) -> None:
+        """Показанный долг и то, на чём останавливает гейт, — одно и то же.
+
+        Разойдясь, они дают худшее из двух: бейдж говорит о долге, которого гейт
+        не видит, или наоборот — отказ по тому, чего на карточке нет.
+        """
+        self._task(status="ready_for_release")
+
+        debt = [r["id"] for r in self.mod.task_debt(self.tasks, "TASK-001")["debt"]]
+        gate = [r["id"] for r in self.mod.unmet(
+            self.mod.move_requirements(self.mod.load_config(self.tasks),
+                                       self.mod.pipeline_of(self.mod.load_config(self.tasks)),
+                                       "ready_for_release", "release_notes"),
+            self.tasks / "TASK-001-test.md")]
+
+        self.assertEqual(debt, gate)
+
+    def test_terminal_target_is_checked_too(self) -> None:
+        """Закрытие задачи — тоже движение вперёд, и долг при нём не исчезает."""
+        self._task(status="ready_for_release")
+
+        result = self._run("TASK-001", "done", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("verified", result.stderr)
+
     def test_waive_lets_move_through_and_leaves_trace(self) -> None:
         path = self._task(status="testing")
 
@@ -287,6 +329,68 @@ class GateTest(RequirementsTestCase):
 
         self.assertEqual(self._run("TASK-001", "--confirm", "verified", "принято")
                          .returncode, 1)
+
+
+class ReturnResetsConfirmationTest(RequirementsTestCase):
+    """Возврат назад — признание, что этап не закрыт: его проходят заново."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._requires({"testing": [{"id": "verified", "check": "confirm",
+                                     "ask": "проверку подтвердил человек"}],
+                        "development": [{"id": "built", "check": "confirm",
+                                         "ask": "собрано"}]})
+
+    def test_return_drops_confirmation_of_stage_passed_again(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "verified"})
+
+        result = self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._meta(path).get("confirmed"), "~",
+                         "подтверждение прошлой итерации осталось")
+        self.assertIn("снято подтверждение", result.stdout)
+
+    def test_return_keeps_confirmation_of_earlier_stage(self) -> None:
+        """Этапы левее цели задача заново не проходит — их подтверждения при ней."""
+        path = self._task(status="ready_for_release")
+        self.mod._set_fields(path, {"confirmed": "built, verified"})
+
+        self._run("TASK-001", "testing", "--agent", "Тест")
+
+        self.assertEqual(self.mod.parse_req_ids(self._meta(path).get("confirmed")),
+                         ["built"])
+
+    def test_return_keeps_waivers(self) -> None:
+        """Списание — решение о самом требовании, а не о степени готовности."""
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"waived": "verified"})
+
+        self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertEqual(self._meta(path).get("waived"), "verified")
+
+    def test_forward_move_resets_nothing(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "verified"})
+
+        self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(self._meta(path).get("confirmed"), "verified")
+
+    def test_stage_is_asked_again_after_return(self) -> None:
+        """Смысл сброса: второй круг спрашивает заново, а не проезжает молча."""
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "verified"})
+        self._run("TASK-001", "development", "--agent", "Тест")
+        self._run("TASK-001", "--confirm", "built", "собрал", "--agent", "Тест")
+        self._run("TASK-001", "testing", "--agent", "Тест")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("verified", result.stderr)
 
 
 class RecommendationTest(RequirementsTestCase):
