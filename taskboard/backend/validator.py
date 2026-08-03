@@ -8,7 +8,8 @@ from pathlib import Path
 from backend.board_parser import parse_board
 from backend.board_repair import _section_for_status, row_matches_file, task_files
 from backend.config import is_lost_section
-from backend.scaffold import detect_harnesses, environment_issues, harness_choice
+from backend.scaffold import (detect_harnesses, environment_issues, harness_choice,
+                              script_capabilities)
 from backend.stall import plan_blocks_repair, stall_issues
 from backend.statuses import load_pipeline
 
@@ -189,6 +190,17 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
         if m and m.group(1) not in on_board:
             warnings.append(f"{f.name}: файла нет на доске")
             repairable += 1
+
+    # Настройка, опередившая развёрнутый скрипт: требования этапа объявлены,
+    # а исполняет их он, и обновляется он отдельно — кнопкой. Молчать тут
+    # нельзя: доска показывала бы долг, которого скрипт не проверяет, то есть
+    # человек считал бы этап защищённым, а гейта не было бы вовсе
+    if cfg.get("requires") and "requires" not in script_capabilities(tasks_dir, cfg):
+        status_script = cfg.get("status_script", "set_status.py")
+        warnings.append(
+            f"Требования этапов объявлены в настройках, но развёрнутый "
+            f"{status_script} их не поддерживает — обновите окружение в настройках, "
+            f"иначе агент проходит этапы без проверки")
 
     # Причины простоя (blocked_by / blocks / paused) живут во frontmatter, и
     # починка доски их не касается: битую ссылку и разъехавшиеся концы правит

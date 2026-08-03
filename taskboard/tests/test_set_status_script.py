@@ -423,6 +423,96 @@ class StatusScriptScaffoldTest(unittest.TestCase):
         self.assertIn("set_status.py", result["replaced"])
         self.assertNotIn("outdated_status_script", self._codes())
 
+    def test_trailing_newline_is_not_outdated(self) -> None:
+        """Съеденный редактором финальный перевод строки — не устаревание.
+
+        Скрипт сравнивался побайтово, а остальная поставка — построчно: копия
+        расходилась с шаблоном невидимо для diff, баннер объяснить было нечем,
+        а «Обновить» затирал правки пользователя.
+        """
+        text = self.script.read_text(encoding="utf-8")
+        self.script.write_text(text.rstrip("\n"), encoding="utf-8")
+        self.assertNotIn("outdated_status_script", self._codes())
+
+
+class ScriptContractTest(unittest.TestCase):
+    """Маркер контракта: инструмент видит, что умеет развёрнутая копия скрипта.
+
+    Копия обновляется кнопкой, отдельно от самого taskboard, — без маркера
+    возможен худший исход: требования объявлены, гейта нет, человек уверен,
+    что он есть.
+    """
+
+    def setUp(self) -> None:
+        from backend.config import DEFAULTS
+        from backend.scaffold import scaffold_project
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tasks = Path(self._tmp.name) / "project" / "tasks"
+        self.cfg = dict(DEFAULTS)
+        scaffold_project(self.tasks, self.cfg, {
+            "skills": False, "commands": False,
+            "rules_agents": False, "rules_claude": False,
+        })
+        self.script = self.tasks / "set_status.py"
+
+    def _warnings(self) -> list[str]:
+        from backend.validator import validate_project
+        return validate_project(self.tasks, self.cfg)["warnings"]
+
+    def _deploy_capabilities(self, names: set[str] | None) -> None:
+        """Подменить развёрнутую копию скриптом с заданным набором возможностей.
+
+        Состав маркера в шаблоне растёт (TASK-108 добавит "requires"), поэтому
+        тесты задают его сами, а не опираются на текущее содержимое шаблона.
+        """
+        marker = "" if names is None else \
+            "SCRIPT_CAPABILITIES = {%s}\n" % ", ".join(f'"{n}"' for n in sorted(names))
+        self.script.write_text(f'"""копия скрипта"""\n{marker}', encoding="utf-8")
+
+    def test_template_declares_capabilities(self) -> None:
+        from backend.scaffold import script_capabilities
+
+        self.assertTrue(script_capabilities(self.tasks, self.cfg),
+                        "шаблон скрипта не объявляет набор возможностей")
+
+    def test_old_copy_without_marker_has_no_capabilities(self) -> None:
+        from backend.scaffold import script_capabilities
+
+        self._deploy_capabilities(None)
+        self.assertEqual(script_capabilities(self.tasks, self.cfg), set())
+
+    def test_missing_script_has_no_capabilities(self) -> None:
+        from backend.scaffold import script_capabilities
+
+        self.script.unlink()
+        self.assertEqual(script_capabilities(self.tasks, self.cfg), set())
+
+    def test_silent_until_requirements_declared(self) -> None:
+        self._deploy_capabilities(set())
+        self.assertEqual([w for w in self._warnings() if "требован" in w.lower()], [])
+
+    def test_declared_requirements_without_support_reported(self) -> None:
+        self.cfg["requires"] = {"testing": [{"id": "verified", "check": "confirm"}]}
+        self._deploy_capabilities({"stall"})
+
+        found = [w for w in self._warnings() if "требован" in w.lower()]
+        self.assertTrue(found, "расхождение конфига и скрипта не попало в проблемы данных")
+        self.assertIn("set_status.py", found[0])
+
+    def test_supported_requirements_are_silent(self) -> None:
+        self.cfg["requires"] = {"testing": [{"id": "verified", "check": "confirm"}]}
+        self._deploy_capabilities({"requires"})
+
+        self.assertEqual([w for w in self._warnings() if "требован" in w.lower()], [])
+
+    def test_empty_requirements_are_silent(self) -> None:
+        self.cfg["requires"] = {}
+        self._deploy_capabilities({"stall"})
+
+        self.assertEqual([w for w in self._warnings() if "требован" in w.lower()], [])
+
 
 if __name__ == "__main__":
     unittest.main()

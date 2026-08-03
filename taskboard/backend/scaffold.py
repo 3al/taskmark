@@ -1035,7 +1035,29 @@ def _script_state(tasks_dir: Path, cfg: dict, cfg_key: str,
     if not path.is_file():
         return [name], []
     template = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
-    return [], ([] if _read(path) == template else [name])
+    return [], ([] if _same_content(_read(path), template) else [name])
+
+
+# Маркер контракта в скрипте: `SCRIPT_CAPABILITIES = {"stall", ...}`. Читаем
+# файл, а не импортируем: копия пользователя могла быть отредактирована до
+# неработоспособности, и падать на этом валидатор не должен
+_CAPABILITIES_RE = re.compile(r"SCRIPT_CAPABILITIES\s*=\s*\{([^}]*)\}")
+_CAPABILITY_RE = re.compile(r"[\"']([\w-]+)[\"']")
+
+
+def script_capabilities(tasks_dir: Path, cfg: dict) -> set[str]:
+    """Что умеет развёрнутая копия set_status.py — по маркеру контракта.
+
+    Пустое множество — копии нет или она старше маркера: возможностей, о
+    которых спрашивают, у неё нет ни одной. Спрашивать нужно там, где конфиг
+    объявляет то, что исполняет скрипт: он обновляется кнопкой, отдельно от
+    самого инструмента, и настройка легко оказывается впереди копии.
+    """
+    text = _read(tasks_dir / cfg.get("status_script", "set_status.py"))
+    if text is None:
+        return set()
+    m = _CAPABILITIES_RE.search(text)
+    return set(_CAPABILITY_RE.findall(m.group(1))) if m else set()
 
 
 def _targets_state(part: str,
