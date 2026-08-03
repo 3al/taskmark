@@ -146,6 +146,33 @@ class MirrorTest(unittest.TestCase):
                     path)]
                 self.assertEqual(mine, theirs)
 
+    def test_section_name_case_does_not_split_mirrors(self) -> None:
+        """Имя секции пишет человек — регистр не должен менять вердикт.
+
+        Скрипт сравнивал заголовок без учёта регистра, бэкенд искал точное
+        совпадение: «история коммитов» в конфиге давала агенту «выполнено», а
+        доске — долг.
+        """
+        from backend.requirements import requirement_met as backend_met
+
+        path = self._task("TASK-010", status="ready_for_release",
+                          commits="\n- `abc1234` коммит")
+        for name in ("История коммитов", "история коммитов", "  ИСТОРИЯ КОММИТОВ "):
+            req = {"id": "commits", "check": "section_filled", "name": name}
+            with self.subTest(name=name):
+                self.assertEqual(backend_met(req, path),
+                                 self.script.requirement_met(req, path))
+
+    def test_checklist_section_is_found_by_both(self) -> None:
+        """Чеклист ищется тем же способом — иначе разъедется и он."""
+        from backend.requirements import requirement_met as backend_met
+
+        path = self._task("TASK-011", status="ready_for_release", box=" ")
+        req = {"id": "checklist", "check": "checklist_done"}
+
+        self.assertEqual(backend_met(req, path), self.script.requirement_met(req, path))
+        self.assertFalse(backend_met(req, path), "незакрытый пункт не увиден")
+
     def test_terminal_and_offramp_have_no_debt_in_both(self) -> None:
         for task_id, status in (("TASK-006", "done"), ("TASK-007", "cancelled")):
             self._task(task_id, status=status)

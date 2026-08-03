@@ -23,12 +23,10 @@ from pathlib import Path
 
 from backend.notes import append_note
 from backend.statuses import load_pipeline
-from backend.task_parser import (find_task_file, parse_frontmatter,
-                                 section_body, section_bounds, set_meta_fields)
+from backend.task_parser import find_task_file, parse_frontmatter, set_meta_fields
 
 CONFIRMED_FIELD = "confirmed"
 WAIVED_FIELD = "waived"
-CHECKLIST_SECTION = "## Чеклист"
 
 EMPTY = "~"
 
@@ -107,15 +105,39 @@ def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dic
     return declared + recommended
 
 
+# Секцию ищем сами, а не через task_parser.section_bounds: тот заточен под
+# точные заголовки редактируемых секций, а имя сюда пишет человек в конфиге —
+# и «история коммитов» с маленькой буквы должна работать так же, как «История
+# коммитов». Зеркало `_section_bounds` скрипта: он сравнивает так же, и
+# расхождение давало доске один вердикт, а агенту другой
+_HEADING_RE = re.compile(r"^##\s+(.*)$")
+
+
+def _section_body(content: str, name: str) -> str | None:
+    """Тело секции `## name` (регистр и отступы не важны) либо None."""
+    lines = content.splitlines()
+    needle = (name or "").strip().lower()
+    start = None
+    for i, line in enumerate(lines):
+        m = _HEADING_RE.match(line)
+        if not m:
+            continue
+        if start is None and m.group(1).strip().lower() == needle:
+            start = i
+        elif start is not None:
+            return "\n".join(lines[start + 1:i])
+    return "\n".join(lines[start + 1:]) if start is not None else None
+
+
 def _unchecked_boxes(content: str) -> list[str]:
-    body = section_body(content, CHECKLIST_SECTION)
+    body = _section_body(content, "Чеклист")
     if body is None:
         return []
     return re.findall(r"^\s*-\s*\[\s\]\s*(.+?)\s*$", body, flags=re.M)
 
 
 def _section_filled(content: str, name: str) -> bool:
-    body = section_body(content, f"## {name}")
+    body = _section_body(content, name)
     return bool(body and body.strip())
 
 
@@ -136,7 +158,7 @@ def requirement_met(req: dict, task_path) -> bool:
     if check == "checklist_done":
         return not _unchecked_boxes(content)
     if check == "section_present":
-        return bool(name) and section_bounds(content, f"## {name}") is not None
+        return bool(name) and _section_body(content, name) is not None
     if check == "section_filled":
         return bool(name) and _section_filled(content, name)
     if check == "field":
