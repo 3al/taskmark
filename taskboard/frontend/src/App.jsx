@@ -64,6 +64,9 @@ export default function App() {
   const [pendingMove, setPendingMove] = useState(null)
   // Перенос в съезд с маршрута: без причины отмены он не состоится
   const [pendingCancel, setPendingCancel] = useState(null)
+  // Перенос, после которого задача останется с долгом этапа: предупреждаем,
+  // но не запрещаем — гейт стоит только на пути агента
+  const [pendingDebt, setPendingDebt] = useState(null)
   const [dndFullBoard, setDndFullBoard] = useState(false)
   const configLoaded = useRef(false)
   const [activeDrag, setActiveDrag] = useState(null)
@@ -82,15 +85,16 @@ export default function App() {
 
   // Esc закрывает вопрос о переносе и ввод причины — как и любое окно доски
   useEffect(() => {
-    if (!pendingMove && !pendingCancel) return
+    if (!pendingMove && !pendingCancel && !pendingDebt) return
     const onKey = (e) => {
       if (e.key !== 'Escape') return
       setPendingMove(null)
       setPendingCancel(null)
+      setPendingDebt(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pendingMove, pendingCancel])
+  }, [pendingMove, pendingCancel, pendingDebt])
 
   // Ввод опережает сеть: запрос уходит после паузы, иначе каждая буква — запрос
   useEffect(() => {
@@ -410,6 +414,47 @@ export default function App() {
       setPendingMove({ ...move, task: card, toTitle: sectionTitle })
       return
     }
+    // Долг этапа руку не гейтит — но цену переноса человек должен видеть до
+    // того, как задача уехала, а не узнавать её от агента через два этапа.
+    // Спрашиваем бэкенд: считать долг на фронте значило бы завести третье
+    // зеркало движка, которое разъедется с двумя первыми
+    if (from !== to) {
+      askDebtThenMove(move, sectionTitle, findColumn(from)?.title || from)
+      return
+    }
+    applyMove(move)
+  }
+
+  // Перенос между колонками: сначала вопрос о будущем долге, потом движение.
+  // Молчаливый провал вопроса не должен мешать переносу — доска остаётся
+  // источником правды, а долг никуда не денется и всплывёт у агента
+  const askDebtThenMove = async (move, sectionTitle, fromTitle) => {
+    try {
+      const result = await api.moveDebt(move.taskId, sectionTitle)
+      if (result?.debt?.length) {
+        // Долг делится по субъекту: `confirm` закрывает человек нажатием (он и
+        // есть тот, чьё подтверждение требуется), остальное — работой
+        const debt = result.debt
+        setPendingDebt({
+          ...move, toTitle: sectionTitle, fromTitle, debt,
+          confirmable: debt.filter((d) => d.confirmable),
+          blocking: debt.filter((d) => !d.confirmable),
+        })
+        return
+      }
+    } catch { /* вопрос не удался — переносим как раньше */ }
+    applyMove(move)
+  }
+
+  // Подтвердить своей рукой и перенести. Ошибка записи не отменяет перенос:
+  // доска остаётся источником правды, а незакрытое требование всплывёт долгом
+  const confirmThenMove = async (move) => {
+    try {
+      await api.confirmRequirements(move.taskId, move.confirmable.map((d) => d.id),
+                                    move.toTitle)
+    } catch (e) {
+      setError(e.message)
+    }
     applyMove(move)
   }
 
@@ -699,6 +744,82 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Перенос, после которого останется долг этапа. Не запрет: рука человека
+          не гейтится — но он видит цену до движения, а не узнаёт её от агента
+          через два этапа. Списать долг отсюда нельзя намеренно: списание —
+          инструмент агентского пути, и оно обязано оставлять строку в заметках */}
+      {pendingDebt && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+             onClick={() => setPendingDebt(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md shadow-2xl"
+               onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-zinc-800 text-base font-semibold text-amber-200">
+              {pendingDebt.confirmable.length > 0 ? 'Подтвердите перед переносом' : 'Задача уедет с долгом'}
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm text-zinc-300/90">
+              {/* Формулировка требования — утверждение о выполненном («проверку
+                  подтвердил человек»), поэтому обрамление даёт ей придаточное:
+                  «этап пройден, если …». Идентификатора здесь нет — он нужен
+                  тому, кто зовёт скрипт, а не тому, кто читает диалог */}
+              {pendingDebt.confirmable.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-zinc-400">Вы подтверждаете:</div>
+                  <ul className="space-y-1 text-zinc-200">
+                    {pendingDebt.confirmable.map((d) => (
+                      <li key={d.id}>
+                        — {d.text}
+                        {d.stage && <span className="text-zinc-500"> · этап «{d.stage}»</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Остальное закрывается работой, а не нажатием: чеклист, секции,
+                  поля. Здесь их можно только увидеть */}
+              {pendingDebt.blocking.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-zinc-500">
+                    {pendingDebt.confirmable.length > 0
+                      ? 'Останется долгом, агент закроет позже:'
+                      : 'Задача уедет с долгом, агент закроет позже:'}
+                  </div>
+                  <ul className="space-y-1 text-zinc-400">
+                    {pendingDebt.blocking.map((d) => (
+                      <li key={d.id}>
+                        — {d.text}
+                        {d.stage && <span className="text-zinc-600"> · этап «{d.stage}»</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
+              <button onClick={() => setPendingDebt(null)}
+                      className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">
+                Отмена
+              </button>
+              <button
+                onClick={() => { const m = pendingDebt; setPendingDebt(null); applyMove(m) }}
+                className="px-4 py-2 text-sm rounded-lg border border-zinc-700 text-zinc-300
+                  hover:border-zinc-500 hover:bg-zinc-800 transition"
+              >
+                {pendingDebt.confirmable.length > 0 ? 'Перенести без подтверждения' : 'Перенести с долгом'}
+              </button>
+              {pendingDebt.confirmable.length > 0 && (
+                <button
+                  onClick={() => { const m = pendingDebt; setPendingDebt(null); confirmThenMove(m) }}
+                  className="px-4 py-2 text-sm rounded-lg border border-emerald-800
+                    text-emerald-200 hover:bg-emerald-900/30 transition"
+                >
+                  Подтвердить и перенести
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Перенос остановленной задачи в работу: вопрос вместо запрета.
           Свой диалог, а не нативный confirm — он рисуется системой и выпадает

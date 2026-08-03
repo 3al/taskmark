@@ -48,6 +48,16 @@ export const api = {
       body: JSON.stringify({ to_section: toSection, position,
                              after_task_id: afterTaskId, group, confirm, reason }),
     }),
+  // С каким долгом задача окажется в разделе: спрашивается до переноса, чтобы
+  // цену движения человек видел заранее. Вопрос, а не действие — ничего не пишет
+  moveDebt: (id, toSection) =>
+    request(`/api/tasks/${id}/move-debt?section=${encodeURIComponent(toSection)}`),
+  // Подтверждение требований этапа человеком: только предикат confirm — он и
+  // означает «человек сказал». Остальное закрывается работой, а не нажатием
+  confirmRequirements: (id, ids, section = null) =>
+    request(`/api/tasks/${id}/confirm`, {
+      method: 'POST', body: JSON.stringify({ ids, section }),
+    }),
   ensureQueue: () => request('/api/queue/ensure', { method: 'POST' }),
   repairPlan: () => request('/api/board/repair'),
   repairApply: () => request('/api/board/repair', { method: 'POST' }),

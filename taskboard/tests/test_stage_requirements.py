@@ -332,7 +332,7 @@ class GateTest(RequirementsTestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("уже отмечено", result.stdout)
-        self.assertEqual(len([n for n in self._notes(path) if "подтверждено" in n]), 1)
+        self.assertEqual(len([n for n in self._notes(path) if "проверил" in n]), 1)
 
     def test_repeated_waive_writes_no_second_note(self) -> None:
         path = self._task(status="testing")
@@ -381,7 +381,9 @@ class ReturnResetsConfirmationTest(RequirementsTestCase):
 
         trace = [n for n in self._notes(path) if "снято подтверждение" in n]
         self.assertTrue(trace, "возврат не оставил следа в заметках агента")
-        self.assertIn("verified", trace[0])
+        self.assertIn("проверку подтвердил человек", trace[0],
+                      "в строке должна стоять формулировка, а не служебный id")
+        self.assertNotIn("verified", trace[0])
         self.assertIn("Тест", trace[0])
 
     def test_return_note_is_signed_without_agent(self) -> None:

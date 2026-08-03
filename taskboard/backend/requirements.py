@@ -1,0 +1,419 @@
+"""Требования этапа: зеркало движка из `templates/tasks/set_status.py` (TASK-110).
+
+Правила живут в двух местах не по недосмотру: скрипт автономен — он работает без
+сервера, в том числе в проектах, где taskboard не установлен, — и импортировать
+бэкенд не может. Бэкенду те же вердикты нужны, чтобы рисовать долг на карточках
+доски.
+
+**Расхождение зеркал — худшее, что здесь может случиться**: доска покажет один
+долг, а агент упрётся в другой, и доверие теряется к обоим. Поэтому здесь лежит
+**копия** блока, обособленного в скрипте маркерами
+`# --- НАЧАЛО БЛОКА: требования этапа ---`, а не самостоятельная реализация: правя
+одну сторону, правь и вторую. Равенство вердиктов проверяется тестом
+`tests/test_requirements_mirror.py` — он прогоняет один набор задач через обе.
+
+Отличия от оригинала только в хелперах: там свои разборщики файла задачи, здесь —
+`backend.task_parser` и `backend.statuses`. Сами правила совпадают дословно.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from backend.notes import append_note
+from backend.statuses import load_pipeline
+from backend.task_parser import (find_task_file, parse_frontmatter,
+                                 section_body, section_bounds, set_meta_fields)
+
+CONFIRMED_FIELD = "confirmed"
+WAIVED_FIELD = "waived"
+CHECKLIST_SECTION = "## Чеклист"
+
+EMPTY = "~"
+
+
+def _one_line(text) -> str:
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    return "" if text == EMPTY else text
+
+
+def parse_req_ids(value) -> list[str]:
+    """Идентификаторы требований из поля frontmatter — как их написал человек."""
+    if isinstance(value, (list, tuple, set)):
+        value = ", ".join(str(v) for v in value)
+    out: list[str] = []
+    for part in re.split(r"[,\s]+", str(value or "")):
+        part = part.strip()
+        if not part or part == EMPTY or part.lower() in [o.lower() for o in out]:
+            continue
+        out.append(part)
+    return out
+
+
+def _rows(pipeline) -> list[dict]:
+    """Пайплайн списком статусов.
+
+    Бэкенд носит его объектом `Pipeline`, автономный скрипт — списком словарей.
+    Правила зеркал должны читаться одинаково, поэтому приводим на входе, а не
+    ветвимся внутри.
+    """
+    return pipeline.statuses() if hasattr(pipeline, "statuses") else list(pipeline)
+
+
+def _req_list(value) -> list[dict]:
+    """Объявления требований из конфига: без `id` требование не существует."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [dict(r) for r in value if isinstance(r, dict) and _one_line(r.get("id"))]
+
+
+def requirement_text(req: dict) -> str:
+    """Голая формулировка требования, как её написал человек в конфиге.
+
+    По смыслу это утверждение о выполненном («проверку подтвердил человек»,
+    «тексты релиза утверждены»), поэтому в интерфейсе она читается придаточным:
+    «этап считается пройденным, если: …». Без кавычек и идентификатора —
+    идентификатор нужен тому, кто зовёт скрипт, а не тому, кто читает диалог.
+    """
+    return _one_line(req.get("ask") or req.get("name") or req.get("id"))
+
+
+def requirement_wording(req: dict) -> str:
+    """Как требование называется агенту: формулировка плюс идентификатор.
+
+    Идентификатор здесь обязателен — им гасят требование (`--confirm <id>`),
+    и отказ, не назвавший его, заставляет лезть в конфиг.
+    """
+    return f"«{requirement_text(req)}» ({_one_line(req.get('id'))})"
+
+
+def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dict]:
+    """Что этап просит на выходе: объявленное проектом и рекомендованное каталогом.
+
+    `mandatory` — объявлено в `requires` и потому даёт отказ у скрипта; иначе
+    рекомендация. Одноимённое объявление вытесняет рекомендацию.
+    """
+    meta = next((s for s in _rows(pipeline) if s["key"] == status), {})
+    # `stage` — чьё это требование. Долг копится с разных этапов, и назвать
+    # чужой (тот, откуда задачу двигают) значит соврать в тексте отказа
+    stage = {"stage": status, "stage_label": meta.get("label", status)}
+    declared = [dict(r, mandatory=True, **stage)
+                for r in _req_list((cfg.get("requires") or {}).get(status))]
+    seen = {_one_line(r.get("id")).upper() for r in declared}
+    recommended = [dict(r, mandatory=False, **stage)
+                   for r in _req_list(meta.get("recommends"))
+                   if _one_line(r.get("id")).upper() not in seen]
+    return declared + recommended
+
+
+def _unchecked_boxes(content: str) -> list[str]:
+    body = section_body(content, CHECKLIST_SECTION)
+    if body is None:
+        return []
+    return re.findall(r"^\s*-\s*\[\s\]\s*(.+?)\s*$", body, flags=re.M)
+
+
+def _section_filled(content: str, name: str) -> bool:
+    body = section_body(content, f"## {name}")
+    return bool(body and body.strip())
+
+
+def requirement_met(req: dict, task_path) -> bool:
+    """Выполнено ли требование — по одному лишь файлу задачи.
+
+    Неизвестный предикат истинен (fail-open): непонятная декларация не должна
+    останавливать работу — про неё скажет валидатор, а не отказ посреди дела.
+    """
+    try:
+        content = Path(task_path).read_text(encoding="utf-8-sig")
+    except OSError:
+        return True
+    meta, _body = parse_frontmatter(content)
+
+    check = _one_line(req.get("check"))
+    name = _one_line(req.get("name"))
+    if check == "checklist_done":
+        return not _unchecked_boxes(content)
+    if check == "section_present":
+        return bool(name) and section_bounds(content, f"## {name}") is not None
+    if check == "section_filled":
+        return bool(name) and _section_filled(content, name)
+    if check == "field":
+        return bool(name) and bool(_one_line(meta.get(name)))
+    if check == "confirm":
+        done = [i.lower() for i in parse_req_ids(meta.get(CONFIRMED_FIELD))]
+        return _one_line(req.get("id")).lower() in done
+    return True
+
+
+def unmet(reqs: list[dict], task_path) -> list[dict]:
+    """Требования, ложные сейчас и не списанные."""
+    try:
+        content = Path(task_path).read_text(encoding="utf-8-sig")
+    except OSError:
+        return []
+    meta, _body = parse_frontmatter(content)
+    waived = [i.lower() for i in parse_req_ids(meta.get(WAIVED_FIELD))]
+    return [r for r in reqs
+            if _one_line(r.get("id")).lower() not in waived
+            and not requirement_met(r, task_path)]
+
+
+def is_terminal(pipeline, status: str) -> bool:
+    """Конец маршрута: нет ожидаемого следующего шага."""
+    rows = _rows(pipeline)
+    keys = [s["key"] for s in rows]
+    if not status or status not in keys:
+        return False
+    idx = keys.index(status)
+    if rows[idx].get("offramp"):
+        return True
+    return not any(not s.get("offramp") for s in rows[idx + 1:])
+
+
+def crossed(pipeline, status: str) -> list[str]:
+    """Этапы, которые задача уже прошла: строго левее текущего, без съездов.
+
+    В съезде и в терминальном статусе пересечения нет вовсе — иначе долг
+    навешивается на всю историю проекта задним числом.
+    """
+    rows = _rows(pipeline)
+    keys = [s["key"] for s in rows]
+    if status not in keys:
+        return []
+    if rows[keys.index(status)].get("offramp") or is_terminal(rows, status):
+        return []
+    return [s["key"] for s in rows[:keys.index(status)] if not s.get("offramp")]
+
+
+def move_requirements(cfg: dict, pipeline,
+                      current: str, target: str) -> list[dict]:
+    """Что должно быть закрыто, чтобы задача оказалась в целевом статусе.
+
+    Переход вперёд разрешён, если в целевой позиции долг пуст: смотрим на все
+    пройденные этапы, а не на пересекаемый отрезок. Назад и в съезд — никогда.
+    """
+    rows = _rows(pipeline)
+    keys = [s["key"] for s in rows]
+    if current not in keys or target not in keys:
+        return []
+    if rows[keys.index(target)].get("offramp"):
+        return []
+    if keys.index(target) <= keys.index(current):
+        return []
+    passed = [s["key"] for s in rows[:keys.index(target)] if not s.get("offramp")]
+    return [r for key in passed for r in stage_requirements(cfg, rows, key)]
+
+
+def task_debt(tasks_dir, task_id: str, cfg: dict, pipeline=None) -> dict:
+    """Долг задачи в её нынешнем положении. Долг вычисляется, а не хранится."""
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    rows = _rows(load_pipeline(cfg) if pipeline is None else pipeline)
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    status = _one_line(meta.get("status"))
+    reqs = [r for key in crossed(rows, status)
+            for r in stage_requirements(cfg, rows, key)]
+    pending = unmet(reqs, path)
+    return {"ok": True, "task": task_id, "status": status,
+            "debt": [r for r in pending if r.get("mandatory")],
+            "recommended": [r for r in pending if not r.get("mandatory")]}
+
+
+def move_debt(tasks_dir, task_id: str, cfg: dict, target: str,
+              pipeline=None) -> list[dict]:
+    """Долг, с которым задача окажется в целевом статусе.
+
+    Нужен доске **до** переноса: рука человека не гейтится, но цену переноса он
+    должен видеть заранее, а не узнавать её от агента через два этапа.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return []
+    rows = _rows(load_pipeline(cfg) if pipeline is None else pipeline)
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    current = _one_line(meta.get("status"))
+    reqs = move_requirements(cfg, rows, current, target)
+    return [r for r in unmet(reqs, path) if r.get("mandatory")]
+
+
+def reset_confirmations(task_path, cfg: dict, pipeline, target: str) -> list[str]:
+    """Снять подтверждения этапов, которые задача пройдёт заново. Вернуть снятые.
+
+    Зеркало `reset_confirmations` из скрипта. Возврат назад — признание, что этап
+    не закрыт: подтверждение прошлой итерации к новой не относится. Подтверждения
+    этапов **левее** цели остаются, `waived` не трогается (списание — решение о
+    самом требовании, а не о степени готовности).
+    """
+    path = Path(task_path)
+    rows = _rows(pipeline)
+    keys = [s["key"] for s in rows]
+    if target not in keys:
+        return []
+    again = [s["key"] for s in rows[keys.index(target):] if not s.get("offramp")]
+    ids = {_one_line(r.get("id")).lower()
+           for key in again for r in stage_requirements(cfg, rows, key)}
+    if not ids:
+        return []
+
+    try:
+        meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    except OSError:
+        return []
+    confirmed = parse_req_ids(meta.get(CONFIRMED_FIELD))
+    dropped = [i for i in confirmed if i.lower() in ids]
+    if dropped:
+        kept = [i for i in confirmed if i.lower() not in ids]
+        set_meta_fields(path, {CONFIRMED_FIELD: ", ".join(kept) if kept else EMPTY})
+    return dropped
+
+
+def requirement_names(cfg: dict, pipeline, ids: list[str]) -> list[str]:
+    """Формулировки требований по идентификаторам — для строк, которые читает человек.
+
+    Нет объявления — остаётся идентификатор: врать нечем.
+    """
+    out = []
+    for req_id in ids:
+        req = requirement_by_id(cfg, pipeline, req_id)
+        out.append(requirement_text(req) if req else req_id)
+    return out
+
+
+def requirement_by_id(cfg: dict, pipeline, req_id: str) -> dict | None:
+    """Найти объявление требования по идентификатору — где бы оно ни стояло.
+
+    Нужно там, где на входе только `id` (подтверждение с доски), а показать
+    человеку надо формулировку: идентификатор — служебное имя, и в тексте,
+    который читают, ему не место.
+    """
+    needle = _one_line(req_id).lower()
+    for status in [s["key"] for s in _rows(pipeline)]:
+        for req in stage_requirements(cfg, pipeline, status):
+            if _one_line(req.get("id")).lower() == needle:
+                return req
+    return None
+
+
+def confirm_requirements(tasks_dir, task_id: str, ids: list[str],
+                         where: str = "", cfg: dict | None = None,
+                         pipeline=None) -> dict:
+    """Отметить требования подтверждёнными — от имени человека с доски.
+
+    Предикат `confirm` проверяет не «работа сделана», а «**человек сказал**».
+    Для агента это гейт: решать за человека он не вправе. Но когда задачу двигает
+    сам человек, он и есть тот, чьего подтверждения требуют, — иначе требование
+    адресовано ему и невыполнимо им же (TASK-110).
+
+    Остальные предикаты закрываются работой, а не решением, и отсюда не
+    закрываются вовсе.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+
+    wanted = [i for i in (parse_req_ids(ids) or []) if i]
+    if not wanted:
+        return {"ok": True, "task": task_id, "confirmed": []}
+
+    content = path.read_text(encoding="utf-8-sig")
+    meta, _body = parse_frontmatter(content)
+    current = parse_req_ids(meta.get(CONFIRMED_FIELD))
+    have = [i.lower() for i in current]
+    added = [i for i in wanted if i.lower() not in have]
+    if not added:
+        return {"ok": True, "task": task_id, "confirmed": []}
+
+    set_meta_fields(path, {CONFIRMED_FIELD: ", ".join(current + added)})
+    # След обязателен: подтверждение без строки в хронологии неотличимо от
+    # этапа, пройденного молча.
+    # В строке — формулировка требования, а не его идентификатор: заметки читает
+    # человек, и служебное имя ему ничего не говорит. Формулировку берём из
+    # конфига по id; нет объявления — остаётся id, врать нечем.
+    # «на доске» не пишем — это уже сказано подписью строки (`· доска ·`)
+    # Без слова «подтверждено»: формулировка требования сама им является
+    # («проверку подтвердил человек», «тексты релиза утверждены»), и префикс
+    # давал тавтологию
+    rows = _rows(load_pipeline(cfg or {}) if pipeline is None else pipeline)
+    tail = f" — перенос в «{where}»" if where else ""
+    for req_id in added:
+        req = requirement_by_id(cfg or {}, rows, req_id)
+        what = requirement_text(req) if req else req_id
+        append_note(path, f"{what}{tail}")
+    return {"ok": True, "task": task_id, "confirmed": added}
+
+
+def task_waivers(tasks_dir, task_id: str, cfg: dict, pipeline=None) -> list[dict]:
+    """Списанные требования задачи: [{id, text}].
+
+    Списание — единственный легальный обход гейта, и оно обязано быть заметным:
+    молчаливое неотличимо от честно закрытого этапа. Но заметным **в задаче**, а
+    не строкой в проблемах данных: списание — принятое решение, а не расхождение,
+    которое чинят, и вечная строка в баннере обесценивала соседние.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return []
+    rows = _rows(load_pipeline(cfg) if pipeline is None else pipeline)
+    try:
+        meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    except OSError:
+        return []
+    ids = parse_req_ids(meta.get(WAIVED_FIELD))
+    return [{"id": i, "text": t}
+            for i, t in zip(ids, requirement_names(cfg, rows, ids))]
+
+
+def waived_tasks(tasks_dir) -> list[dict]:
+    """Задачи, где требование этапа списано: [{id, waived}]. Срез по проекту."""
+    tasks_dir = Path(tasks_dir)
+    out: list[dict] = []
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        try:
+            meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+        except OSError:
+            continue
+        ids = parse_req_ids(meta.get(WAIVED_FIELD))
+        if ids:
+            out.append({"id": path.name.split("-")[0] + "-" + path.name.split("-")[1],
+                        "waived": ids})
+    return out
+
+
+def annotate_debt(tasks_dir, board: dict, cfg: dict, pipeline) -> dict:
+    """Проставить карточкам доски их долг.
+
+    В строке board.md его нет — как эпик и простой, он берётся из файлов задач.
+    Задачи без долга полей не получают: бейдж нужен только тем, у кого он есть.
+    """
+    tasks_dir = Path(tasks_dir)
+    rows = _rows(pipeline)
+    if not (cfg.get("requires") or any(s.get("recommends") for s in rows)):
+        return board
+    for column in board.get("columns", []):
+        for group in column.get("groups", []):
+            for task in group.get("tasks", []):
+                path = tasks_dir / task.get("file", "")
+                if not path.is_file():
+                    continue
+                # У закрытой задачи ни долга, ни списаний не показываем:
+                # исторические решения не стоят визуального шума на доске
+                meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+                if is_terminal(rows, _one_line(meta.get("status"))):
+                    continue
+                waived = task_waivers(tasks_dir, task["id"], cfg, rows)
+                if waived:
+                    task["waived"] = waived
+                result = task_debt(tasks_dir, task["id"], cfg, rows)
+                debt = result.get("debt") or []
+                if debt:
+                    task["debt"] = [{"id": r.get("id"), "text": requirement_text(r),
+                                     "confirmable": r.get("check") == "confirm"}
+                                    for r in debt]
+    return board

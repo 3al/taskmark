@@ -28,6 +28,8 @@ from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import (apply_config_migrations, migrate_global_config,
                                 pipeline_removals, retire_artifact_names)
 from backend.pipeline_sources import list_sources
+from backend.requirements import (annotate_debt, confirm_requirements, move_debt,
+                                  requirement_text, task_debt, task_waivers)
 from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
@@ -407,6 +409,9 @@ def api_board() -> dict:
     # Причина простоя есть только во frontmatter — карточке она нужна, чтобы
     # маркер «стоит» рисовался без открытия задачи
     annotate_stall(tasks_dir, board, pipeline)
+    # Долг этапа тоже виден только из файла задачи — и только он объясняет,
+    # почему агент упрётся при следующем движении вперёд
+    annotate_debt(tasks_dir, board, cfg, pipeline)
     board["report"] = report
     board["config"] = {
         # Фронт рисует колонки, порядок, цвета и правила DnD по пайплайну;
@@ -476,6 +481,17 @@ def api_remove_criteria_preset(body: CriteriaPresetIn) -> dict:
     return {"presets": criteria_presets(), "custom": custom_criteria_presets()}
 
 
+def _debt_item(req: dict) -> dict:
+    """Требование для интерфейса: что это и может ли человек закрыть его сам.
+
+    `confirm` означает «человек сказал» — его закрывает нажатие человека.
+    Остальные предикаты закрываются работой, и кнопки для них нет
+    """
+    return {"id": req.get("id"), "text": requirement_text(req),
+            "check": req.get("check"), "confirmable": req.get("check") == "confirm",
+            "stage": req.get("stage_label") or req.get("stage")}
+
+
 @app.get("/api/task/{task_id}")
 def api_task(task_id: str) -> dict:
     tasks_dir, cfg = _ctx()
@@ -493,7 +509,53 @@ def api_task(task_id: str) -> dict:
     # Можно ли вообще ставить простой в этом статусе: в терминальном UI просто
     # не показывает кнопки — подпись про недоступное действие только шумит
     task["stall"]["can_set"] = can_stall(pipeline, task["meta"].get("status", ""))["ok"]
+    # Долг этапа: поля `confirmed`/`waived` окно рисует поимённо, а долг из них
+    # не выводится — он считается по положению задачи и требованиям конфига
+    debt = task_debt(tasks_dir, task_id, cfg, pipeline)
+    task["debt"] = [_debt_item(r) for r in (debt.get("debt") or [])]
+    # Списанные требования: в открытой задаче показываем всегда, в том числе у
+    # закрытой — там смотрят историю решений, а не работают
+    task["waived"] = task_waivers(tasks_dir, task_id, cfg, pipeline)
     return task
+
+
+@app.get("/api/tasks/{task_id}/move-debt")
+def api_move_debt(task_id: str, section: str) -> dict:
+    """С каким долгом задача окажется в целевом разделе.
+
+    Спрашивается доской **до** переноса: рука человека не гейтится, но цену
+    движения он должен видеть заранее, а не узнавать её от агента через два
+    этапа. Ничего не пишет — это вопрос, а не действие.
+    """
+    tasks_dir, cfg = _ctx()
+    pipeline = load_pipeline(cfg)
+    target = pipeline.status_for_section(section)
+    if not target:
+        return {"ok": True, "task": task_id, "debt": []}
+    debt = move_debt(tasks_dir, task_id, cfg, target, pipeline)
+    return {"ok": True, "task": task_id, "target": target,
+            "debt": [_debt_item(r) for r in debt]}
+
+
+class ConfirmIn(BaseModel):
+    ids: list[str]
+    section: str | None = None
+
+
+@app.post("/api/tasks/{task_id}/confirm")
+def api_confirm(task_id: str, body: ConfirmIn) -> dict:
+    """Подтвердить требования этапа от имени человека.
+
+    Только предикат `confirm`: он и означает «человек сказал», а решать за
+    человека агент не вправе. Требования, которые закрываются работой (чеклист,
+    секции, поля), отсюда не закрываются — их подтверждать нечем.
+    """
+    tasks_dir, cfg = _ctx()
+    result = confirm_requirements(tasks_dir, task_id, body.ids, body.section or "",
+                                  cfg, load_pipeline(cfg))
+    if not result.get("ok"):
+        raise HTTPException(404, result.get("error", "Задача не найдена"))
+    return result
 
 
 @app.get("/api/tasks/stalled")

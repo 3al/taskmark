@@ -136,6 +136,29 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
               )}
             </span>
           )}
+          {/* Долг этапа: задача прошла этап, не закрыв его требования. Ничего
+              не запрещает — рука человека не гейтится, — но объясняет заранее,
+              на чём упрётся агент при следующем движении вперёд */}
+          {task.debt?.length > 0 && (
+            <span className="shrink-0 normal-case text-amber-300/90"
+                  title={`Долг этапа: ${task.debt.map((d) => d.text).join('; ')}`}>
+              ⚠{task.debt.length > 1 && (
+                <span className="text-amber-300/60">{task.debt.length}</span>
+              )}
+            </span>
+          )}
+          {/* Списанные требования: тот же треугольник, но красный — обход
+              гейта должен быть виден рядом с долгом, а не вместо него.
+              У закрытых задач бэкенд его не присылает: исторические решения
+              не стоят визуального шума на доске */}
+          {task.waived?.length > 0 && (
+            <span className="shrink-0 normal-case text-rose-400/90"
+                  title={`Списаны требования: ${task.waived.map((w) => w.text).join('; ')}`}>
+              ⚠{task.waived.length > 1 && (
+                <span className="text-rose-400/60">{task.waived.length}</span>
+              )}
+            </span>
+          )}
           {/* Правый угол строки: тип и пауза. Место освободилось после переезда
               эпика, а у значков без номера постоянное место читается лучше, чем
               позиция, зависящая от того, есть ли рядом блокировка.

@@ -555,6 +555,29 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
                   </div>
                 )}
 
+                {/* Долг этапа: что задача прошла, не закрыв. Считается по её
+                    положению и требованиям проекта, поэтому во frontmatter его
+                    нет — там лежат только факты (`confirmed`, `waived`).
+                    Гасит его агент: --confirm либо --waive с причиной */}
+                {task?.debt?.length > 0 && (
+                  <div className="flex items-start gap-2 text-xs">
+                    <span className="shrink-0 text-amber-300/80">⚠ долг</span>
+                    <span className="text-zinc-400 min-w-0">
+                      {task.debt.map((d) => d.text).join('; ')}
+                    </span>
+                  </div>
+                )}
+
+                {/* Списанные требования: причина каждого — строкой в комментариях */}
+                {task?.waived?.length > 0 && (
+                  <div className="flex items-start gap-2 text-xs">
+                    <span className="shrink-0 text-rose-400/80">⚠ списано</span>
+                    <span className="text-zinc-400 min-w-0">
+                      {task.waived.map((w) => w.text).join('; ')}
+                    </span>
+                  </div>
+                )}
+
                 {/* Кого держит эта задача — справочно: снимают блокировку с той
                     стороны, где она объявлена */}
                 {stall?.blocks_tasks?.length > 0 && (

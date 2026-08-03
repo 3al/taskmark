@@ -545,9 +545,12 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             # подтверждения подряд без причины между ними.
             # Имя — своё, если передано; иначе событие подписывает сам скрипт:
             # сброс сделал он, а выдумывать за агента модель нельзя
+            # Формулировки, а не идентификаторы: правило для всех строк,
+            # которые читает человек, — одно
             add_note(tasks_dir, task_id,
-                     f"возврат в «{_label_of(pipeline, status)}»: снято подтверждение "
-                     f"{', '.join(unconfirmed)} — этап проходится заново",
+                     f"возврат в «{_label_of(pipeline, status)}» — снято "
+                     f"подтверждение: "
+                     f"{'; '.join(requirement_names(cfg, pipeline, unconfirmed))}",
                      agent=agent or "set_status.py")
 
     # Работа кончилась — самое время сказать про волт и хвосты в файле задачи:
@@ -1110,10 +1113,49 @@ def format_req_ids(ids) -> str:
     return ", ".join(ids) if ids else EMPTY
 
 
+def requirement_text(req: dict) -> str:
+    """Голая формулировка требования, как её написал человек в конфиге.
+
+    По смыслу это утверждение о выполненном («проверку подтвердил человек»),
+    поэтому в заметках она стоит сама по себе, без служебного префикса.
+    """
+    return _one_line(req.get("ask") or req.get("name") or req.get("id"))
+
+
 def requirement_wording(req: dict) -> str:
-    """Как требование называется человеку — одинаково в отказе и напоминании."""
-    text = _one_line(req.get("ask") or req.get("name") or req.get("id"))
-    return f"«{text}» ({_one_line(req.get('id'))})"
+    """Как требование называется в отказе и напоминании: текст плюс идентификатор.
+
+    Идентификатор здесь обязателен — им гасят требование (`--confirm <id>`), и
+    отказ, не назвавший его, заставляет лезть в конфиг.
+    """
+    return f"«{requirement_text(req)}» ({_one_line(req.get('id'))})"
+
+
+def requirement_names(cfg: dict, pipeline: list[dict], ids: list[str]) -> list[str]:
+    """Формулировки требований по идентификаторам — для строк, которые читает человек.
+
+    Нет объявления — остаётся идентификатор: врать нечем.
+    """
+    out = []
+    for req_id in ids:
+        req = requirement_by_id(cfg, pipeline, req_id)
+        out.append(requirement_text(req) if req else req_id)
+    return out
+
+
+def requirement_by_id(cfg: dict, pipeline: list[dict], req_id: str) -> dict | None:
+    """Найти объявление требования по идентификатору — где бы оно ни стояло.
+
+    Нужно там, где показать надо формулировку, а на руках только `id`:
+    идентификатор — служебное имя, и в тексте, который читает человек, ему не
+    место.
+    """
+    needle = _one_line(req_id).lower()
+    for status in [s["key"] for s in pipeline]:
+        for req in stage_requirements(cfg, pipeline, status):
+            if _one_line(req.get("id")).lower() == needle:
+                return req
+    return None
 
 
 def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dict]:
@@ -1123,11 +1165,15 @@ def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dic
     дающая напоминание. Одноимённое объявление вытесняет рекомендацию: один и тот
     же id не должен звучать дважды.
     """
-    declared = [dict(r, mandatory=True)
+    meta = next((s for s in pipeline if s["key"] == status), {})
+    # `stage` — чьё это требование. Долг копится с разных этапов, и назвать
+    # чужой (тот, откуда задачу двигают) значит соврать в тексте отказа
+    stage = {"stage": status, "stage_label": meta.get("label", status)}
+    declared = [dict(r, mandatory=True, **stage)
                 for r in _req_list((cfg.get("requires") or {}).get(status))]
     seen = {_one_line(r.get("id")).upper() for r in declared}
-    meta = next((s for s in pipeline if s["key"] == status), {})
-    recommended = [dict(r, mandatory=False) for r in _req_list(meta.get("recommends"))
+    recommended = [dict(r, mandatory=False, **stage)
+                   for r in _req_list(meta.get("recommends"))
                    if _one_line(r.get("id")).upper() not in seen]
     return declared + recommended
 
@@ -1274,10 +1320,14 @@ def _requirement_line(req: dict) -> str:
 
 def gate_message(task_id: str, pipeline: list[dict], current: str,
                  target: str, blocked: list[dict]) -> str:
-    """Текст отказа: что не выполнено, чем гасится и как обойти намеренно."""
-    lines = [f"{task_id} → {target}: этап «{_label_of(pipeline, current)}» требует "
-             f"на выходе, а этого нет:"]
-    lines += [f"  - {_requirement_line(r)}" for r in blocked]
+    """Текст отказа: что не выполнено, чем гасится и как обойти намеренно.
+
+    Этап называется у каждого требования: долг копится с разных этапов, в том
+    числе с пройденных мимо гейта — рукой на доске.
+    """
+    lines = [f"{task_id} → {target}: не закрыты требования пройденных этапов:"]
+    lines += [f"  - {_requirement_line(r)} [{r.get('stage_label') or r.get('stage')}]"
+              for r in blocked]
     lines.append("Пропустить намеренно: --waive <id> --reason \"почему\" "
                  "(останется строкой в заметках агента)")
     return "\n".join(lines)
@@ -1290,7 +1340,8 @@ def stage_reminders(pipeline: list[dict], current: str, pending: list[dict]) -> 
     что не сделано. Это то, чем раньше был обвес скиллов, — но работает у всех,
     включая тех, кто ничего не настраивал.
     """
-    return [f"уходя из «{_label_of(pipeline, current)}»: {_requirement_line(r)}"
+    return [f"уходя из «{r.get('stage_label') or _label_of(pipeline, current)}»: "
+            f"{_requirement_line(r)}"
             for r in pending if not r.get("mandatory")]
 
 
@@ -1329,7 +1380,7 @@ def task_debt(tasks_dir, task_id: str, cfg: dict | None = None) -> dict:
 
 
 def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
-                      text: str, agent: str | None, what: str) -> dict:
+                      text: str, agent: str | None, what: str | None) -> dict:
     """Записать факт (подтверждение или списание) и оставить строку в заметках.
 
     Во frontmatter идёт только идентификатор — плоским списком, как `blocked_by`.
@@ -1346,8 +1397,8 @@ def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
     text = _one_line(text)
     if not text:
         return {"ok": False,
-                "error": f"«{req_id}»: {what} без объяснения не выполняется — "
-                         f"причина остаётся в файле для того, кто придёт позже"}
+                "error": f"«{req_id}»: без объяснения не выполняется — причина "
+                         f"остаётся в файле для того, кто придёт позже"}
 
     # Повтор ничего не меняет — и писать о нём нечего: событие было одно, а
     # вторая одинаковая строка засоряет хронологию, ради которой заметки и ведут
@@ -1355,7 +1406,15 @@ def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
     if req_id.lower() in [i.lower() for i in ids]:
         return {"ok": True, "task": task_id, "id": req_id, "already": True, "note": ""}
 
-    note = add_note(tasks_dir, task_id, f"{what} «{req_id}»: {text}", agent=agent)
+    # В строке — формулировка требования, а не его идентификатор: заметки
+    # читает человек, и служебное имя ему ничего не говорит. Для подтверждения
+    # префикса нет вовсе — формулировка сама им является («проверку подтвердил
+    # человек»), и «подтверждено: проверку подтвердил человек» было тавтологией
+    req = requirement_by_id(load_config(tasks_dir), pipeline_of(load_config(tasks_dir)),
+                            req_id)
+    named = requirement_text(req) if req else req_id
+    line = f"{named} — {text}" if what is None else f"{what}: {named} — {text}"
+    note = add_note(tasks_dir, task_id, line, agent=agent)
     if not note.get("ok"):
         return note
 
@@ -1369,14 +1428,14 @@ def confirm_requirement(tasks_dir, task_id: str, req_id: str, text: str,
                         agent: str | None = None) -> dict:
     """Отметить требование выполненным: подтверждение — тоже факт, не суждение."""
     return _mark_requirement(tasks_dir, task_id, CONFIRMED_FIELD, req_id, text,
-                             agent, "подтверждено")
+                             agent, None)
 
 
 def waive_requirement(tasks_dir, task_id: str, req_id: str, reason: str,
                       agent: str | None = None) -> dict:
     """Списать требование — единственный легальный обход, громкий и со следом."""
     return _mark_requirement(tasks_dir, task_id, WAIVED_FIELD, req_id, reason,
-                             agent, "списано требование")
+                             agent, "списано")
 
 
 # --- КОНЕЦ БЛОКА: требования этапа ------------------------------------------

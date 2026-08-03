@@ -5,9 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.notes import append_note
+from backend.requirements import requirement_names, reset_confirmations
 from backend.stall import clear_stall, is_terminal
 from backend.statuses import Pipeline, load_pipeline
-from backend.task_parser import find_task_file, set_meta_fields, set_task_status
+from backend.task_parser import (find_task_file, parse_frontmatter, set_meta_fields,
+                                 set_task_status)
 
 
 def _status_for_section(cfg: dict, to_section: str) -> str | None:
@@ -189,6 +192,14 @@ def move_task(
         return {"ok": False, "code": "cancel_reason",
                 "error": f"Нужна причина: перевод в «{to_section}» без неё не выполняется"}
 
+    # Статус до переноса: по нему видно, движение это вперёд или назад.
+    # Читаем из файла задачи — раздел доски мог с ним разъехаться
+    was_path = find_task_file(tasks_dir, task_id)
+    was_status = ""
+    if was_path is not None:
+        meta, _body = parse_frontmatter(was_path.read_text(encoding="utf-8-sig"))
+        was_status = (meta.get("status") or "").strip()
+
     lines = board_path.read_text(encoding="utf-8").splitlines()
 
     src_idx = _find_entry_line(lines, task_id)
@@ -270,6 +281,24 @@ def move_task(
             cleared = clear_stall(tasks_dir, task_id)
             if cleared["cleared"]:
                 result["stall_cleared"] = cleared
+
+        # Возврат назад: этапы правее цели задача пройдёт заново, и подтверждения
+        # прошлой итерации к новой не относятся. Рука не пишет решений — но
+        # убрать то, что перестало быть правдой, обязана: иначе устаревшее
+        # подтверждение переживает возврат молча, и агент не спросит заново.
+        # То же самое делает скрипт; расходиться этим двум путям нельзя
+        keys = pipeline.keys()
+        if (was_status in keys and status in keys
+                and keys.index(status) < keys.index(was_status)):
+            path = find_task_file(tasks_dir, task_id)
+            dropped = reset_confirmations(path, cfg, pipeline, status) if path else []
+            if dropped:
+                # Формулировки, а не идентификаторы: правило для всех строк,
+                # которые читает человек, — одно
+                named = requirement_names(cfg, pipeline, dropped)
+                append_note(path, f"возврат в «{to_section}» — снято подтверждение: "
+                                  f"{'; '.join(named)}")
+                result["unconfirmed"] = dropped
 
     return result
 
