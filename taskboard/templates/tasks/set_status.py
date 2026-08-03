@@ -1349,15 +1349,20 @@ def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
                 "error": f"«{req_id}»: {what} без объяснения не выполняется — "
                          f"причина остаётся в файле для того, кто придёт позже"}
 
+    # Повтор ничего не меняет — и писать о нём нечего: событие было одно, а
+    # вторая одинаковая строка засоряет хронологию, ради которой заметки и ведут
+    ids = parse_req_ids(_read_meta(path).get(field))
+    if req_id.lower() in [i.lower() for i in ids]:
+        return {"ok": True, "task": task_id, "id": req_id, "already": True, "note": ""}
+
     note = add_note(tasks_dir, task_id, f"{what} «{req_id}»: {text}", agent=agent)
     if not note.get("ok"):
         return note
 
-    ids = parse_req_ids(_read_meta(path).get(field))
-    if req_id.lower() not in [i.lower() for i in ids]:
-        ids.append(req_id)
-        _set_fields(path, {field: format_req_ids(ids)})
-    return {"ok": True, "task": task_id, "id": req_id, "note": note["note"]}
+    ids.append(req_id)
+    _set_fields(path, {field: format_req_ids(ids)})
+    return {"ok": True, "task": task_id, "id": req_id, "already": False,
+            "note": note["note"]}
 
 
 def confirm_requirement(tasks_dir, task_id: str, req_id: str, text: str,
@@ -1602,8 +1607,12 @@ def main() -> None:
         if not result.get("ok"):
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
-        print(f"[OK] {result['task']}: {done} «{result['id']}»")
-        print(result["note"])
+        if result.get("already"):
+            print(f"[i] {result['task']}: «{result['id']}» уже отмечено раньше — "
+                  f"повтор ничего не изменил")
+        else:
+            print(f"[OK] {result['task']}: {done} «{result['id']}»")
+            print(result["note"])
 
     if (args.confirm or args.waive) and not args.status and args.note is None:
         return

@@ -323,6 +323,25 @@ class GateTest(RequirementsTestCase):
         self.assertEqual(self._meta(path).get("confirmed"), "verified")
         self.assertTrue([n for n in self._notes(path) if "показал экран" in n])
 
+    def test_repeated_confirm_writes_no_second_note(self) -> None:
+        """Событие было одно — вторая одинаковая строка засоряет хронологию."""
+        path = self._task(status="testing")
+        self._run("TASK-001", "--confirm", "verified", "проверил", "--agent", "Тест")
+
+        result = self._run("TASK-001", "--confirm", "verified", "проверил", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("уже отмечено", result.stdout)
+        self.assertEqual(len([n for n in self._notes(path) if "подтверждено" in n]), 1)
+
+    def test_repeated_waive_writes_no_second_note(self) -> None:
+        path = self._task(status="testing")
+        for _ in range(2):
+            self._run("TASK-001", "--waive", "verified", "--reason", "проверял заказчик",
+                      "--agent", "Тест")
+
+        self.assertEqual(len([n for n in self._notes(path) if "списано" in n]), 1)
+
     def test_confirm_requires_agent(self) -> None:
         """Заметка без модели врёт о том, кто что делал."""
         self._task(status="testing")
