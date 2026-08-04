@@ -28,8 +28,9 @@ from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import (apply_config_migrations, migrate_global_config,
                                 pipeline_removals, retire_artifact_names)
 from backend.pipeline_sources import list_sources
-from backend.requirements import (annotate_debt, confirm_requirements, move_debt,
-                                  requirement_text, task_debt, task_waivers)
+from backend.requirements import (PREDICATES, annotate_debt, confirm_requirements,
+                                  gate_impact, move_debt, requirement_text,
+                                  task_debt, task_waivers)
 from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
@@ -305,10 +306,14 @@ def api_get_config() -> dict:
     """
     proj = registry.get_active()
     if not proj:
-        return {**load_global_config(), "card_limits": CARD_LIMITS}
+        return {**load_global_config(), "card_limits": CARD_LIMITS,
+                "predicates": PREDICATES}
     tasks_dir = Path(proj["tasks_dir"])
     cfg = load_project_config(tasks_dir)
     cfg["card_limits"] = CARD_LIMITS
+    # Словарь предикатов: без него редактор требований знал бы список проверок
+    # только из зашитого в JS перечня, и тот разошёлся бы с движком молча
+    cfg["predicates"] = PREDICATES
     # Волт мог быть развёрнут до появления ключа в конфиге — тогда его режим
     # виден только по файлам. Отдаём эффективное значение, иначе форма настроек
     # покажет «выключен» и первым же сохранением это в конфиг и запишет
@@ -363,14 +368,19 @@ def api_preview_config(body: ConfigIn) -> dict:
 
     Выключение статуса с непустым разделом — не то, что делают молча: UI
     спрашивает, куда переносить задачи, и предлагает предыдущий по порядку.
+
+    Второе такое же решение — включение требования этапа: оно действует задним
+    числом, и живые задачи, прошедшие этап раньше, упрутся на следующем шаге
+    вперёд. Цена показывается до сохранения (`gated`), а не выясняется потом.
     """
     proj = registry.get_active()
     if not proj:
-        return {"removals": []}
+        return {"removals": [], "gated": []}
     tasks_dir = Path(proj["tasks_dir"])
     old_cfg = load_project_config(tasks_dir)
     new_cfg = {**old_cfg, **body.updates}
-    return {"removals": pipeline_removals(tasks_dir, old_cfg, new_cfg)}
+    return {"removals": pipeline_removals(tasks_dir, old_cfg, new_cfg),
+            "gated": gate_impact(tasks_dir, old_cfg, new_cfg)}
 
 
 # --- Доска и задачи ---

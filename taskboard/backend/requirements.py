@@ -30,6 +30,109 @@ WAIVED_FIELD = "waived"
 
 EMPTY = "~"
 
+# Словарь предикатов: имя → что предикат просит и как он читается человеком.
+# Нужен редактору требований (иначе список предикатов знает только код движка) и
+# валидатору, чтобы отличить опечатку от рабочей декларации. `param` — имя ключа,
+# без которого предикат проверяет несуществующее; None — параметра нет вовсе.
+# Состав закрытый и сверяется со скриптом тестом: разойдись он, редактор предложит
+# то, чего движок не умеет
+PREDICATES: dict[str, dict] = {
+    "confirm": {"label": "подтверждение человека", "param": None,
+                "hint": "закрывается кнопкой на доске или командой агента"},
+    "checklist_done": {"label": "чеклист задачи закрыт", "param": None,
+                       "hint": "в разделе «Чеклист» нет незакрытых пунктов"},
+    "section_present": {"label": "секция есть в файле задачи", "param": "name",
+                        "param_label": "заголовок секции",
+                        "hint": "пустая секция считается заполненной: «сказать нечего» — решение"},
+    "section_filled": {"label": "секция непуста", "param": "name",
+                       "param_label": "заголовок секции",
+                       "hint": "в секции есть хотя бы одна строка"},
+    "field": {"label": "поле задачи заполнено", "param": "name",
+              "param_label": "имя поля frontmatter",
+              "hint": "например epic или ссылка на MR"},
+}
+
+
+def gate_impact(tasks_dir, old_cfg: dict, new_cfg: dict) -> list[dict]:
+    """Живые задачи, у которых от нового состава требований появится долг.
+
+    Требование действует **задним числом**: задача, прошедшая этап раньше, упрётся
+    на следующем движении вперёд. Это то, ради чего механизм и заводился (иначе он
+    не ловит ровно тот случай, что его породил), но цену человек должен видеть до
+    нажатия, а не узнавать от агента через день.
+
+    Считаем разницей долгов: что было при старом конфиге и что станет при новом.
+    Так снятие требования никого не «задевает», а порог `since:` не нужен —
+    достаточно показать список.
+    """
+    from backend.board_repair import task_files
+
+    directory = Path(tasks_dir)
+    out: list[dict] = []
+    for task_id, info in task_files(directory).items():
+        was = {r["id"] for r in task_debt(directory, task_id, old_cfg).get("debt", [])}
+        now = task_debt(directory, task_id, new_cfg).get("debt", [])
+        added = [r for r in now if r["id"] not in was]
+        if added:
+            out.append({"id": task_id, "title": info.get("title", ""),
+                        "status": info.get("status", ""),
+                        "requirements": [requirement_text(r) for r in added]})
+    return out
+
+
+def declaration_issues(cfg: dict, pipeline: list[dict] | None = None) -> list[str]:
+    """Что в объявленных требованиях не сработает — человеческими словами.
+
+    Движок на непонятной декларации **молчит и пропускает** (fail-open): отказ
+    посреди работы из-за опечатки в конфиге хуже, чем неработающая проверка. Цена
+    в том, что человек считает этап защищённым, — поэтому сказать обязан кто-то
+    другой, и это валидатор.
+    """
+    requires = cfg.get("requires") or {}
+    if not isinstance(requires, dict):
+        return ["Требования этапов заданы не объектом: ключ requires должен быть "
+                "словарём «статус → список требований»"]
+
+    known = {s["key"] for s in (pipeline or load_pipeline(cfg).statuses())}
+    out: list[str] = []
+    for status, reqs in requires.items():
+        if status not in known:
+            out.append(f"Требования объявлены для статуса «{status}», которого нет "
+                       f"в маршруте проекта: они не сработают никогда")
+            continue
+        seen: set[str] = set()
+        # Перебираем сырой список, а не через `_req_list`: тот отбрасывает записи
+        # без `id` — для движка их не существует, и именно об этом надо сказать
+        if not isinstance(reqs, (list, tuple)):
+            out.append(f"Требования этапа «{status}» заданы не списком")
+            continue
+        for req in reqs:
+            if not isinstance(req, dict):
+                out.append(f"Требование этапа «{status}» задано не объектом: "
+                           f"нужны ключи id и check")
+                continue
+            rid = _one_line(req.get("id"))
+            check = _one_line(req.get("check"))
+            where = f"«{status}»"
+            if not rid:
+                out.append(f"Требование этапа {where} без идентификатора: его нечем "
+                           f"отметить выполненным")
+                continue
+            if rid.lower() in seen:
+                out.append(f"Требование «{rid}» на этапе {where} объявлено дважды: "
+                           f"отметка закроет оба сразу")
+            seen.add(rid.lower())
+            spec = PREDICATES.get(check)
+            if spec is None:
+                out.append(f"Требование «{rid}» на этапе {where}: проверка "
+                           f"«{check or '—'}» неизвестна, этап пропустят молча")
+                continue
+            param = spec.get("param")
+            if param and not _one_line(req.get(param)):
+                out.append(f"Требование «{rid}» на этапе {where}: для проверки "
+                           f"«{spec['label']}» нужен {spec.get('param_label', param)}")
+    return out
+
 
 def _one_line(text) -> str:
     text = re.sub(r"\s+", " ", str(text or "")).strip()

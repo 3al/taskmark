@@ -10,6 +10,7 @@ from backend.board_repair import _section_for_status, row_matches_file, task_fil
 from backend.config import is_lost_section
 from backend.scaffold import (detect_harnesses, environment_issues, harness_choice,
                               script_capabilities)
+from backend.requirements import declaration_issues
 from backend.stall import plan_blocks_repair, stall_issues
 from backend.statuses import load_pipeline
 
@@ -157,6 +158,11 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
                         f"tasks/.taskboard.json), но развёрнутый {status_script} "
                         f"про них не знает: агент проходит этапы, а проверка молчит"),
             "names": [status_script]})
+
+    # Битая декларация требований: движок на ней молчит и пропускает этап
+    # (fail-open — отказ из-за опечатки в конфиге хуже неработающей проверки),
+    # поэтому сказать обязан валидатор. Иначе человек считает этап защищённым
+    warnings.extend(declaration_issues(cfg, pipeline.statuses()))
 
     # Мягкие предупреждения: битые ссылки, чужие записи, расхождение раздела
     # со статусом файла и файлы вне доски. Всё это чинится одной кнопкой —

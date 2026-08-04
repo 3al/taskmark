@@ -17,7 +17,7 @@ from backend.statuses import PRESETS, load_pipeline
 
 # Ключи конфига, из которых состоит жизненный цикл. Проект, не переопределивший
 # ни одного, живёт на дефолтах — предлагать его как источник нечего
-LIFECYCLE_KEYS = ("pipeline", "actions", "statuses")
+LIFECYCLE_KEYS = ("pipeline", "actions", "statuses", "requires")
 
 
 def _source(kind: str, name: str, hint: str, cfg: dict) -> dict:
@@ -26,6 +26,10 @@ def _source(kind: str, name: str, hint: str, cfg: dict) -> dict:
     Статусы отдаём разобранными (с подписями и разделами), а `statuses` —
     сырыми переопределениями: без них скопированный маршрут разошёлся бы с
     исходным по названиям колонок доски.
+
+    `requires` — тоже часть жизненного цикла: копируя маршрут соседнего проекта,
+    человек ждёт и его проверок. Пресеты требований не несут — они дают статусы,
+    а требования приходят рекомендациями каталога при добавлении статуса.
     """
     pipeline = load_pipeline(cfg)
     return {
@@ -35,6 +39,7 @@ def _source(kind: str, name: str, hint: str, cfg: dict) -> dict:
         "pipeline": pipeline.statuses(),
         "actions": pipeline.actions(),
         "statuses": cfg.get("statuses") or {},
+        "requires": cfg.get("requires") or {},
     }
 
 
