@@ -118,7 +118,31 @@ def apply_config_migrations(tasks_dir: Path, old: dict, new: dict,
     # Изменение пайплайна: разделы доски следуют за составом статусов
     _migrate_pipeline(tasks_dir, old, new, moves or {}, actions)
 
+    # Требования выключенного статуса уходят вместе с ним
+    _drop_orphan_requires(tasks_dir, new, actions)
+
     return actions
+
+
+def _drop_orphan_requires(tasks_dir: Path, new: dict, actions: list[str]) -> None:
+    """Убрать требования статусов, которых больше нет в маршруте.
+
+    Оставленный блок не сработает никогда, а валидатор честно скажет «статус вне
+    маршрута» — человек получит предупреждение за то, чего не делал. Чистим по
+    **сохранённому** конфигу проекта: в эффективном лежат ещё и дефолты, их
+    записывать в файл нельзя.
+    """
+    stored = config.stored_project_config(tasks_dir)
+    requires = stored.get("requires")
+    if not isinstance(requires, dict) or not requires:
+        return
+    known = {s["key"] for s in load_pipeline(new).statuses()}
+    orphans = [key for key in requires if key not in known]
+    if not orphans:
+        return
+    config.save_project_config(tasks_dir, {"requires": {k: v for k, v in requires.items()
+                                                        if k not in orphans}})
+    actions.append("Требования выключенных статусов убраны: " + ", ".join(orphans))
 
 
 def pipeline_removals(tasks_dir: Path, old: dict, new: dict) -> list[dict]:

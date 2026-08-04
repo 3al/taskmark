@@ -227,6 +227,37 @@ created: 2026-08-01 10:00
         self.assertEqual([], self.impact({}))
 
 
+class OrphanRequirementTest(RequiresProject):
+    """Статус выключили — его требования уходят вместе с ним.
+
+    Иначе в конфиге остаётся блок, который не сработает никогда, а валидатор
+    честно ругается на «статус вне маршрута» — то есть человек получает
+    предупреждение за то, чего не делал.
+    """
+
+    def test_disabled_status_loses_its_requirements(self) -> None:
+        from backend.migrations import apply_config_migrations
+
+        old = self.config(requires={"testing": [{"id": "verified", "check": "confirm"}],
+                                    "development": [{"id": "x", "check": "checklist_done"}]})
+        new = {**old, "pipeline": ["backlog", "development", "done", "cancelled"]}
+
+        apply_config_migrations(self.tasks, old, new, {"testing": "development"})
+
+        left = load_project_config(self.tasks).get("requires") or {}
+        self.assertNotIn("testing", left, "требования выключенного статуса остались")
+        self.assertIn("development", left, "требования живого статуса не должны исчезать")
+
+    def test_pipeline_untouched_keeps_requirements(self) -> None:
+        from backend.migrations import apply_config_migrations
+
+        old = self.config(requires=REQUIRES)
+
+        apply_config_migrations(self.tasks, old, old, {})
+
+        self.assertEqual(REQUIRES, load_project_config(self.tasks).get("requires"))
+
+
 class SourceTest(unittest.TestCase):
     """Копирование жизненного цикла соседнего проекта берёт и требования."""
 
