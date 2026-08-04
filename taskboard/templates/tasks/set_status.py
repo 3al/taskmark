@@ -119,11 +119,16 @@ CATALOG = {
                       # section_present, а не filled: пустая секция — принятое
                       # решение «пользователю сказать нечего», и требовать текст
                       # значило бы ломать это решение
+                      # except_types: у задачи-обсуждения релизного хвоста нет
+                      # вовсе — она закрывается коротким путём, и без исключения
+                      # её закрытие упирается в оба требования сразу
                       "recommends": [{"id": "release_text", "check": "section_present",
                                       "name": "Изменение для пользователя",
-                                      "ask": "тексты релиза написаны"},
+                                      "ask": "тексты релиза написаны",
+                                      "except_types": ["discussion"]},
                                      {"id": "release_ok", "check": "confirm",
-                                      "ask": "тексты релиза утверждены человеком"}]},
+                                      "ask": "тексты релиза утверждены человеком",
+                                      "except_types": ["discussion"]}]},
     "to_release": {"label": "В ближайший релиз", "section": "To Release"},
     "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy"},
     "completed": {"label": "Completed", "section": "Completed"},

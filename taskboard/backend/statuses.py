@@ -40,13 +40,31 @@ CATALOG: dict[str, dict] = {
                       "color": "yellow"},
     "review": {"label": "Review", "section": "Review", "color": "violet"},
     "to_testing": {"label": "К тестированию", "section": "To Testing", "color": "cyan"},
-    "testing": {"label": "Testing", "section": "Testing", "color": "orange"},
+    # recommends — что этап просит на выходе, пока проект не объявил этого
+    # требованием: печатается напоминанием, ничего не запрещая, и материализуется
+    # в `requires` проекта, когда человек добавляет статус. Состав сверяется со
+    # шаблоном скрипта тестом: каталог дублируется намеренно (скрипт автономен),
+    # но состав у него один. В рекомендации попадает только то, что уже стреляло
+    # на практике, а не всё, что легко проверить
+    "testing": {"label": "Testing", "section": "Testing", "color": "orange",
+                "recommends": [{"id": "verified", "check": "confirm",
+                                "ask": "проверку подтвердил человек"}]},
     # Выпуск версии тремя шагами: проверенных задач копятся десятки, состав
     # релиза выбирается из них, и только выбранное получает тексты для changelog
     "ready_for_release": {"label": "Готово к выпуску", "section": "Ready for Release",
                           "color": "cyan"},
+    # section_present, а не filled: пустая секция — принятое решение
+    # «пользователю сказать нечего», и требовать текст значило бы его ломать.
+    # except_types: у задачи-обсуждения релизного хвоста нет вовсе
     "release_notes": {"label": "Заметки о релизе", "section": "Release Notes",
-                      "color": "violet"},
+                      "color": "violet",
+                      "recommends": [{"id": "release_text", "check": "section_present",
+                                      "name": "Изменение для пользователя",
+                                      "ask": "тексты релиза написаны",
+                                      "except_types": ["discussion"]},
+                                     {"id": "release_ok", "check": "confirm",
+                                      "ask": "тексты релиза утверждены человеком",
+                                      "except_types": ["discussion"]}]},
     "to_release": {"label": "В ближайший релиз", "section": "To Release", "color": "teal"},
     # Выкатка — не то же, что выпуск версии: у процессов со стендом и продом
     # «готово к деплою» наступает там, где версии может не быть вовсе

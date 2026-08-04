@@ -146,6 +146,36 @@ class MirrorTest(unittest.TestCase):
                     path)]
                 self.assertEqual(mine, theirs)
 
+    def test_catalog_recommendations_match_in_both_mirrors(self) -> None:
+        """Рекомендации статуса — часть состава, и он у зеркал один.
+
+        Каталог дублируется намеренно (скрипт автономен и работает без сервера),
+        но набор ключей сверяется, а содержимое нет — и рекомендации оказались
+        только в скрипте. Материализация рекомендаций при настройке идёт через
+        бэкенд: не зная их, он материализовать нечего.
+        """
+        from backend.statuses import CATALOG as backend_catalog
+
+        script_catalog = self.script.CATALOG
+        for key, meta in script_catalog.items():
+            with self.subTest(status=key):
+                self.assertEqual(meta.get("recommends", []),
+                                 backend_catalog.get(key, {}).get("recommends", []),
+                                 f"рекомендации статуса «{key}» разошлись между "
+                                 f"скриптом и бэкендом")
+
+    def test_release_tail_recommendations_skip_discussions(self) -> None:
+        """У задачи-обсуждения релизного хвоста нет вовсе.
+
+        Без исключения по типу её закрытие упирается в «тексты релиза написаны» и
+        «тексты утверждены» — три списания на задаче, где проверять осмысленно
+        ровно одно: что решение утвердил человек.
+        """
+        for req in self.script.CATALOG["release_notes"]["recommends"]:
+            with self.subTest(req=req["id"]):
+                self.assertIn("discussion", req.get("except_types", []),
+                              f"рекомендация «{req['id']}» держит обсуждение")
+
     def test_type_scope_matches_in_both_mirrors(self) -> None:
         """Требование, исключённое по типу задачи, обе реализации считают
         неприменимым — иначе карточка покажет долг, которого агент не видит.
