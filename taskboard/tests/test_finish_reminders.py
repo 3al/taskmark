@@ -410,6 +410,24 @@ class SkillBoundaryTest(unittest.TestCase):
         начиная работу, и оттуда должен узнать, чем её кончают."""
         self.assertIn("handoff-task", self.skill("start-task"))
 
+    def test_status_change_is_the_last_step(self) -> None:
+        """Статус меняется, когда файл задачи уже приведён в порядок.
+
+        Он публикует факт «задача на этом этапе», и публиковать его раньше правды
+        нельзя. Плюс требования этапа проверяются ровно в момент перехода: скилл,
+        который двигает задачу до заполнения истории коммитов, упирается в
+        собственный гейт.
+        """
+        finalize = self.skill("finalize-task")
+        self.assertLess(finalize.index("Заполнить «Историю коммитов»"),
+                        finalize.index("Сменить статус"),
+                        "финализация двигает задачу до того, как прибрала хвосты")
+
+        handoff = self.skill("handoff-task")
+        self.assertLess(handoff.index("Закрыть чекбоксы"),
+                        handoff.index("Перевести в следующий статус"),
+                        "передача двигает задачу до того, как прибрала работу")
+
     def test_handoff_has_opencode_wrapper(self) -> None:
         """Скиллы поставки парны: без обёртки opencode-проект команды не увидит."""
         wrapper = SKILLS.parent.parent / ".opencode" / "commands" / "handoff-task.md"
