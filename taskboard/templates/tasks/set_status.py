@@ -557,8 +557,14 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
                      f"{'; '.join(requirement_names(cfg, pipeline, unconfirmed))}",
                      agent=agent or "set_status.py")
 
-    # Работа кончилась — самое время сказать про волт и хвосты в файле задачи:
-    # позже, при выпуске, автор деталей уже не помнит
+    # Задача уходит на проверку — знание записывают здесь, пока жив контекст
+    # сессии, в которой его добыли. Точка вычисляется из конфига: это статус,
+    # в котором идёт работа (`actions.start`), а событие — уход из него вперёд
+    handoff = (handoff_reminders(cfg)
+               if _is_handoff(cfg, pipeline, from_status, status) else [])
+
+    # Конец работы — время прибрать хвосты в файле задачи: позже, при выпуске,
+    # автор деталей уже не помнит
     reminders = (finish_reminders(tasks_dir, task_id, task_file, cfg)
                  if status == work_done_status(cfg, pipeline) else [])
 
@@ -566,6 +572,9 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             "file": task_file.name, "from": prev, "skipped": skipped,
             "stall_cleared": bool(cleared and cleared.get("cleared")),
             "unconfirmed": unconfirmed,
+            # Отдельным ключом от reminders: передача говорит о знании, конец
+            # работы — о хвостах задачи. Склеенные, они теряют причину
+            "handoff_reminders": handoff,
             "reminders": reminders,
             # Отдельным ключом от reminders: это разные механизмы — конец работы
             # напоминает о хвостах задачи, этап говорит о невыполненном на выходе
@@ -1555,6 +1564,26 @@ def work_done_status(cfg: dict, pipeline: list[dict]) -> str | None:
     return keys[-1]
 
 
+def _is_handoff(cfg: dict, pipeline: list[dict], from_status: str | None,
+                target: str) -> bool:
+    """Отдаёт ли этот переход задачу на проверку.
+
+    Событие — **уход вперёд из статуса, где идёт работа** (`actions.start`, тот
+    же ключ, по которому скиллы находят рабочий статус). Возврат назад передачей
+    не является: работа не кончилась, а началась заново. Съезд с маршрута — тоже
+    не передача, это отмена.
+    """
+    work = actions_of(cfg, pipeline).get("start")
+    if not work or from_status != work:
+        return False
+    keys = [s["key"] for s in pipeline]
+    if work not in keys or target not in keys:
+        return False
+    if pipeline[keys.index(target)].get("offramp"):
+        return False
+    return keys.index(target) > keys.index(work)
+
+
 def _unchecked_boxes(lines: list[str]) -> list[str]:
     """Незакрытые пункты чеклиста задачи."""
     bounds = _section_bounds(lines, CHECKLIST_SECTION)
@@ -1585,20 +1614,35 @@ def waiting_on(tasks_dir: Path, task_id: str) -> list[str]:
             if task_id in t["blocked_by"] and t["id"] != task_id]
 
 
+def handoff_reminders(cfg: dict) -> list[str]:
+    """Что сделать, отдавая задачу на проверку: пока жив контекст работы.
+
+    Отдельный канал от `finish_reminders`, и по единственному критерию —
+    **что можно потерять, отложив**. Знание теряется: до конца работы задача
+    доезжает и без агента (рукой на доске), и тогда записывать его некому — а
+    ухода из рабочего статуса не минует ни одна задача (TASK-137). Остальные
+    хвосты наоборот раньше невыполнимы: последний пункт чеклиста закрывает
+    проверка человеком, а коммиты в части процессов идут после неё.
+
+    Про волт можно только напомнить: «стоит ли сохранять знание» — суждение, а
+    не проверка. Ничего не запрещает: задача может честно не давать знаний.
+    """
+    if not cfg.get("vault"):
+        return []
+    return ["работа над задачей кончилась — что выяснилось про проект, сохраните "
+            "в волт (скилл handoff-task, внутри write-vault) сейчас: дальше "
+            "задачу могут двинуть и без агента, и записывать знание будет некому"]
+
+
 def finish_reminders(tasks_dir: Path, task_id: str, task_path: Path,
                      cfg: dict) -> list[str]:
-    """Что осталось сделать, раз работа над задачей кончилась.
+    """Что осталось прибрать, раз задача дошла до конца работы.
 
     Проверяемое — проверяем: незакрытые чекбоксы, пустая история коммитов и
     чужие пометки видны в данных, поэтому о них говорится конкретно. Про волт
-    можно только напомнить: «стоит ли сохранять знание» — суждение, а не
-    проверка. Список ничего не запрещает: задача может честно не давать знаний.
+    здесь не напоминают — его срок раньше, см. `handoff_reminders`.
     """
     out: list[str] = []
-    if cfg.get("vault"):
-        out.append("работа над задачей кончилась — что выяснилось про проект, "
-                   "сохраните в волт (скилл write-vault): иначе следующая задача "
-                   "на ту же тему вычитывает тот же код заново")
 
     try:
         lines = Path(task_path).read_text(encoding="utf-8-sig").splitlines()
@@ -1873,8 +1917,11 @@ def main() -> None:
         print(f"[i] {result['announce']}")
     for warning in result.get("warnings", []):
         print(f"[!] {warning}")
-    # Не гейт, а подсказка: переход уже выполнен, код возврата прежний
-    for reminder in result.get("stage_reminders", []) + result.get("reminders", []):
+    # Не гейт, а подсказка: переход уже выполнен, код возврата прежний.
+    # Каналы раздельные по механизму, печатаются подряд одним видом строки
+    for reminder in (result.get("stage_reminders", [])
+                     + result.get("handoff_reminders", [])
+                     + result.get("reminders", [])):
         print(f"[!] {reminder}")
 
 

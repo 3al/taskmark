@@ -153,14 +153,14 @@ class WorkDoneStatusTest(Project):
 class ReminderScopeTest(Project):
     """Напоминание печатается ровно там, где работа кончается."""
 
-    def test_finish_status_reminds_about_vault(self) -> None:
-        self.make(status="testing", section="## Testing")
+    def test_finish_status_reminds_about_tails(self) -> None:
+        self.make(status="testing", section="## Testing", commits="")
         self.write_config(vault=True)
 
         reminders = self.reminders("TASK-001", "ready_for_release")
 
-        self.assertTrue(any("волт" in r.lower() for r in reminders),
-                        f"о волте не напомнили: {reminders}")
+        self.assertTrue(any("История коммитов" in r for r in reminders),
+                        f"о хвостах не напомнили: {reminders}")
 
     def test_intermediate_status_is_silent(self) -> None:
         self.make(status="development", section="## Development")
@@ -174,9 +174,15 @@ class ReminderScopeTest(Project):
 
         self.assertEqual([], self.reminders("TASK-001", "to_release"))
 
-    def test_no_vault_no_vault_reminder(self) -> None:
-        """Волта в проекте нет — незачем звать к хранилищу, которого нет."""
+    def test_finish_no_longer_mentions_vault(self) -> None:
+        """Про знание напоминают раньше — на передаче задачи (TASK-137).
+
+        К концу работы контекст сессии, в которой знание добыто, уже не жив:
+        между разработкой и этим статусом могут пройти дни, и напоминание там
+        даёт заметку-отписку ради прохода вместо знания.
+        """
         self.make(status="testing", section="## Testing")
+        self.write_config(vault=True)
 
         reminders = self.reminders("TASK-001", "ready_for_release")
 
@@ -238,6 +244,78 @@ class ReminderContentTest(Project):
         self.assertNotIn("TASK-002", text)
 
 
+class HandoffReminderTest(Project):
+    """Знание записывается, пока жив контекст: на уходе из статуса работы.
+
+    Точка вычисляется из конфига — это `actions.start`, тот же ключ, по которому
+    скиллы определяют рабочий статус. Имена статусов не зашиты.
+    """
+
+    def handoff(self, task_id: str, status: str) -> list[str]:
+        result = self.move(task_id, status)
+        self.assertTrue(result.get("ok"), result.get("error"))
+        return result.get("handoff_reminders", [])
+
+    def test_leaving_work_status_reminds_about_vault(self) -> None:
+        self.make(status="development", section="## Development")
+        self.write_config(vault=True)
+
+        text = "\n".join(self.handoff("TASK-001", "testing"))
+
+        self.assertIn("волт", text.lower())
+
+    def test_no_vault_no_reminder(self) -> None:
+        """Волта в проекте нет — незачем звать к хранилищу, которого нет."""
+        self.make(status="development", section="## Development")
+
+        self.assertEqual([], self.handoff("TASK-001", "testing"))
+
+    def test_backward_move_is_not_a_handoff(self) -> None:
+        """Возврат в очередь — не передача на проверку: работа не кончилась."""
+        self.make(status="development", section="## Development")
+        self.write_config(vault=True)
+
+        self.assertEqual([], self.handoff("TASK-001", "todo"))
+
+    def test_other_statuses_are_silent(self) -> None:
+        """Уход с любого другого этапа передачей не является."""
+        self.make(status="testing", section="## Testing")
+        self.write_config(vault=True)
+
+        self.assertEqual([], self.handoff("TASK-001", "ready_for_release"))
+
+    def test_channels_do_not_merge(self) -> None:
+        """Прыжок из разработки прямо в конец работы: оба канала, но раздельно.
+
+        Механизмы разные — передача говорит о знании, конец работы о хвостах
+        задачи, — и склеенные в один список они теряют причину. Тот же вывод
+        уже получен на `stage_reminders` против `reminders`.
+        """
+        self.make(status="development", section="## Development", commits="")
+        self.write_config(vault=True)
+
+        result = self.move("TASK-001", "ready_for_release")
+
+        handoff = "\n".join(result.get("handoff_reminders", []))
+        finish = "\n".join(result.get("reminders", []))
+        self.assertIn("волт", handoff.lower())
+        self.assertIn("История коммитов", finish)
+        self.assertNotIn("волт", finish.lower())
+
+    def test_cli_prints_handoff(self) -> None:
+        self.make(status="development", section="## Development")
+        self.write_config(vault=True)
+
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "TASK-001", "testing",
+             "--agent", "Тест", "--tasks-dir", str(self.tasks)],
+            capture_output=True, text=True, encoding="utf-8")
+
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertIn("[!]", proc.stdout)
+        self.assertIn("волт", proc.stdout.lower())
+
+
 class ReminderIsNotAGateTest(Project):
     """Напоминание — подсказка: переход идёт, код возврата прежний."""
 
@@ -284,14 +362,60 @@ class PlainProjectTest(Project):
         self.assertEqual([], self.reminders("TASK-001", "testing"))
 
 
-class FinalizeSkillTest(unittest.TestCase):
-    """Скилл описывает то же правило: волт обновляется в конце работы."""
+class SkillBoundaryTest(unittest.TestCase):
+    """Скиллы описывают то же разделение моментов, что и скрипт (TASK-137).
 
-    def test_skill_names_the_rule(self) -> None:
-        text = (SKILLS / "finalize-task" / "SKILL.md").read_text(encoding="utf-8")
+    Расхождение текста скилла с поведением скрипта опаснее их обоих: агент
+    читает скилл, а напоминание приходит из скрипта, и противоречие он решает
+    в пользу того, что прочитал первым.
+    """
 
-        self.assertIn("release_draft", text,
+    def skill(self, name: str) -> str:
+        return (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+
+    def test_finalize_names_the_work_done_rule(self) -> None:
+        self.assertIn("release_draft", self.skill("finalize-task"),
                       "скилл не говорит, откуда берётся статус завершения работы")
+
+    def test_handoff_skill_exists_and_owns_the_vault(self) -> None:
+        text = self.skill("handoff-task")
+
+        self.assertIn("actions.start", text,
+                      "скилл передачи должен брать рабочий статус из конфига")
+        self.assertIn("write-vault", text,
+                      "запись знания — главный шаг передачи на проверку")
+
+    def test_handoff_leaves_verification_checkbox_alone(self) -> None:
+        """Пункт, который закрывает проверка человеком, передача не трогает."""
+        self.assertIn("Локальная проверка", self.skill("handoff-task"))
+
+    def test_finalize_no_longer_writes_the_vault(self) -> None:
+        """Финализация про волт только проверяет, что шаг не пропущен."""
+        text = self.skill("finalize-task")
+
+        self.assertIn("handoff-task", text,
+                      "финализация должна отсылать к скиллу передачи")
+
+    def test_handoff_is_called_by_the_agent_not_the_user(self) -> None:
+        """Скилл вызывает агент, закончив работу, — просить об этом некому.
+
+        Пользователь не знает ни про статусы, ни про срок записи знания: он ждёт,
+        что ему скажут, куда смотреть. Описание, написанное «когда пользователь
+        говорит…», означало бы, что скилл не вызовется никогда.
+        """
+        self.assertIn("Вызывай сам", self.skill("handoff-task"))
+
+    def test_start_task_hands_over_to_handoff(self) -> None:
+        """Эстафета: скилл старта — единственное место, которое агент читал,
+        начиная работу, и оттуда должен узнать, чем её кончают."""
+        self.assertIn("handoff-task", self.skill("start-task"))
+
+    def test_handoff_has_opencode_wrapper(self) -> None:
+        """Скиллы поставки парны: без обёртки opencode-проект команды не увидит."""
+        wrapper = SKILLS.parent.parent / ".opencode" / "commands" / "handoff-task.md"
+
+        self.assertTrue(wrapper.exists(), "нет обёртки .opencode для handoff-task")
+        self.assertIn("handoff-task skill", wrapper.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":  # pragma: no cover
