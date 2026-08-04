@@ -45,6 +45,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
   // Переопределения подписей приезжают вместе с готовым маршрутом; null —
   // пользователь их не менял, и трогать сохранённые не нужно
   const [statusesOverride, setStatusesOverride] = useState(null)
+  // Требования этапов правятся тем же редактором; null — не трогали
+  const [requiresOverride, setRequiresOverride] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   // Выполненные миграции после сохранения (переименования в проекте)
@@ -108,6 +110,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
   // Выключение статуса с задачами: куда их девать — решает пользователь
   const [removals, setRemovals] = useState(null)
   const [moves, setMoves] = useState({})
+  // Включённое требование действует задним числом: показываем цену до сохранения
+  const [gated, setGated] = useState(null)
 
   const updates = () => ({
     port: Number(config.port) || 8765,
@@ -128,6 +132,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
       actions: pipeline.actions,
     } : {}),
     ...(statusesOverride !== null ? { statuses: statusesOverride } : {}),
+    // Требования — ключ верхнего уровня, а не внутри `statuses`: вложенное
+    // затирается применением источника пайплайна
+    ...(requiresOverride !== null ? { requires: requiresOverride } : {}),
   })
 
   // Сначала спрашиваем бэкенд, не осиротеют ли задачи выключаемых статусов
@@ -140,6 +147,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
         setRemovals(preview.removals)
         // Ключ — заголовок раздела: у осиротевшего раздела статуса может не быть
         setMoves(Object.fromEntries(preview.removals.map((r) => [r.section, r.suggested])))
+        return
+      }
+      // Требование действует задним числом: живые задачи, прошедшие этап раньше,
+      // упрутся на следующем шаге вперёд. Это то, ради чего механизм заводился,
+      // но человек должен увидеть цену до нажатия, а не узнать от агента через день
+      if (preview.gated?.length) {
+        setGated(preview.gated)
         return
       }
       await save()
@@ -235,6 +249,42 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                 className="px-4 py-2 text-sm font-medium bg-sky-600 hover:bg-sky-500 rounded-lg disabled:opacity-50"
               >
                 {busy ? 'Переношу…' : 'Перенести и сохранить'}
+              </button>
+            </div>
+          </>
+        ) : gated ? (
+          <>
+            {/* Цена включения требования: оно действует задним числом, и задачи,
+                прошедшие этап раньше, упрутся на следующем шаге вперёд. Это не
+                ошибка настройки, а её смысл — но узнавать об этом человек должен
+                здесь, а не от агента через день */}
+            <div className="px-5 py-4 space-y-3">
+              <div className="text-sm text-zinc-300">
+                Требование действует и для задач, которые прошли этап раньше. Этим
+                задачам оно достанется долгом — агент упрётся на следующем шаге
+                вперёд, пока долг не закрыт или не списан.
+              </div>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {gated.map((t) => (
+                  <div key={t.id} className="text-xs flex gap-2">
+                    <span className="text-amber-300 shrink-0">{t.id}</span>
+                    <span className="text-zinc-400 truncate">{t.title}</span>
+                    <span className="ml-auto text-zinc-500 shrink-0">
+                      {t.requirements.join('; ')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {error && <div className="text-sm text-rose-400">{error}</div>}
+            </div>
+            <div className="px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
+              <button onClick={() => setGated(null)}
+                      className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">
+                Вернуться к настройкам
+              </button>
+              <button onClick={() => { setGated(null); save() }} disabled={busy}
+                      className="px-4 py-2 text-sm font-medium bg-sky-600 hover:bg-sky-500 rounded-lg disabled:opacity-50">
+                {busy ? 'Сохраняю…' : 'Всё равно включить'}
               </button>
             </div>
           </>
@@ -435,10 +485,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                     actions={pipeline.actions}
                     catalog={catalog}
                     sources={sources}
+                    requires={requiresOverride ?? config.requires ?? {}}
+                    predicates={config.predicates}
                     onOpenHelp={onOpenHelp}
-                    onChange={({ pipeline: next, actions: nextActions, statuses }) => {
+                    onChange={({ pipeline: next, actions: nextActions, statuses, requires }) => {
                       setPipelineState({ pipeline: next, actions: nextActions })
                       if (statuses !== undefined) setStatusesOverride(statuses)
+                      if (requires !== undefined) setRequiresOverride(requires)
                     }}
                   />
                 </div>
