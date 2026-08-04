@@ -580,7 +580,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             # напоминает о хвостах задачи, этап говорит о невыполненном на выходе
             "stage_reminders": stage_reminders(pipeline, from_status, pending, task_id),
             # Что потребует новый этап — сказанное на входе, а не в момент отказа
-            "announce": stage_announcement(cfg, pipeline, status),
+            "announce": stage_announcement(cfg, pipeline, status, task_file),
             # Смена статуса — единственный момент, когда файл задачи заведомо
             # открывают: заодно показываем, что в нём разъехалось
             "warnings": check_task_file(task_file)}
@@ -1247,12 +1247,35 @@ def requirement_met(req: dict, task_path) -> bool:
     return True
 
 
+def requirement_applies(req: dict, task_path) -> bool:
+    """Относится ли требование к этой задаче — по её типу.
+
+    Часть требований бессмысленна по типу работы: «История коммитов» у
+    задачи-обсуждения пуста не по недосмотру, а потому что коммитов там не
+    будет никогда. Требование, невыполнимое в принципе, учит списывать и всё
+    остальное.
+
+    Хранится **исключение** (`except_types`), а не белый список: новый тип в
+    поставке белый список молча перестал бы покрывать — тихая потеря, — а
+    исключение молча включит, и это заметно. Нет ключа — требование ко всем
+    типам; нет типа у задачи (заведена до появления поля) — тоже.
+    """
+    skip = req.get("except_types") or req.get("except_type")
+    if isinstance(skip, str):
+        skip = [skip]
+    skip = [_one_line(t).lower() for t in (skip or [])]
+    if not skip:
+        return True
+    return _one_line(_read_meta(Path(task_path)).get("type")).lower() not in skip
+
+
 def unmet(reqs: list[dict], task_path) -> list[dict]:
-    """Требования, ложные сейчас и не списанные."""
+    """Требования, ложные сейчас, не списанные и относящиеся к этой задаче."""
     waived = [i.lower()
               for i in parse_req_ids(_read_meta(Path(task_path)).get(WAIVED_FIELD))]
     return [r for r in reqs
             if _one_line(r.get("id")).lower() not in waived
+            and requirement_applies(r, task_path)
             and not requirement_met(r, task_path)]
 
 
@@ -1385,13 +1408,19 @@ def stage_reminders(pipeline: list[dict], current: str, pending: list[dict],
             for r in pending if not r.get("mandatory")]
 
 
-def stage_announcement(cfg: dict, pipeline: list[dict], status: str) -> str:
+def stage_announcement(cfg: dict, pipeline: list[dict], status: str,
+                       task_path=None) -> str:
     """Что этап потребует на выходе — сказанное при входе в него.
 
     Требование, о котором узнают в момент отказа, выглядит придиркой; то же
     самое, сказанное на входе, — условием работы.
+
+    Задача известна — требования, к её типу не относящиеся, не называются:
+    обещать то, чего не спросят, хуже, чем молчать.
     """
     reqs = [r for r in stage_requirements(cfg, pipeline, status) if r.get("mandatory")]
+    if task_path is not None:
+        reqs = [r for r in reqs if requirement_applies(r, task_path)]
     if not reqs:
         return ""
     return (f"этап «{_label_of(pipeline, status)}» требует на выходе: "

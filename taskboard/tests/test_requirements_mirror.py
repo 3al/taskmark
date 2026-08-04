@@ -146,6 +146,30 @@ class MirrorTest(unittest.TestCase):
                     path)]
                 self.assertEqual(mine, theirs)
 
+    def test_type_scope_matches_in_both_mirrors(self) -> None:
+        """Требование, исключённое по типу задачи, обе реализации считают
+        неприменимым — иначе карточка покажет долг, которого агент не видит.
+
+        Ключ `except_types` появился ради задач-обсуждений: «История коммитов»
+        у них пуста не по недосмотру, коммитов там не будет никогда.
+        """
+        from backend.requirements import unmet as backend_unmet
+
+        req = {"id": "commits", "check": "section_filled",
+               "name": "История коммитов", "except_types": ["discussion"]}
+        cases = [("TASK-020", "discussion", []), ("TASK-021", "feature", ["commits"])]
+
+        for task_id, task_type, expected in cases:
+            path = self._task(task_id, status="ready_for_release")
+            text = path.read_text(encoding="utf-8")
+            path.write_text(text.replace("epic: ~", f"epic: ~\ntype: {task_type}"),
+                            encoding="utf-8")
+            with self.subTest(type=task_type):
+                mine = [r["id"] for r in backend_unmet([dict(req)], path)]
+                theirs = [r["id"] for r in self.script.unmet([dict(req)], path)]
+                self.assertEqual(mine, theirs)
+                self.assertEqual(mine, expected)
+
     def test_own_id_silences_recommendation_in_both_mirrors(self) -> None:
         """Вытеснение рекомендации считается по смыслу предиката, а не по `id`,
         и обе реализации обязаны считать его одинаково (TASK-135).

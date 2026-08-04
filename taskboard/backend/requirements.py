@@ -181,16 +181,33 @@ def requirement_met(req: dict, task_path) -> bool:
     return True
 
 
+def _applies_to_type(req: dict, task_type: str) -> bool:
+    """Относится ли требование к задаче этого типа. Зеркало функции скрипта.
+
+    Часть требований бессмысленна по типу работы: «История коммитов» у
+    задачи-обсуждения пуста не по недосмотру — коммитов там не будет никогда.
+    Хранится исключение (`except_types`), а не белый список: новый тип в поставке
+    белый список молча перестал бы покрывать, а исключение молча включит.
+    """
+    skip = req.get("except_types") or req.get("except_type")
+    if isinstance(skip, str):
+        skip = [skip]
+    skip = [_one_line(t).lower() for t in (skip or [])]
+    return not skip or _one_line(task_type).lower() not in skip
+
+
 def unmet(reqs: list[dict], task_path) -> list[dict]:
-    """Требования, ложные сейчас и не списанные."""
+    """Требования, ложные сейчас, не списанные и относящиеся к этой задаче."""
     try:
         content = Path(task_path).read_text(encoding="utf-8-sig")
     except OSError:
         return []
     meta, _body = parse_frontmatter(content)
     waived = [i.lower() for i in parse_req_ids(meta.get(WAIVED_FIELD))]
+    task_type = meta.get("type") or ""
     return [r for r in reqs
             if _one_line(r.get("id")).lower() not in waived
+            and _applies_to_type(r, task_type)
             and not requirement_met(r, task_path)]
 
 

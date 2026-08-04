@@ -28,7 +28,7 @@ TASK_FILE = """---
 id: {task_id}
 title: Тестовая задача
 epic: ~
-type: feature
+type: {task_type}
 status: {status}
 created: 2026-08-03 10:00
 ---
@@ -73,9 +73,10 @@ class RequirementsTestCase(unittest.TestCase):
         self._write_cfg()
 
     def _task(self, task_id: str = "TASK-001", status: str = "testing",
-              box: str = "x") -> Path:
+              box: str = "x", task_type: str = "feature") -> Path:
         path = self.tasks / f"{task_id}-test.md"
-        path.write_text(TASK_FILE.format(task_id=task_id, status=status, box=box),
+        path.write_text(TASK_FILE.format(task_id=task_id, status=status, box=box,
+                                         task_type=task_type),
                         encoding="utf-8")
         section = next(s["section"] for s in self.mod.pipeline_of(self.cfg)
                        if s["key"] == status)
@@ -669,6 +670,102 @@ class RecommendationTest(RequirementsTestCase):
         reqs = self.mod.stage_requirements(cfg, [stage], "x")
 
         self.assertEqual([r["id"] for r in reqs], ["mine"])
+
+
+class TypeScopeTest(RequirementsTestCase):
+    """Требование может не относиться к типу задачи (TASK-134).
+
+    Живой случай: «История коммитов» бессмысленна для задачи-обсуждения — там
+    коммитов не будет никогда. Это не долг, а норма типа, а требование,
+    невыполнимое в принципе, учит списывать и всё остальное.
+
+    Хранится **исключение**, а не белый список: при появлении нового типа в
+    поставке белый список молча перестал бы его покрывать (тихая потеря), а
+    исключение молча включит — это заметно.
+    """
+
+    COMMITS = {"id": "commits", "check": "section_filled",
+               "name": "История коммитов", "except_types": ["discussion"]}
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._requires({"testing": [dict(self.COMMITS)]})
+
+    def _no_commits(self, task_id: str = "TASK-001", **kw) -> Path:
+        """Задача без истории коммитов: требование по ней ложно."""
+        path = self._task(task_id, **kw)
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("- `abc1234` тестовый коммит", ""),
+                        encoding="utf-8")
+        return path
+
+    def test_excluded_type_is_not_stopped(self) -> None:
+        self._no_commits(status="testing", task_type="discussion")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_other_types_are_stopped(self) -> None:
+        self._no_commits(status="testing", task_type="feature")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("commits", result.stderr)
+
+    def test_requirement_without_key_applies_to_every_type(self) -> None:
+        self._requires({"testing": [{k: v for k, v in self.COMMITS.items()
+                                     if k != "except_types"}]})
+        self._no_commits(status="testing", task_type="discussion")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 1, "без ключа требование ко всем типам")
+
+    def test_task_without_type_keeps_requirements(self) -> None:
+        """Задачи, заведённые до появления поля, требований не теряют."""
+        path = self._no_commits(status="testing")
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("type: feature\n", ""), encoding="utf-8")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 1)
+
+    def test_type_case_does_not_matter(self) -> None:
+        """Значение пишет человек — регистр не должен менять вердикт."""
+        self._requires({"testing": [dict(self.COMMITS, except_types=["Discussion"])]})
+        self._no_commits(status="testing", task_type="discussion")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unknown_type_in_list_changes_nothing(self) -> None:
+        """Опечатка в исключении не гасит требование молча."""
+        self._requires({"testing": [dict(self.COMMITS, except_types=["нет-такого"])]})
+        self._no_commits(status="testing", task_type="discussion")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 1)
+
+    def test_debt_hides_requirement_of_another_type(self) -> None:
+        self._no_commits(status="ready_for_release", task_type="discussion")
+
+        out = json.loads(self._run("TASK-001", "--debt").stdout)
+
+        self.assertEqual([], out["debt"])
+
+    def test_announcement_skips_requirement_of_another_type(self) -> None:
+        """Анонс на входе в этап не должен обещать того, чего не спросят."""
+        self._no_commits(status="development", task_type="discussion")
+
+        result = self._run("TASK-001", "testing", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("commits", result.stdout)
 
 
 class ReportingTest(RequirementsTestCase):
