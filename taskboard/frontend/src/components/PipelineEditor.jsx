@@ -27,6 +27,17 @@ const ACTION_FIELDS = [
 const reqText = (req, predicates) =>
   req.ask || req.name || predicates?.[req.check]?.label || req.check || req.id
 
+// Чем именно требование проверяется. Формулировка отвечает «что должно быть», но
+// не «как это узнают»: по строке «проверку подтвердил человек» не видно, ждут
+// нажатия человека или заполненной секции — а от этого зависит, кому её закрывать
+const reqKind = (req, predicates) => {
+  const spec = predicates?.[req.check]
+  if (!spec) return req.check || 'неизвестная проверка'
+  const param = spec.param ? String(req[spec.param] || '').trim() : ''
+  return param && param !== reqText(req, predicates)
+    ? `${spec.label}: «${param}»` : spec.label
+}
+
 // Форма своего требования. Список проверок приходит от бэкенда (`predicates`):
 // зашитый в JS перечень разошёлся бы с движком молча, и редактор предлагал бы
 // то, чего скрипт не умеет
@@ -282,8 +293,20 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     )}
                     {declared.map((req) => (
                       <div key={req.id} className="flex items-center gap-2 text-xs">
-                        <span className="text-emerald-400">✓</span>
+                        <span className="text-emerald-400 shrink-0">✓</span>
                         <span className="truncate">{reqText(req, predicates)}</span>
+                        {/* Чем проверяется и к кому не относится — видно в строке:
+                            иначе требование в списке не самодокументируемо, и
+                            понять его можно только вспомнив, как заводил */}
+                        <span className="text-[10px] text-zinc-400 border border-zinc-700 rounded px-1 shrink-0">
+                          {reqKind(req, predicates)}
+                        </span>
+                        {req.except_types?.length > 0 && (
+                          <span className="text-[10px] text-zinc-500 border border-zinc-700/60 rounded px-1 shrink-0"
+                                title="К задачам этих типов требование не относится">
+                            кроме: {req.except_types.join(', ')}
+                          </span>
+                        )}
                         <span className="text-[10px] text-zinc-600 shrink-0">{req.id}</span>
                         <button onClick={() => dropRequirement(status.key, req.id)}
                                 title="Убрать требование"
@@ -292,8 +315,11 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     ))}
                     {recommended.map((req) => (
                       <div key={req.id} className="flex items-center gap-2 text-xs text-zinc-400">
-                        <span className="text-sky-400">•</span>
+                        <span className="text-sky-400 shrink-0">•</span>
                         <span className="truncate">{reqText(req, predicates)}</span>
+                        <span className="text-[10px] text-zinc-500 border border-zinc-700/60 rounded px-1 shrink-0">
+                          {reqKind(req, predicates)}
+                        </span>
                         <button onClick={() => addRequirement(status.key, req)}
                                 className="ml-auto shrink-0 text-[11px] px-1.5 rounded border border-zinc-700 hover:border-sky-600 hover:text-zinc-200">
                           Сделать обязательным
