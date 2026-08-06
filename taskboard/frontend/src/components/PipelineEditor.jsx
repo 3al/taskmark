@@ -78,8 +78,11 @@ function RequirementForm({ predicates, onAdd }) {
         <input className={`${input} flex-1`} value={ask}
                placeholder="формулировка для человека"
                onChange={(e) => setAsk(e.target.value)} />
-        <input className={`${input} w-24`} value={id} placeholder="имя, напр. verified"
-               title="Служебное имя: им требование отмечают выполненным, и оно попадает в файл задачи"
+        {/* Единственное место, где человек имеет дело со служебным именем: оно
+            попадёт во frontmatter задачи (`confirmed: verified`), и осмысленное
+            там читается лучше сгенерированного */}
+        <input className={`${input} w-28`} value={id} placeholder="служебное имя"
+               title="Под этим именем требование записывается в файл задачи — например verified. Латиницей, без пробелов"
                onChange={(e) => setId(e.target.value)} />
         <button onClick={submit} disabled={!ready}
                 className="text-xs px-2 rounded border border-zinc-700 text-zinc-300 hover:border-sky-600 disabled:opacity-30">
@@ -292,7 +295,11 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                       </div>
                     )}
                     {declared.map((req) => (
-                      <div key={req.id} className="flex items-center gap-2 text-xs">
+                      // Служебное имя (`id`) в строке не показываем: человек с ним
+                      // дела не имеет — оно нужно агенту и всплывает во frontmatter
+                      // задачи. Остаётся в подсказке, чтобы было где посмотреть
+                      <div key={req.id} className="flex items-center gap-2 text-xs"
+                           title={`Служебное имя: ${req.id} — под ним требование записывается в файл задачи`}>
                         <span className="text-emerald-400 shrink-0">✓</span>
                         <span className="truncate">{reqText(req, predicates)}</span>
                         {/* Чем проверяется и к кому не относится — видно в строке:
@@ -307,7 +314,6 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                             кроме: {req.except_types.join(', ')}
                           </span>
                         )}
-                        <span className="text-[10px] text-zinc-600 shrink-0">{req.id}</span>
                         <button onClick={() => dropRequirement(status.key, req.id)}
                                 title="Убрать требование"
                                 className="ml-auto px-1 text-zinc-500 hover:text-rose-400 shrink-0">✕</button>
