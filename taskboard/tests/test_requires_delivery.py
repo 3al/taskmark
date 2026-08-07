@@ -255,10 +255,12 @@ created: 2026-08-01 10:00
         self._task("TASK-001", "testing")      # development пройден → долг сразу
         self._task("TASK-002", "development")  # стоит на этапе → при выходе
 
-        hit = {t["id"]: t["when"] for t in self.impact(
-            {"development": [dict(self.COMMITS)]})}
+        hit = self.impact({"development": [dict(self.COMMITS)]})
 
-        self.assertEqual({"TASK-001": "now", "TASK-002": "exit"}, hit)
+        self.assertEqual({"TASK-001": "now", "TASK-002": "exit"},
+                         {t["id"]: t["when"] for t in hit})
+        self.assertEqual(["now", "exit"], [t["when"] for t in hit],
+                         "ближайшее последствие решения читают первым")
 
     def test_closed_task_is_not_counted(self) -> None:
         """У задачи в конце маршрута долга нет: её больше никуда не двигают,

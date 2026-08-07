@@ -755,7 +755,11 @@ export default function App() {
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md shadow-2xl"
                onClick={(e) => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-zinc-800 text-base font-semibold text-amber-200">
-              {pendingDebt.confirmable.length > 0 ? 'Подтвердите перед переносом' : 'Задача уедет с долгом'}
+              {/* Номер в заголовке: диалог всплывает над доской, где карточек
+                  десятки, и «какая именно задача» — первое, что нужно знать */}
+              {pendingDebt.confirmable.length > 0
+                ? `Задача ${pendingDebt.taskId}: подтвердите перед переносом`
+                : `Задача ${pendingDebt.taskId} уедет с долгом`}
             </div>
             <div className="px-5 py-4 space-y-3 text-sm text-zinc-300/90">
               {/* Формулировка требования — утверждение о выполненном («проверку

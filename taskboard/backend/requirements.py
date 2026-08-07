@@ -106,7 +106,9 @@ def gate_impact(tasks_dir, old_cfg: dict, new_cfg: dict) -> list[dict]:
                         "status": status,
                         "when": "now" if any(r["id"] in now for r in added) else "exit",
                         "requirements": [requirement_text(r) for r in added]})
-    return out
+    # Сначала те, кого требование коснётся сразу: это ближайшее последствие
+    # решения, и читать список стоит с него
+    return sorted(out, key=lambda t: (t["when"] != "now", t["id"]))
 
 
 def _step_requirements(cfg: dict, status: str, path) -> list[dict]:
