@@ -171,9 +171,10 @@ class MirrorTest(unittest.TestCase):
         ровно одно: что решение утвердил человек.
         """
         for req in self.script.CATALOG["release_notes"]["recommends"]:
-            with self.subTest(req=req["id"]):
-                self.assertIn("discussion", req.get("except_types", []),
-                              f"рекомендация «{req['id']}» держит обсуждение")
+            for task_type in ("discussion", "review"):
+                with self.subTest(req=req["id"], type=task_type):
+                    self.assertIn(task_type, req.get("except_types", []),
+                                  f"рекомендация «{req['id']}» держит {task_type}")
 
     def test_type_scope_matches_in_both_mirrors(self) -> None:
         """Требование, исключённое по типу задачи, обе реализации считают

@@ -55,16 +55,16 @@ CATALOG: dict[str, dict] = {
                           "color": "cyan"},
     # section_present, а не filled: пустая секция — принятое решение
     # «пользователю сказать нечего», и требовать текст значило бы его ломать.
-    # except_types: у задачи-обсуждения релизного хвоста нет вовсе
+    # except_types: у обсуждения и ревью релизного хвоста нет вовсе
     "release_notes": {"label": "Заметки о релизе", "section": "Release Notes",
                       "color": "violet",
                       "recommends": [{"id": "release_text", "check": "section_present",
                                       "name": "Изменение для пользователя",
                                       "ask": "тексты релиза написаны",
-                                      "except_types": ["discussion"]},
+                                      "except_types": ["discussion", "review"]},
                                      {"id": "release_ok", "check": "confirm",
                                       "ask": "тексты релиза утверждены человеком",
-                                      "except_types": ["discussion"]}]},
+                                      "except_types": ["discussion", "review"]}]},
     "to_release": {"label": "В ближайший релиз", "section": "To Release", "color": "teal"},
     # Выкатка — не то же, что выпуск версии: у процессов со стендом и продом
     # «готово к деплою» наступает там, где версии может не быть вовсе

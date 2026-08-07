@@ -78,6 +78,9 @@ CARD_LIMITS: dict[str, tuple[int, int]] = {
 # section — заголовок рубрики бэклога: тот же тип, только во множественном
 # числе («Баги», а не «Баг»). Рубрики выводятся отсюда, второго списка нет:
 # он уже разъезжался — `discussion` не имел рубрики вовсе (TASK-119).
+# commits: False — у работы этого типа коммитов не бывает, и напоминание о
+# пустой «Истории коммитов» к ней не относится. Хранится **исключение**, а не
+# белый список: новый тип поставки коммиты даёт и молча выпасть не может.
 TASK_TYPES: dict[str, dict] = {
     "feature":    {"label": "Новый функционал", "section": "Новый функционал",
                    "letter": "Н", "color": "sky"},
@@ -88,9 +91,11 @@ TASK_TYPES: dict[str, dict] = {
     "cleanup":    {"label": "Уборка",           "section": "Уборка",
                    "letter": "У", "color": "emerald"},
     "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
-                   "letter": "О", "color": "amber"},
+                   "letter": "О", "color": "amber", "commits": False},
     "design":     {"label": "Дизайн",           "section": "Дизайн",
                    "letter": "Д", "color": "fuchsia"},
+    "review":     {"label": "Код-ревью",        "section": "Код-ревью",
+                   "letter": "К", "color": "lime", "commits": False},
 }
 
 DEFAULT_TASK_TYPE = "feature"

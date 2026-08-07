@@ -187,7 +187,18 @@ class TypeCatalogTest(unittest.TestCase):
 
     def test_backend_catalog_covers_all(self) -> None:
         self.assertEqual(set(TASK_TYPES),
-                         {"feature", "bug", "refactor", "cleanup", "discussion", "design"})
+                         {"feature", "bug", "refactor", "cleanup", "discussion",
+                          "design", "review"})
+
+    def test_commitless_types_marked(self) -> None:
+        """Тип, у которого коммитов не бывает, назван в каталоге (TASK-152).
+
+        Хранится **исключение** (`commits: False`), а не белый список: новый тип
+        поставки по умолчанию коммиты даёт, и молчаливо выпасть из напоминания
+        не может.
+        """
+        commitless = {k for k, m in TASK_TYPES.items() if not m.get("commits", True)}
+        self.assertEqual({"discussion", "review"}, commitless)
 
     def test_scripts_know_same_types(self) -> None:
         for name in ("create_task.py", "set_status.py"):
@@ -195,6 +206,20 @@ class TypeCatalogTest(unittest.TestCase):
                 text = (TASKS_TEMPLATES / name).read_text(encoding="utf-8")
                 for key in TASK_TYPES:
                     self.assertIn(key, text, f"{name} не знает тип {key}")
+
+    def test_script_marks_same_commitless_types(self) -> None:
+        """Скрипт автономен и держит свой каталог — пометка обязана совпасть.
+
+        Разъезд тихий: напоминание про пустую «Историю коммитов» печатает
+        скрипт, и знай он про типы иначе — карточка и консоль разошлись бы.
+        """
+        from tests.test_set_status_script import load_script
+
+        script = load_script()
+        backend = {k for k, m in TASK_TYPES.items() if not m.get("commits", True)}
+        in_script = {k for k, m in script.TASK_TYPES.items()
+                     if not m.get("commits", True)}
+        self.assertEqual(backend, in_script)
 
     def test_frontend_catalog_matches(self) -> None:
         text = (FRONTEND / "taskTypes.js").read_text(encoding="utf-8")

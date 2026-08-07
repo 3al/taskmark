@@ -224,6 +224,40 @@ class ReminderContentTest(Project):
 
         self.assertNotIn("История коммитов", text)
 
+    def _typed(self, task_id: str, task_type: str) -> None:
+        """Проставить тип уже созданной задаче: в шаблоне теста поля нет."""
+        path = next(self.tasks.glob(f"{task_id}-*.md"))
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace("epic: ~", f"epic: ~\ntype: {task_type}"),
+                        encoding="utf-8")
+
+    def test_commit_history_silent_for_commitless_types(self) -> None:
+        """У ревью и обсуждения коммитов не бывает — пустая секция это норма.
+
+        Напоминание, которое нечем закрыть, обесценивает соседние: агент
+        привыкает пролистывать `[!]` вместо того, чтобы чинить (TASK-152).
+        """
+        for task_id, task_type in (("TASK-010", "review"),
+                                   ("TASK-011", "discussion")):
+            with self.subTest(type=task_type):
+                self.make(task_id, f"Задача{task_id[-1]}", status="testing",
+                          section="## Testing", commits="")
+                self._typed(task_id, task_type)
+
+                text = "\n".join(self.reminders(task_id, "ready_for_release"))
+
+                self.assertNotIn("История коммитов", text)
+
+    def test_commit_history_still_named_for_code_types(self) -> None:
+        """Исключение — по названному типу, а не «раз секция пуста, молчим»."""
+        self.make("TASK-012", "Кодовая", status="testing", section="## Testing",
+                  commits="")
+        self._typed("TASK-012", "feature")
+
+        text = "\n".join(self.reminders("TASK-012", "ready_for_release"))
+
+        self.assertIn("История коммитов", text)
+
     def test_waiting_tasks_named(self) -> None:
         """Свой простой скрипт снимет, а чужие пометки остаются на них."""
         self.make("TASK-001", "Первая", status="testing", section="## Testing")

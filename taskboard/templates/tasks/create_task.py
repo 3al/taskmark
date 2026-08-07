@@ -162,7 +162,8 @@ def ask_input(prompt: str, default: str = "") -> str:
 # предстоящую работу: у обсуждения требовал тестов, которых не будет, а
 # закрывался всё равно — галочками в конце. Чеклист заводит агент под конкретную
 # работу, когда она многошаговая; правило — в секции правил проекта.
-TASK_TYPES = ("feature", "bug", "refactor", "cleanup", "discussion", "design")
+TASK_TYPES = ("feature", "bug", "refactor", "cleanup", "discussion", "design",
+              "review")
 DEFAULT_TASK_TYPE = "feature"
 
 

@@ -39,6 +39,11 @@ export const TASK_TYPES = {
     dot: 'bg-fuchsia-500/20 text-fuchsia-300 ring-fuchsia-500/40',
     badge: 'border-fuchsia-700/60 text-fuchsia-300',
   },
+  review: {
+    label: 'Код-ревью', letter: 'К',
+    dot: 'bg-lime-500/20 text-lime-300 ring-lime-500/40',
+    badge: 'border-lime-700/60 text-lime-300',
+  },
 }
 
 // Задача без типа (заведена до его появления) и задача с чужим значением метки

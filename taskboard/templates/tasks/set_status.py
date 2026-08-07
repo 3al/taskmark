@@ -119,16 +119,16 @@ CATALOG = {
                       # section_present, а не filled: пустая секция — принятое
                       # решение «пользователю сказать нечего», и требовать текст
                       # значило бы ломать это решение
-                      # except_types: у задачи-обсуждения релизного хвоста нет
-                      # вовсе — она закрывается коротким путём, и без исключения
-                      # её закрытие упирается в оба требования сразу
+                      # except_types: у обсуждения и ревью релизного хвоста нет
+                      # вовсе — они закрываются коротким путём, и без исключения
+                      # их закрытие упирается в оба требования сразу
                       "recommends": [{"id": "release_text", "check": "section_present",
                                       "name": "Изменение для пользователя",
                                       "ask": "тексты релиза написаны",
-                                      "except_types": ["discussion"]},
+                                      "except_types": ["discussion", "review"]},
                                      {"id": "release_ok", "check": "confirm",
                                       "ask": "тексты релиза утверждены человеком",
-                                      "except_types": ["discussion"]}]},
+                                      "except_types": ["discussion", "review"]}]},
     "to_release": {"label": "В ближайший релиз", "section": "To Release"},
     "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy"},
     "completed": {"label": "Completed", "section": "Completed"},
@@ -142,6 +142,8 @@ CATALOG = {
 # на вопрос «что это за работа», и ответ не зависит от жизненного цикла проекта.
 # letter — буква кружка на превью доски, буквы не повторяются
 # section — заголовок рубрики бэклога, куда create_task.py кладёт новую задачу
+# commits: False — у работы этого типа коммитов не бывает, и пустая «История
+# коммитов» у неё норма, а не долг (см. finish_reminders)
 TASK_TYPES = {
     "feature":    {"label": "Новый функционал", "section": "Новый функционал",
                    "letter": "Н", "color": "sky"},
@@ -152,9 +154,11 @@ TASK_TYPES = {
     "cleanup":    {"label": "Уборка",           "section": "Уборка",
                    "letter": "У", "color": "emerald"},
     "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
-                   "letter": "О", "color": "amber"},
+                   "letter": "О", "color": "amber", "commits": False},
     "design":     {"label": "Дизайн",           "section": "Дизайн",
                    "letter": "Д", "color": "fuchsia"},
+    "review":     {"label": "Код-ревью",        "section": "Код-ревью",
+                   "letter": "К", "color": "lime", "commits": False},
 }
 
 
@@ -1711,6 +1715,21 @@ def _has_entries(lines: list[str], name: str) -> bool:
     return any(lines[i].lstrip().startswith("- ") for i in range(start + 1, end))
 
 
+def _type_has_commits(lines: list[str]) -> bool:
+    """Бывают ли коммиты у работы этого типа — по каталогу, а не по списку здесь.
+
+    Тип неизвестен или не назван (задача заведена до появления поля) — считаем,
+    что бывают: молчать о пустой секции по недостатку данных нельзя.
+    """
+    for line in lines[1:]:
+        if line.startswith("---"):
+            break
+        if line.startswith("type:"):
+            meta = TASK_TYPES.get(line[len("type:"):].strip())
+            return bool(meta.get("commits", True)) if meta else True
+    return True
+
+
 def waiting_on(tasks_dir: Path, task_id: str) -> list[str]:
     """Кто помечен ждущим эту задачу — по их собственным `blocked_by`."""
     task_id = task_id.strip().upper()
@@ -1762,7 +1781,7 @@ def finish_reminders(tasks_dir: Path, task_id: str, task_path: Path,
         tail = f" и ещё {len(boxes) - 3}" if len(boxes) > 3 else ""
         out.append(f"незакрытых пунктов плана: {len(boxes)} — {shown}{tail}")
 
-    if not _has_entries(lines, COMMITS_SECTION):
+    if _type_has_commits(lines) and not _has_entries(lines, COMMITS_SECTION):
         out.append(f"секция «{COMMITS_SECTION}» пуста: по строке на коммит "
                    f"задачи — `<short-hash>` и сообщение")
 
