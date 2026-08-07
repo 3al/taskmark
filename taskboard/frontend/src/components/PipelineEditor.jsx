@@ -34,8 +34,9 @@ const reqKind = (req, predicates) => {
   const spec = predicates?.[req.check]
   if (!spec) return req.check || 'неизвестная проверка'
   const param = spec.param ? String(req[spec.param] || '').trim() : ''
-  return param && param !== reqText(req, predicates)
-    ? `${spec.label}: «${param}»` : spec.label
+  // Фраза с параметром приходит из словаря готовым шаблоном: склеенная здесь из
+  // подписи и значения читалась бы «секция есть в файле задачи: «Изменение…»»
+  return param && spec.phrase ? spec.phrase.replace('{}', param) : spec.label
 }
 
 // Форма своего требования. Список проверок приходит от бэкенда (`predicates`):
@@ -63,7 +64,10 @@ function RequirementForm({ predicates, onAdd }) {
   // и поля на ней должны читаться вложенными, а не сливаться с обычной формой
   const input = 'bg-zinc-900 border border-zinc-600/70 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500'
   return (
-    <div className="space-y-1.5">
+    // Форма — свой блок: селект и поля под ним читались на одном уровне, и
+    // связь «поля зависят от выбранной проверки» приходилось соображать
+    <div className="rounded-md border border-zinc-600/50 bg-zinc-800/40 p-2 space-y-1.5">
+      <div className="text-[10px] text-zinc-400">Добавить своё требование</div>
       <select className={`${input} w-full`} value={check}
               onChange={(e) => setCheck(e.target.value)}>
         {Object.entries(predicates || {}).map(([key, meta]) => (
@@ -71,7 +75,8 @@ function RequirementForm({ predicates, onAdd }) {
         ))}
       </select>
       {spec.hint && <div className="text-[10px] text-zinc-400">{spec.hint}</div>}
-      <div className="flex gap-1.5">
+      {/* Поля с отступом и линией слева: видно, что их состав задаёт выбор выше */}
+      <div className="flex gap-1.5 pl-2.5 border-l-2 border-zinc-600/50">
         {spec.param && (
           <input className={`${input} flex-1`} value={name}
                  placeholder={spec.param_label}

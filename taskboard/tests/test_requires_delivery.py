@@ -155,6 +155,9 @@ class PredicateVocabularyTest(unittest.TestCase):
                 if spec.get("param"):
                     self.assertTrue(spec.get("param_label"),
                                     "параметр без подписи: человек не поймёт, что вводить")
+                    self.assertIn("{}", spec.get("phrase", ""),
+                                  "нет фразы с параметром — UI склеит её сам и "
+                                  "получится «проверка: «значение»»")
 
     def test_confirmation_asks_for_its_wording(self) -> None:
         """У подтверждения формулировка обязательна: без неё непонятно, что
