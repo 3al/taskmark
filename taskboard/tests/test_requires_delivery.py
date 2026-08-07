@@ -102,6 +102,41 @@ class DeclarationWarningTest(RequiresProject):
 
         self.assertIn("verified", text)
 
+    def test_same_id_on_two_stages_reported(self) -> None:
+        """Имя требования уникально по всему маршруту, а не внутри этапа.
+
+        Движок гасит требование по идентификатору и о его этапе не спрашивает:
+        одно `--confirm verified` закрывает выход и с разработки, и с тестирования.
+        В редакторе при этом два требования с разными формулировками — заметить
+        подмену можно только по несработавшему гейту, то есть никак.
+        """
+        text = "\n".join(self.warnings(requires={
+            "development": [{"id": "verified", "check": "confirm",
+                             "ask": "локально прошло"}],
+            "testing": [{"id": "verified", "check": "confirm",
+                         "ask": "на контуре прошло"}]}))
+
+        self.assertIn("verified", text)
+        self.assertIn("development", text)
+        self.assertIn("testing", text)
+
+    def test_same_id_on_two_stages_named_once(self) -> None:
+        """Об одном совпадении говорим один раз, а не с каждого его конца."""
+        found = [w for w in self.warnings(requires={
+            "development": [{"id": "verified", "check": "confirm"}],
+            "testing": [{"id": "verified", "check": "confirm"}]})
+            if "verified" in w]
+
+        self.assertEqual(1, len(found), found)
+
+    def test_different_ids_on_two_stages_are_silent(self) -> None:
+        """Разные имена — разные выключатели, и это обычная настройка."""
+        text = "\n".join(self.warnings(requires={
+            "development": [{"id": "local_verified", "check": "confirm"}],
+            "testing": [{"id": "verified", "check": "confirm"}]}))
+
+        self.assertEqual("", text)
+
     def test_predicate_without_its_parameter_reported(self) -> None:
         """`section_filled` без имени секции проверяет несуществующее."""
         text = "\n".join(self.warnings(requires={

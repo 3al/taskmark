@@ -171,12 +171,17 @@ def declaration_issues(cfg: dict, pipeline: list[dict] | None = None) -> list[st
 
     known = {s["key"] for s in (pipeline or load_pipeline(cfg).statuses())}
     out: list[str] = []
+    # Имя требования уникально по **всему** маршруту, а не внутри этапа: движок
+    # гасит требование по идентификатору и о его этапе не спрашивает, поэтому
+    # одноимённые на разных этапах — один выключатель на два гейта. В редакторе
+    # при этом два требования с разными формулировками, и заметить подмену можно
+    # только по несработавшему гейту
+    seen: dict[str, str] = {}
     for status, reqs in requires.items():
         if status not in known:
             out.append(f"Требования объявлены для статуса «{status}», которого нет "
                        f"в маршруте проекта: они не сработают никогда")
             continue
-        seen: set[str] = set()
         # Перебираем сырой список, а не через `_req_list`: тот отбрасывает записи
         # без `id` — для движка их не существует, и именно об этом надо сказать
         if not isinstance(reqs, (list, tuple)):
@@ -194,10 +199,19 @@ def declaration_issues(cfg: dict, pipeline: list[dict] | None = None) -> list[st
                 out.append(f"Требование этапа {where} без идентификатора: его нечем "
                            f"отметить выполненным")
                 continue
-            if rid.lower() in seen:
+            first = seen.get(rid.lower())
+            if first == status:
                 out.append(f"Требование «{rid}» на этапе {where} объявлено дважды: "
                            f"отметка закроет оба сразу")
-            seen.add(rid.lower())
+            elif first is not None:
+                # Совпадение не «починяется» само: имя уже стоит в `confirmed`
+                # живых задач, и переименование за человека обнулило бы их
+                # подтверждения. Поэтому — назвать оба конца и молчать дальше
+                out.append(f"Требование «{rid}» объявлено и на этапе «{first}», и на "
+                           f"этапе {where}: имя у требований одно, поэтому одна "
+                           f"отметка закроет оба этапа")
+            else:
+                seen[rid.lower()] = status
             spec = PREDICATES.get(check)
             if spec is None:
                 out.append(f"Требование «{rid}» на этапе {where}: проверка "

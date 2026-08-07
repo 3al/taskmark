@@ -75,14 +75,17 @@ function TypeExceptions({ value, onChange }) {
 // Форма своего требования. Список проверок приходит от бэкенда (`predicates`):
 // зашитый в JS перечень разошёлся бы с движком молча, и редактор предлагал бы
 // то, чего скрипт не умеет
-function RequirementForm({ predicates, onAdd }) {
+function RequirementForm({ predicates, takenBy, onAdd }) {
   const [check, setCheck] = useState('confirm')
   const [name, setName] = useState('')
   const [ask, setAsk] = useState('')
   const [id, setId] = useState('')
   const [skipTypes, setSkipTypes] = useState([])
   const spec = predicates?.[check] || {}
-  const ready = id.trim() && (!spec.param || name.trim())
+  // Занятое имя — не опечатка, а второй выключатель к тому же требованию:
+  // отметка по нему закроет и чужой этап. Поэтому запрет, а не предупреждение
+  const taken = takenBy?.(id)
+  const ready = id.trim() && !taken && (!spec.param || name.trim())
 
   const submit = () => {
     if (!ready) return
@@ -137,6 +140,14 @@ function RequirementForm({ predicates, onAdd }) {
           Добавить
         </button>
       </div>
+      {/* Неактивная кнопка без объяснения хуже отсутствующей: человек видит
+          заполненные поля и не понимает, чего от него ждут. Сказан факт, а не
+          устройство движка: занятое имя — и так тупик, дальше рассуждать не о чем */}
+      {taken && (
+        <div className="pl-2.5 text-[10px] text-amber-300/90">
+          Имя «{id.trim()}» уже занято требованием этапа «{taken}»
+        </div>
+      )}
       {/* Исключение — не про то, как проверять, а про то, кого проверять:
           поэтому вне блока полей предиката, они от выбора проверки не зависят */}
       <div className="pl-2.5">
@@ -227,6 +238,20 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
   }
 
   const declaredOn = (key) => (requires || {})[key] || []
+
+  // Чем занято служебное имя. Движок различает требования по `id` и об этапе не
+  // спрашивает: одно имя на двух этапах — один выключатель на два гейта, причём
+  // формулировки в редакторе разные, и заметить это можно только по
+  // несработавшему гейту. Ищем по всей карте `requires`, а она здесь рабочая
+  // копия: одной проверкой закрыто и сохранённое, и добавленное в этом сеансе
+  const takenBy = (id) => {
+    const needle = String(id || '').trim().toLowerCase()
+    if (!needle) return null
+    const at = Object.entries(requires || {}).find(([, reqs]) =>
+      (reqs || []).some((r) => String(r.id || '').toLowerCase() === needle))
+    // Подпись этапа, а не ключ: человек ищет требование глазами по списку
+    return at ? (pipeline.find((s) => s.key === at[0])?.label || at[0]) : null
+  }
 
   // Рекомендации каталога **материализуются** в конфиг проекта, а не действуют
   // «на лету»: обновление инструмента не должно включать проверки у тех, кто их
@@ -440,7 +465,11 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                         Рекомендуется для этого этапа:
                       </div>
                     )}
-                    {recommended.map((req) => (
+                    {recommended.map((req) => {
+                      // Рекомендация несёт свой `id` из каталога поставки, и без
+                      // этой проверки запрет обходился бы одним щелчком мимо формы
+                      const heldBy = takenBy(req.id)
+                      return (
                       <div key={req.id} className="flex items-center gap-2 text-xs text-zinc-400">
                         <span className="text-sky-400 shrink-0">•</span>
                         <span className="truncate">{reqText(req, predicates)}</span>
@@ -456,13 +485,21 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                             кроме: {req.except_types.map(typeLabel).join(', ')}
                           </span>
                         )}
-                        <button onClick={() => addRequirement(status.key, req)}
-                                className="ml-auto shrink-0 text-[11px] px-1.5 rounded border border-zinc-500/70 text-zinc-200 hover:border-sky-500 hover:text-white">
-                          Сделать обязательным
-                        </button>
+                        {heldBy ? (
+                          <span className="ml-auto shrink-0 text-[10px] text-amber-300/90"
+                                title={`Служебное имя «${req.id}» уже занято требованием этапа «${heldBy}»`}>
+                            имя занято этапом «{heldBy}»
+                          </span>
+                        ) : (
+                          <button onClick={() => addRequirement(status.key, req)}
+                                  className="ml-auto shrink-0 text-[11px] px-1.5 rounded border border-zinc-500/70 text-zinc-200 hover:border-sky-500 hover:text-white">
+                            Сделать обязательным
+                          </button>
+                        )}
                       </div>
-                    ))}
-                    <RequirementForm predicates={predicates}
+                      )
+                    })}
+                    <RequirementForm predicates={predicates} takenBy={takenBy}
                                      onAdd={(req) => addRequirement(status.key, req)} />
                   </div>
                 )}
