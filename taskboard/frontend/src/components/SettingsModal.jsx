@@ -201,7 +201,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
           {serverAction === 'restart' ? 'Перезапуск сервера' :
            serverAction === 'stop' ? 'Сервер остановлен' :
            migrations ? 'Настройки сохранены' :
-           removals ? 'Куда перенести задачи?' : 'Настройки'}
+           removals ? 'Куда перенести задачи?' :
+           gated ? 'Кого коснётся требование' : 'Настройки'}
         </div>
 
         {serverAction === 'restart' ? (
@@ -262,9 +263,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                 здесь, а не от агента через день */}
             <div className="px-5 py-4 space-y-3">
               <div className="text-sm text-zinc-300">
-                Требование действует и для задач, которые прошли этап раньше. Этим
-                задачам оно достанется долгом — агент упрётся на следующем шаге
-                вперёд, пока долг не закрыт или не списан.
+                Требование распространяется и на задачи, которые этот этап уже
+                прошли. Вот кого оно коснётся:
               </div>
               <div className="space-y-1 max-h-64 overflow-y-auto">
                 {gated.map((t) => (
@@ -277,16 +277,27 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
                   </div>
                 ))}
               </div>
+              {/* Экран должен отвечать на «и что мне теперь делать»: без этого
+                  список задач читается угрозой, и включать требование не хочется */}
+              <div className="text-xs text-zinc-400 space-y-1 border-t border-zinc-800 pt-3">
+                <div>На вашу работу это не влияет: карточки переносятся как раньше.</div>
+                <div>
+                  Взявшись за такую задачу, агент либо выполнит требование, либо
+                  отметит, что к этой задаче оно не относится, — и в обоих случаях
+                  запишет это в задачу.
+                </div>
+                <div>Передумаете — снимите требование, и долг исчезнет: он не хранится, а считается.</div>
+              </div>
               {error && <div className="text-sm text-rose-400">{error}</div>}
             </div>
             <div className="px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
               <button onClick={() => setGated(null)}
                       className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">
-                Вернуться к настройкам
+                Отмена
               </button>
               <button onClick={() => { setGated(null); save() }} disabled={busy}
                       className="px-4 py-2 text-sm font-medium bg-sky-600 hover:bg-sky-500 rounded-lg disabled:opacity-50">
-                {busy ? 'Сохраняю…' : 'Всё равно включить'}
+                {busy ? 'Сохраняю…' : 'Включить требование'}
               </button>
             </div>
           </>
