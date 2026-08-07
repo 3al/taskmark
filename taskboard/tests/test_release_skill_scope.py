@@ -96,9 +96,10 @@ class DraftRuleTest(ReleaseSkillText):
 class ApprovalIsMandatoryTest(ReleaseSkillText):
     """Утверждение текстов — гейт, а не вежливость (TASK-100).
 
-    «Дождись ответа» проигрывает контексту, в котором человек только что
-    сказал «действуй»: агент прочитал общее разрешение как согласие на всё
-    сразу и перевёл задачи в утверждённое, не показав тексты.
+    Решение проверяется **с двух концов**: правило в скилле и рекомендация
+    этапа, работающая даже у того, кто требований не объявлял. Объяснения из
+    скилла переселены в механизм, само правило осталось строкой — она стоит
+    копейки, а разбирательство «почему агент этого не сделал» дорого.
     """
 
     def test_step_says_it_cannot_be_skipped(self) -> None:
@@ -107,12 +108,25 @@ class ApprovalIsMandatoryTest(ReleaseSkillText):
         self.assertTrue(re.search(r"пропуск\w*|не пропуска\w+|обязательн\w+", drafts),
                         "шаг не назван обязательным — его снова пропустят")
 
-    def test_general_permission_is_not_an_approval_of_wording(self) -> None:
-        """«Катим релиз» — согласие на выпуск, а не на формулировки."""
-        text = self.text
+    def test_wording_approval_is_a_stage_requirement(self) -> None:
+        """То же требование объявлено рекомендацией этапа: у невключившего оно
+        звучит напоминанием, у включившего — отказом. Пропадёт из каталога —
+        скилл останется единственной страховкой, а он держится на внимании."""
+        from backend.statuses import CATALOG
 
-        self.assertTrue(re.search(r"«?(катим|выпускай|двигай|действуй)", text, re.I),
-                        "общее разрешение нигде не разобрано")
+        recommends = CATALOG["release_notes"].get("recommends", [])
+        confirms = [r for r in recommends if r["check"] == "confirm"]
+
+        self.assertTrue(confirms, "утверждение текстов не объявлено рекомендацией")
+        self.assertIn("утвержден", confirms[0]["ask"].lower())
+
+    def test_draft_presence_is_a_stage_requirement_too(self) -> None:
+        """Задача без текста не должна уехать в changelog никак."""
+        from backend.statuses import CATALOG
+
+        checks = {r["check"] for r in CATALOG["release_notes"].get("recommends", [])}
+
+        self.assertIn("section_present", checks)
 
     def test_lock_requires_the_answer(self) -> None:
         approved = self.step_with("Утвердить состав")
