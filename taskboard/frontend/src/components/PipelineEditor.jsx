@@ -83,7 +83,7 @@ function RequirementForm({ predicates, onAdd }) {
         {spec.ask_label && (
           <input className={`${input} flex-1`} value={ask}
                  placeholder={spec.ask_label}
-                 title="Этот текст увидите вы — в списке требований и в диалоге переноса на доске, — и он же прозвучит агенту, когда этап его остановит"
+                 title="Этот текст вы увидите в списке требований и в диалоге переноса на доске"
                  onChange={(e) => setAsk(e.target.value)} />
         )}
         {/* Единственное место, где человек имеет дело со служебным именем: оно
