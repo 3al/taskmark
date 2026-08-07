@@ -159,9 +159,13 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
   // можно выбрать повторно, чтобы вернуться к нему)
   const [picked, setPicked] = useState('')
 
-  const emit = (nextPipeline, nextActions = actions, nextStatuses) => {
+  // Подписи и требования передают только те правки, которые их меняют:
+  // у остальных ключ приходит `undefined`, и форма оставляет своё. Иначе
+  // перестановка статуса стрелкой стирала бы подставленное источником
+  const emit = (nextPipeline, nextActions = actions, nextStatuses, nextRequires) => {
     setPicked('')
-    onChange({ pipeline: nextPipeline, actions: nextActions, statuses: nextStatuses })
+    onChange({ pipeline: nextPipeline, actions: nextActions,
+               statuses: nextStatuses, requires: nextRequires })
   }
 
   // Готовый маршрут подставляется в форму, а не сохраняется: дальше его можно
@@ -170,7 +174,10 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
   const applySource = (value) => {
     const source = sources?.[Number(value)]
     if (!source) return
-    emit(source.pipeline, source.actions, source.statuses || {})
+    // Требования — часть жизненного цикла, как подписи: копируя маршрут соседнего
+    // проекта, человек ждёт и его проверок. Пустые у источника (пресет их не
+    // несёт) значат «требований нет» и старые вытесняют — маршрут заменён целиком
+    emit(source.pipeline, source.actions, source.statuses || {}, source.requires || {})
     setPicked(value)
   }
 
@@ -297,7 +304,8 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
             )}
           </select>
           <div className="text-[11px] text-zinc-600 mt-1">
-            Подставит статусы и действия в форму — сохранение по кнопке ниже
+            Подставит статусы, действия и требования этапов в форму — сохранение
+            по кнопке ниже
           </div>
         </div>
       )}

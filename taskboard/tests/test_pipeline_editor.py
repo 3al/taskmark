@@ -74,5 +74,45 @@ class TestTypeExceptions(unittest.TestCase):
                          'в бейдже показываются служебные ключи типов')
 
 
+class TestSourceCarriesRequires(unittest.TestCase):
+    """Заполнение ЖЦ из источника несёт требования этапов (TASK-142).
+
+    Бэкенд отдавал их правильно (`pipeline_sources` кладёт `requires` в каждый
+    источник), а редактор терял: `applySource` звал `emit` без них, и `emit`
+    собирал `onChange` вовсе без такого ключа. Человек видел подставленный
+    маршрут, сохранял — и получал пустые требования **без всякого сообщения**,
+    как будто в исходном проекте их не было.
+    """
+
+    def setUp(self) -> None:
+        self.src = EDITOR.read_text(encoding='utf-8')
+        self.modal = (EDITOR.parent / 'SettingsModal.jsx').read_text(encoding='utf-8')
+
+    def body(self, pattern: str, what: str) -> str:
+        m = re.search(pattern, self.src, re.S)
+        self.assertIsNotNone(m, f'{what} не найдена')
+        return m.group(1)
+
+    def test_emit_carries_requires_to_onchange(self) -> None:
+        body = self.body(r'const emit = \((.+?)\n  \}', 'функция emit')
+        self.assertIn('requires', body,
+                      'emit собирает onChange без требований — источнику нечем их донести')
+
+    def test_apply_source_takes_requires_from_the_source(self) -> None:
+        body = self.body(r'const applySource = \(value\) => \{(.+?)\n  \}',
+                         'функция применения источника')
+        self.assertIn('source.requires', body,
+                      'требования источника до формы не доходят')
+
+    def test_manual_edit_keeps_requirements_of_the_form(self) -> None:
+        """Правка маршрута после подстановки требований терять не должна.
+
+        Стрелки, удаление и добавление статуса зовут `emit` без требований —
+        держится это на том, что родитель отличает «не передали» от «пусто».
+        """
+        self.assertIn('if (requires !== undefined)', self.modal,
+                      'форма перезаписывает требования при любой правке маршрута')
+
+
 if __name__ == '__main__':
     unittest.main()
