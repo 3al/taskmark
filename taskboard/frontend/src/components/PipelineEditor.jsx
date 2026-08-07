@@ -83,6 +83,7 @@ function RequirementForm({ predicates, onAdd }) {
         {spec.ask_label && (
           <input className={`${input} flex-1`} value={ask}
                  placeholder={spec.ask_label}
+                 title="Этот текст увидите вы — в списке требований и в диалоге переноса на доске, — и он же прозвучит агенту, когда этап его остановит"
                  onChange={(e) => setAsk(e.target.value)} />
         )}
         {/* Единственное место, где человек имеет дело со служебным именем: оно
@@ -328,6 +329,13 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                                 className="ml-auto px-1 text-zinc-500 hover:text-rose-400 shrink-0">✕</button>
                       </div>
                     ))}
+                    {/* Откуда взялась строка, должно быть видно без наведения:
+                        иначе рекомендация читается как чьё-то забытое требование */}
+                    {recommended.length > 0 && (
+                      <div className="text-[11px] text-zinc-300 pt-0.5">
+                        Рекомендуется для этого этапа:
+                      </div>
+                    )}
                     {recommended.map((req) => (
                       <div key={req.id} className="flex items-center gap-2 text-xs text-zinc-400">
                         <span className="text-sky-400 shrink-0">•</span>
@@ -343,6 +351,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     ))}
                     {recommended.length > 0 && (
                       <div className="text-[10px] text-zinc-400">
+                        Это подсказки поставки — то, что уже подводило на практике.
                         Пока требование не обязательно, агент получает о нём напоминание,
                         но этап проходит.
                       </div>
