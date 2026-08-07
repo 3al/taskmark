@@ -208,7 +208,8 @@ class PipelineMigrationTest(unittest.TestCase):
         self.assertIn("# 1. Проект", content, "чужой текст файла не должен пострадать")
         self.assertIn("Описание проекта.", content)
         self.assertIn("backlog → queued → development → local_testing → completed", content)
-        self.assertNotIn("review", content)
+        # Ищем статус, а не слово: скилл `review-task` в правилах законен
+        self.assertNotIn("review", content.replace("review-task", ""))
         self.assertTrue(any("AGENTS.md" in a for a in actions), actions)
 
 

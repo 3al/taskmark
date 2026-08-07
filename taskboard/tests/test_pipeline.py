@@ -242,7 +242,10 @@ class RulesRenderTest(unittest.TestCase):
         self.assertIn("вне маршрута: cancelled", text)
         self.assertIn("## Живая очередь (To Do)", text)
         self.assertNotIn("{pipeline_line}", text, "плейсхолдер не подставлен")
-        self.assertNotIn("review", text, "статус чужого пайплайна попал в правила")
+        # Ищем статус, а не слово: скилл `review-task` называется в правилах
+        # законно и к пайплайну отношения не имеет
+        self.assertNotIn("review", text.replace("review-task", ""),
+                         "статус чужого пайплайна попал в правила")
 
 
 class LegacyConfigTest(unittest.TestCase):
