@@ -214,6 +214,31 @@ class GateTest(RequirementsTestCase):
         self.assertEqual(self.mod.current_status(self.tasks, "TASK-001"), "testing",
                          "отказ обязан оставить задачу на месте")
 
+    def test_refused_move_writes_no_note(self) -> None:
+        """Отказ не оставляет заметку о переводе, которого не было.
+
+        Заметку пишут тем же вызовом, что двигают задачу («переведена в …»), и
+        при отказе она оставалась в файле: история задачи начинала врать о
+        событии, которое не случилось.
+        """
+        path = self._task(status="testing")
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест",
+                           "--note", "переведена в «Готово к выпуску»")
+
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("переведена", path.read_text(encoding="utf-8"))
+
+    def test_successful_move_writes_the_note(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "verified"})
+
+        result = self._run("TASK-001", "ready_for_release", "--agent", "Тест",
+                           "--note", "переведена в «Готово к выпуску»")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("переведена", path.read_text(encoding="utf-8"))
+
     def test_forward_with_met_requirement_passes(self) -> None:
         path = self._task(status="testing")
         self.mod._set_fields(path, {"confirmed": "verified"})

@@ -1946,9 +1946,11 @@ def main() -> None:
         if not args.status and args.note is None:
             return
 
-    # Заметка не трогает ни статус, ни доску — идёт и сама по себе, и вместе
-    # со сменой статуса (финализация пишет заметку и двигает задачу за раз)
-    if args.note is not None:
+    # Заметка сама по себе статус не трогает. Но вместе со сменой статуса она
+    # описывает **её** («переведена в …»), поэтому пишется только после того, как
+    # переход состоялся: при отказе гейта строка оставалась в файле, и история
+    # задачи начинала врать о событии, которого не было
+    if args.note is not None and not args.status:
         if not args.task_id:
             parser.error("нужен TASK-NNN для --note")
         result = add_note(tasks_dir, args.task_id, args.note, agent=args.agent)
@@ -1959,8 +1961,7 @@ def main() -> None:
         print(result["note"])
         for warning in result.get("warnings", []):
             print(f"[!] {warning}")
-        if not args.status:
-            return
+        return
 
     if not args.task_id or not args.status:
         parser.error("нужны TASK-NNN и статус "
@@ -1975,6 +1976,16 @@ def main() -> None:
         sys.exit(1)
 
     print(f"[OK] {result['task']} → {result['status']} (раздел «{result['section']}»)")
+
+    # Переход состоялся — теперь можно записать заметку о нём
+    if args.note is not None:
+        note = add_note(tasks_dir, args.task_id, args.note, agent=args.agent)
+        if note.get("ok"):
+            print(f"[OK] {note['task']}: заметка записана в «{NOTES_SECTION}»")
+            print(note["note"])
+        else:
+            print(f"[ERROR] {note.get('error')}", file=sys.stderr)
+
     if result.get("stall_cleared"):
         print("[i] простой снят: задача дошла до конца маршрута")
     if result.get("unconfirmed"):
