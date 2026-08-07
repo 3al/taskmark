@@ -75,23 +75,45 @@ def gate_impact(tasks_dir, old_cfg: dict, new_cfg: dict) -> list[dict]:
     не ловит ровно тот случай, что его породил), но цену человек должен видеть до
     нажатия, а не узнавать от агента через день.
 
-    Считаем разницей долгов: что было при старом конфиге и что станет при новом.
-    Так снятие требования никого не «задевает», а порог `since:` не нужен —
-    достаточно показать список.
+    Считаем **шагом вперёд**, а не текущим долгом: у задачи, стоящей на этапе,
+    которому объявили требование, долга ещё нет — этап не пройден, — но упрётся
+    она в него при первом же движении. Показывать только «долг сейчас» значит
+    недооценить цену: человек видит «никого не задело» и узнаёт правду от агента.
+
+    Разница старого и нового состава: снятие требования никого не «задевает», а
+    порог `since:` не нужен — достаточно показать список.
     """
     from backend.board_repair import task_files
 
     directory = Path(tasks_dir)
     out: list[dict] = []
     for task_id, info in task_files(directory).items():
-        was = {r["id"] for r in task_debt(directory, task_id, old_cfg).get("debt", [])}
-        now = task_debt(directory, task_id, new_cfg).get("debt", [])
-        added = [r for r in now if r["id"] not in was]
+        path = find_task_file(directory, task_id)
+        if path is None:
+            continue
+        status = (info.get("status") or "").strip()
+        was = {r["id"] for r in _step_requirements(old_cfg, status, path)}
+        added = [r for r in _step_requirements(new_cfg, status, path)
+                 if r["id"] not in was]
         if added:
             out.append({"id": task_id, "title": info.get("title", ""),
-                        "status": info.get("status", ""),
+                        "status": status,
                         "requirements": [requirement_text(r) for r in added]})
     return out
+
+
+def _step_requirements(cfg: dict, status: str, path) -> list[dict]:
+    """Что задача обязана закрыть, чтобы сделать один шаг вперёд по маршруту.
+
+    Пустой список у терминального статуса и у съезда: оттуда вперёд не двигают,
+    и пугать человека числом закрытых задач незачем.
+    """
+    pipeline = load_pipeline(cfg).statuses()
+    keys = [s["key"] for s in pipeline if not s.get("offramp")]
+    if status not in keys or status == keys[-1]:
+        return []
+    nxt = keys[keys.index(status) + 1]
+    return unmet(move_requirements(cfg, pipeline, status, nxt), path)
 
 
 def declaration_issues(cfg: dict, pipeline: list[dict] | None = None) -> list[str]:

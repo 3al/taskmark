@@ -220,8 +220,8 @@ created: 2026-08-01 10:00
                "name": "История коммитов"}
 
     def test_tasks_past_the_stage_are_counted(self) -> None:
-        self._task("TASK-001", "testing")       # development пройден, коммитов нет
-        self._task("TASK-002", "development")   # ещё на этапе — требовать нечего
+        self._task("TASK-001", "testing")   # development пройден, коммитов нет
+        self._task("TASK-002", "backlog")   # до этапа не дошла — шаг вперёд её не спросит
 
         hit = self.impact({"development": [dict(self.COMMITS)]})
 
@@ -231,6 +231,19 @@ created: 2026-08-01 10:00
         self._task("TASK-001", "testing", commits="\n- `abc1234` правка")
 
         self.assertEqual([], self.impact({"development": [dict(self.COMMITS)]}))
+
+    def test_task_standing_on_the_stage_is_counted(self) -> None:
+        """Задача стоит на этапе, которому объявили требование.
+
+        Долга у неё сейчас нет — этап не пройден, — но упрётся она в него на
+        первом же шаге вперёд. Не показать её значит недооценить цену: человек
+        включает требование, видит «никого не задело» и узнаёт правду от агента.
+        """
+        self._task("TASK-001", "development")
+
+        hit = self.impact({"development": [dict(self.COMMITS)]})
+
+        self.assertEqual(["TASK-001"], [t["id"] for t in hit])
 
     def test_closed_task_is_not_counted(self) -> None:
         """У задачи в конце маршрута долга нет: её больше никуда не двигают,
