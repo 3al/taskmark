@@ -110,10 +110,18 @@ class PredicateTest(RequirementsTestCase):
     def _met(self, req: dict, path: Path) -> bool:
         return self.mod.requirement_met(req, path)
 
-    def test_checklist_done(self) -> None:
+    def test_checklist_done_retired(self) -> None:
+        """`checklist_done` снят вместе с шаблонным чеклистом (TASK-146).
+
+        Проверка держалась на секции, которая теперь необязательна, и без неё
+        была **истинной** — то есть проходил тот, кто плана не вёл. Снятый
+        предикат ведёт себя как любой незнакомый: истинен и не мешает работе,
+        а о самой декларации говорит валидатор.
+        """
         req = {"id": "checklist", "check": "checklist_done"}
-        self.assertTrue(self._met(req, self._task(box="x")))
-        self.assertFalse(self._met(req, self._task("TASK-002", box=" ")))
+
+        self.assertTrue(self._met(req, self._task("TASK-002", box=" ")),
+                        "снятая проверка всё ещё останавливает задачу")
 
     def test_section_present_vs_filled(self) -> None:
         """Пустая секция — принятое решение «сказать нечего», а не пробел."""

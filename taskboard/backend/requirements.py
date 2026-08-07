@@ -50,8 +50,6 @@ PREDICATES: dict[str, dict] = {
     "confirm": {"label": "подтверждение человека", "param": None,
                 "ask_label": "что подтверждает человек",
                 "hint": "закрывается кнопкой на доске или командой агента"},
-    "checklist_done": {"label": "чеклист задачи закрыт", "param": None,
-                       "hint": "в разделе «Чеклист» нет незакрытых пунктов"},
     "section_present": {"label": "секция есть в файле задачи", "param": "name",
                         "param_label": "заголовок секции",
                         "phrase": "секция «{}» есть в файле задачи",
@@ -363,13 +361,6 @@ def _section_body(content: str, name: str) -> str | None:
     return "\n".join(lines[start + 1:]) if start is not None else None
 
 
-def _unchecked_boxes(content: str) -> list[str]:
-    body = _section_body(content, "Чеклист")
-    if body is None:
-        return []
-    return re.findall(r"^\s*-\s*\[\s\]\s*(.+?)\s*$", body, flags=re.M)
-
-
 def _section_filled(content: str, name: str) -> bool:
     body = _section_body(content, name)
     return bool(body and body.strip())
@@ -389,8 +380,6 @@ def requirement_met(req: dict, task_path) -> bool:
 
     check = _one_line(req.get("check"))
     name = _one_line(req.get("name"))
-    if check == "checklist_done":
-        return not _unchecked_boxes(content)
     if check == "section_present":
         return bool(name) and _section_body(content, name) is not None
     if check == "section_filled":

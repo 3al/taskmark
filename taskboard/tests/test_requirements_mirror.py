@@ -26,8 +26,7 @@ PIPELINE = ["backlog", "todo", "development", "testing",
 REQUIRES = {
     "testing": [{"id": "verified", "check": "confirm",
                  "ask": "проверку подтвердил человек"}],
-    "ready_for_release": [{"id": "checklist", "check": "checklist_done"},
-                          {"id": "commits", "check": "section_filled",
+    "ready_for_release": [{"id": "commits", "check": "section_filled",
                            "name": "История коммитов"}],
     "release_notes": [{"id": "release_text", "check": "section_present",
                        "name": "Изменение для пользователя"},
@@ -238,15 +237,20 @@ class MirrorTest(unittest.TestCase):
                 self.assertEqual(backend_met(req, path),
                                  self.script.requirement_met(req, path))
 
-    def test_checklist_section_is_found_by_both(self) -> None:
-        """Чеклист ищется тем же способом — иначе разъедется и он."""
+    def test_retired_predicate_is_unknown_to_both(self) -> None:
+        """Снятую проверку оба зеркала пропускают одинаково (TASK-146).
+
+        `checklist_done` удалён вместе с шаблонным чеклистом. Останься он в
+        одном из зеркал — доска и скрипт разошлись бы в вердикте по чужому
+        конфигу, где его успели объявить.
+        """
         from backend.requirements import requirement_met as backend_met
 
         path = self._task("TASK-011", status="ready_for_release", box=" ")
         req = {"id": "checklist", "check": "checklist_done"}
 
         self.assertEqual(backend_met(req, path), self.script.requirement_met(req, path))
-        self.assertFalse(backend_met(req, path), "незакрытый пункт не увиден")
+        self.assertTrue(backend_met(req, path), "незнакомая проверка должна быть истинной")
 
     def test_terminal_and_offramp_have_no_debt_in_both(self) -> None:
         for task_id, status in (("TASK-006", "done"), ("TASK-007", "cancelled")):

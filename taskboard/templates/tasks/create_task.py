@@ -18,8 +18,8 @@
   -b, --blocked-by TASK-NNN  Задача-блокер (опционально)
   -e, --epic TEXT         Эпик — Jira-ключ (опционально). Имя эпика хранится в tasks/epics.md
   --type TYPE             Тип задачи: feature | bug | refactor | cleanup |
-                          discussion | design (влияет на чеклист и остаётся
-                          в поле `type` задачи; default: feature)
+                          discussion | design (остаётся в поле `type` задачи
+                          и рисует метку на доске; default: feature)
   --section SECTION       Подраздел Backlog. По умолчанию — рубрика типа
                           задачи: «Баги» для bug, «Обсуждения» для discussion
 """
@@ -153,59 +153,17 @@ def ask_input(prompt: str, default: str = "") -> str:
     return result or default
 
 
-# Чеклист по типу задачи. Ключи этого словаря — и есть перечень типов:
-# второго списка, который разъедется с первым, тут быть не должно.
-# Тип — константа поставки, а не настройка проекта: «что это за работа» не
-# зависит от жизненного цикла. Подписи, буквы и цвета типов живут в соседнем
-# set_status.py (`--types`), сюда им ехать незачем.
-CHECKLISTS = {
-    "feature": (
-        "- [ ] Написать тест (RED)\n"
-        "- [ ] Реализовать минимальный код\n"
-        "- [ ] Все тесты проходят\n"
-        "- [ ] Локальная проверка подтверждена пользователем"
-    ),
-    "bug": (
-        "- [ ] Воспроизвести баг и написать failing тест (RED)\n"
-        "- [ ] Исправить минимальным изменением\n"
-        "- [ ] Все тесты проходят\n"
-        "- [ ] Локальная проверка подтверждена пользователем"
-    ),
-    "refactor": (
-        "- [ ] Убедиться что поведение покрыто тестами (или написать)\n"
-        "- [ ] Провести рефакторинг\n"
-        "- [ ] Все тесты проходят (поведение не изменилось)\n"
-        "- [ ] Локальная проверка подтверждена пользователем"
-    ),
-    "cleanup": (
-        "- [ ] Определить что удалить/упростить\n"
-        "- [ ] Применить изменения\n"
-        "- [ ] Все тесты проходят (регрессий нет)\n"
-        "- [ ] Локальная проверка подтверждена пользователем"
-    ),
-    # Обсуждение не кончается кодом: ни тестов, ни коммитов у него не будет,
-    # а результат — записанное решение и, возможно, заведённые по нему задачи
-    "discussion": (
-        "- [ ] Собрать контекст и сформулировать вопрос\n"
-        "- [ ] Разобрать варианты, зафиксировать решение в задаче\n"
-        "- [ ] Завести задачи по итогам (если нужны)\n"
-        "- [ ] Решение подтверждено пользователем"
-    ),
-    "design": (
-        "- [ ] Определить, что меняется визуально\n"
-        "- [ ] Применить изменения\n"
-        "- [ ] Проверить на светлой и тёмной теме\n"
-        "- [ ] Локальная проверка подтверждена пользователем"
-    ),
-}
-
-TASK_TYPES = tuple(CHECKLISTS)
+# Типы задач — константа поставки, а не настройка проекта: «что это за работа»
+# не зависит от жизненного цикла. Подписи, буквы и цвета живут в соседнем
+# set_status.py (`--types`), сюда им ехать незачем — здесь нужен только перечень
+# допустимых значений `--type`.
+#
+# Чеклиста по типу больше нет. Он ставился шаблоном и почти никогда не описывал
+# предстоящую работу: у обсуждения требовал тестов, которых не будет, а
+# закрывался всё равно — галочками в конце. Чеклист заводит агент под конкретную
+# работу, когда она многошаговая; правило — в секции правил проекта.
+TASK_TYPES = ("feature", "bug", "refactor", "cleanup", "discussion", "design")
 DEFAULT_TASK_TYPE = "feature"
-
-
-def build_checklist(task_type: str) -> str:
-    """Чеклист под тип задачи; незнакомый тип — как feature."""
-    return CHECKLISTS.get(task_type, CHECKLISTS[DEFAULT_TASK_TYPE])
 
 
 TEMPLATE_FILE = "_TEMPLATE.md"
@@ -213,7 +171,7 @@ TEMPLATE_FILE = "_TEMPLATE.md"
 # Заголовок секции → чем заполнить её тело при создании задачи.
 # Остальные секции шаблона (заметки агента, история коммитов) переезжают
 # в новую задачу как есть
-_FILLED_SECTIONS = ("## Описание", "### Критерии приёмки", "## Чеклист")
+_FILLED_SECTIONS = ("## Описание", "### Критерии приёмки")
 
 
 # Строки, которые markdown и так разбирает построчно: список, заголовок,
@@ -263,7 +221,7 @@ def _replace_section(text: str, heading: str, body: str) -> str:
 
 
 def render_from_template(tasks_dir: Path, frontmatter: str, description: str,
-                         criteria: str, checklist: str) -> str | None:
+                         criteria: str) -> str | None:
     """Собрать файл задачи из `_TEMPLATE.md`, если он есть в проекте.
 
     Шаблон — видимый эталон структуры: его правят руками, и созданные задачи
@@ -281,7 +239,7 @@ def render_from_template(tasks_dir: Path, frontmatter: str, description: str,
         return None  # шаблон без frontmatter — считаем его сломанным
     text = frontmatter + text[end + 4:]
 
-    for heading, body in zip(_FILLED_SECTIONS, (description, criteria, checklist)):
+    for heading, body in zip(_FILLED_SECTIONS, (description, criteria)):
         text = _replace_section(text, heading, body)
     return text
 
@@ -426,7 +384,6 @@ def create_task(
 
     blocked_by_line = f"\nblocked_by: {blocked_by}" if blocked_by else ""
     epic_value = epic if epic else "~"
-    checklist = build_checklist(task_type)
 
     tasks_dir = Path(__file__).parent
     cfg = load_config(tasks_dir)
@@ -448,7 +405,7 @@ created: {created_date}{blocked_by_line}
     description = as_paragraphs(description)
     criteria = as_paragraphs(criteria)
 
-    content = render_from_template(tasks_dir, frontmatter, description, criteria, checklist)
+    content = render_from_template(tasks_dir, frontmatter, description, criteria)
     if content is None:
         content = f"""{frontmatter}
 
@@ -459,10 +416,6 @@ created: {created_date}{blocked_by_line}
 ### Критерии приёмки
 
 {criteria}
-
-## Чеклист
-
-{checklist}
 
 ## Заметки агента
 

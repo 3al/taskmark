@@ -613,7 +613,8 @@ RELEASE_SECTION = "Изменение для пользователя"
 
 # Порядок секций файла задачи. «История доработок» появляется после возврата
 # с ревью, «Изменение для пользователя» — при отборе в выпуск: обе создаются
-# скиллами и в шаблоне новой задачи не нужны
+# скиллами и в шаблоне новой задачи не нужны. «Чеклист» — тоже необязательная:
+# это план под конкретную работу, который заводит агент, а не часть эталона
 TASK_SECTIONS = ("Описание", RELEASE_SECTION, CHECKLIST_SECTION, "История доработок",
                  NOTES_SECTION, COMMITS_SECTION)
 
@@ -1245,8 +1246,6 @@ def requirement_met(req: dict, task_path) -> bool:
 
     check = _one_line(req.get("check"))
     name = _one_line(req.get("name"))
-    if check == "checklist_done":
-        return not _unchecked_boxes(lines)
     if check == "section_present":
         return bool(name) and _section_bounds(lines, name) is not None
     if check == "section_filled":
@@ -1686,7 +1685,11 @@ def _is_handoff(cfg: dict, pipeline: list[dict], from_status: str | None,
 
 
 def _unchecked_boxes(lines: list[str]) -> list[str]:
-    """Незакрытые пункты чеклиста задачи."""
+    """Незакрытые пункты плана задачи.
+
+    Секция необязательна — её заводит агент под конкретную работу. Нет её —
+    возвращаем пусто: спрашивать план с того, кто его не вёл, незачем.
+    """
     bounds = _section_bounds(lines, CHECKLIST_SECTION)
     if not bounds:
         return []
@@ -1722,8 +1725,8 @@ def handoff_reminders(cfg: dict) -> list[str]:
     **что можно потерять, отложив**. Знание теряется: до конца работы задача
     доезжает и без агента (рукой на доске), и тогда записывать его некому — а
     ухода из рабочего статуса не минует ни одна задача (TASK-137). Остальные
-    хвосты наоборот раньше невыполнимы: последний пункт чеклиста закрывает
-    проверка человеком, а коммиты в части процессов идут после неё.
+    хвосты наоборот раньше невыполнимы: план работы закрывается вместе с самой
+    работой, а коммиты в части процессов идут уже после проверки человеком.
 
     Про волт можно только напомнить: «стоит ли сохранять знание» — суждение, а
     не проверка. Ничего не запрещает: задача может честно не давать знаний.
@@ -1757,7 +1760,7 @@ def finish_reminders(tasks_dir: Path, task_id: str, task_path: Path,
     if boxes:
         shown = ", ".join(f"«{b}»" for b in boxes[:3])
         tail = f" и ещё {len(boxes) - 3}" if len(boxes) > 3 else ""
-        out.append(f"незакрытых пунктов чеклиста: {len(boxes)} — {shown}{tail}")
+        out.append(f"незакрытых пунктов плана: {len(boxes)} — {shown}{tail}")
 
     if not _has_entries(lines, COMMITS_SECTION):
         out.append(f"секция «{COMMITS_SECTION}» пуста: по строке на коммит "

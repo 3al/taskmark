@@ -467,6 +467,41 @@ class SourceTest(unittest.TestCase):
         self.assertIn("requires", LIFECYCLE_KEYS)
 
 
+class ChecklistPredicateRetiredTest(RequiresProject):
+    """`checklist_done` снят вместе с шаблонным чеклистом (TASK-146).
+
+    Чеклист перестал быть обязательной секцией и заводится агентом под работу.
+    Проверка «чеклист закрыт» при этом становится вредной с двух сторон: как
+    требование этапа она заставляет заводить чеклист ради прохода, а без секции
+    она **истинна** — то есть премирует того, кто плана не ведёт, и держит того,
+    кто ведёт честно.
+    """
+
+    def test_predicate_is_not_offered(self) -> None:
+        from backend.requirements import PREDICATES
+
+        self.assertNotIn("checklist_done", PREDICATES,
+                         "снятая проверка всё ещё предлагается в редакторе")
+
+    def test_declared_predicate_is_reported_as_unknown(self) -> None:
+        """Объявленный в чужом конфиге — не молчит: движок его пропустит."""
+        text = "\n".join(self.warnings(requires={
+            "testing": [{"id": "checklist", "check": "checklist_done"}]}))
+
+        self.assertIn("checklist_done", text)
+
+    def test_engine_no_longer_knows_it(self) -> None:
+        """Незнакомая проверка истинна (fail-open) — этап не встанет колом."""
+        from backend.requirements import requirement_met
+
+        path = self.tasks / "TASK-001-x.md"
+        path.write_text("---\nid: TASK-001\nstatus: testing\n---\n\n"
+                        "## Чеклист\n\n- [ ] не закрыт\n", encoding="utf-8")
+
+        self.assertTrue(requirement_met({"id": "checklist",
+                                         "check": "checklist_done"}, path))
+
+
 class ConfirmationRuleTest(unittest.TestCase):
     """Агент должен знать, чем отмечается подтверждение человека (TASK-143).
 
@@ -498,6 +533,30 @@ class ConfirmationRuleTest(unittest.TestCase):
 
         self.assertTrue(re.search(r"(?s)--confirm.{0,600}не подтверждай", self.text),
                         "правила не запрещают подтверждать за человека")
+
+
+class ChecklistRuleTest(unittest.TestCase):
+    """Чеклист — план под задачу, а не шаблонная секция (TASK-146).
+
+    Шаблон его больше не ставит, поэтому единственный источник знания о том,
+    когда он вообще нужен, — правила проекта. Без строки агент либо заведёт
+    его по привычке ритуалом, либо не заведёт никогда.
+    """
+
+    RULES = (Path(__file__).resolve().parent.parent
+             / "templates" / "agentic" / "rules_section.md")
+
+    def setUp(self) -> None:
+        self.text = self.RULES.read_text(encoding="utf-8")
+
+    def test_rules_say_checklist_is_optional(self) -> None:
+        self.assertTrue("нет плана — нет секции" in self.text.lower(),
+                        "правила не говорят, что чеклист необязателен")
+
+    def test_rules_say_unneeded_item_is_deleted(self) -> None:
+        """Ритуальная галочка — то, ради чего секция и перестала быть обязательной."""
+        self.assertTrue("удаляют, а не отмечают" in self.text,
+                        "правила не запрещают закрывать галочкой невыполненное")
 
 
 if __name__ == "__main__":  # pragma: no cover

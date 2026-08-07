@@ -386,8 +386,15 @@ class SkillBoundaryTest(unittest.TestCase):
                       "запись знания — главный шаг передачи на проверку")
 
     def test_handoff_leaves_verification_checkbox_alone(self) -> None:
-        """Пункт, который закрывает проверка человеком, передача не трогает."""
-        self.assertIn("Локальная проверка", self.skill("handoff-task"))
+        """Пункт, который закрывает проверка человеком, передача не трогает.
+
+        Чеклист стал необязательным планом под работу (TASK-146), поэтому
+        конкретной строки «Локальная проверка» в шаблоне больше нет — правило
+        же осталось: закрывать за человека то, чего он ещё не подтверждал,
+        нельзя.
+        """
+        self.assertIn("Пункты, которые закрывает проверка, не трогай",
+                      self.skill("handoff-task"))
 
     def test_finalize_no_longer_writes_the_vault(self) -> None:
         """Финализация про волт только проверяет, что шаг не пропущен."""
@@ -424,7 +431,7 @@ class SkillBoundaryTest(unittest.TestCase):
                         "финализация двигает задачу до того, как прибрала хвосты")
 
         handoff = self.skill("handoff-task")
-        self.assertLess(handoff.index("Закрыть чекбоксы"),
+        self.assertLess(handoff.index("Закрыть план"),
                         handoff.index("Перевести в следующий статус"),
                         "передача двигает задачу до того, как прибрала работу")
 

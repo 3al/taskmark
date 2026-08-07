@@ -94,12 +94,23 @@ class TaskTypeStoredTest(ProjectCase):
                 created = next(tasks_dir.glob("TASK-*.md"))
                 self.assertEqual(_frontmatter(created).get("type"), value)
 
-    def test_discussion_checklist_has_no_tests(self) -> None:
-        """У обсуждения не бывает ни кода, ни тестов — чеклист про другое."""
-        self.assertEqual(self.create("--type", "discussion").returncode, 0)
-        text = self.created_task().read_text(encoding="utf-8")
-        self.assertNotIn("Все тесты проходят", text,
-                         "чеклист обсуждения требует тестов, которых не будет")
+    def test_type_no_longer_brings_a_checklist(self) -> None:
+        """Тип больше не тащит за собой чеклист (TASK-146).
+
+        Шаблонный список пунктов ставился по типу и почти никогда не описывал
+        предстоящую работу: у обсуждения он требовал тестов, которых не будет,
+        а закрывался всё равно — галочками в конце. Тип оставляет за собой
+        метку на доске и исключения в требованиях.
+        """
+        for value in ("feature", "discussion"):
+            with self.subTest(type=value):
+                self.setUp()
+                self.assertEqual(self.create("--type", value).returncode, 0)
+                text = self.created_task().read_text(encoding="utf-8")
+
+                self.assertNotIn("## Чеклист", text,
+                                 "новая задача всё ещё приходит с чеклистом")
+                self.assertNotIn("- [ ]", text, "в новой задаче есть чекбоксы")
 
     def test_unknown_type_rejected(self) -> None:
         result = self.create("--type", "nonsense")
