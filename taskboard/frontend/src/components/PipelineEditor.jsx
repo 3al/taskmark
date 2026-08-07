@@ -354,13 +354,6 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                         </button>
                       </div>
                     ))}
-                    {recommended.length > 0 && (
-                      <div className="text-[10px] text-zinc-400">
-                        Это подсказки поставки — то, что уже подводило на практике.
-                        Пока требование не обязательно, агент получает о нём напоминание,
-                        но этап проходит.
-                      </div>
-                    )}
                     <RequirementForm predicates={predicates}
                                      onAdd={(req) => addRequirement(status.key, req)} />
                   </div>
