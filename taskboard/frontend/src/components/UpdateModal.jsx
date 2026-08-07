@@ -47,7 +47,7 @@ const INSTALL_HINT = {
     'taskboard/.venv (она пересоздастся сама, если её потерять).',
 }
 
-export default function UpdateModal({ onClose }) {
+export default function UpdateModal({ onClose, onOpenSettings }) {
   const [status, setStatus] = useState(null)
   const [plan, setPlan] = useState(null)
   const [news, setNews] = useState(null)
@@ -230,7 +230,27 @@ export default function UpdateModal({ onClose }) {
                 </>
               )}
 
-              <button className={`${btn} mt-3`} onClick={dismissResult}>Понятно</button>
+              {/* Требования этапа включает человек — обновление не трогает чужие
+                  проекты молча. Обратная сторона: узнать о механизме неоткуда,
+                  а возможность, о которой надо догадаться, для большинства не
+                  существует. Плашка уже показывается один раз и сама себя гасит,
+                  поэтому нового места здесь не заводится — только путь отсюда
+                  туда, где настраивают */}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className={btn} onClick={dismissResult}>Понятно</button>
+                {/* Заливкой, а не рамкой: рядом с «Понятно» одинаковая кнопка
+                    читается вторым способом закрыть плашку, а это единственное
+                    место, откуда про механизм вообще узнают */}
+                {result.ok && onOpenSettings && (
+                  <button
+                    className="px-3 py-1.5 rounded-lg text-sm border border-sky-700/70
+                      bg-sky-950/40 text-sky-200 hover:bg-sky-900/50 hover:text-sky-100
+                      transition"
+                    onClick={() => { dismissResult(); onOpenSettings('lifecycle') }}>
+                    Настроить требования этапов →
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

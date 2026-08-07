@@ -45,6 +45,10 @@ export default function App() {
   const [showNewTask, setShowNewTask] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  // Вкладка, ради которой настройки открыли: из шестерёнки — никакая (запомнится
+  // прошлая), из плашки «что нового» — та, про которую там и говорилось
+  const [settingsTab, setSettingsTab] = useState(null)
+  const openSettings = (tab = null) => { setSettingsTab(tab); setShowSettings(true) }
   const [showScaffold, setShowScaffold] = useState(false)
   const [showAgentic, setShowAgentic] = useState(false)
   const [showRepair, setShowRepair] = useState(false)
@@ -563,7 +567,7 @@ export default function App() {
         onShowLogs={() => setShowLogs(true)}
         onRefresh={refresh}
         onResetColumns={() => saveColumnOrder(null)}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={() => openSettings()}
         onOpenHelp={openHelp}
         onOpenUpdate={() => setShowUpdate(true)}
         updateAvailable={updateAvailable}
@@ -941,7 +945,8 @@ export default function App() {
       {showLogs && <LogsPanel onClose={() => setShowLogs(false)} />}
       {showSettings && (
         <SettingsModal
-          onClose={() => setShowSettings(false)}
+          initialTab={settingsTab}
+          onClose={() => { setShowSettings(false); setSettingsTab(null) }}
           onSaved={(cfg) => { setDndFullBoard(!!cfg.dnd_full_board); refresh() }}
           onOpenHelp={openHelp}
         />
@@ -951,6 +956,7 @@ export default function App() {
       )}
       {showUpdate && (
         <UpdateModal
+          onOpenSettings={(tab) => { setShowUpdate(false); openSettings(tab) }}
           onClose={() => {
             setShowUpdate(false)
             // Окно могло проверить обновления или изменить режим — перечитываем

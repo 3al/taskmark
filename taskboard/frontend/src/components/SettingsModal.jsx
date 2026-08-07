@@ -27,9 +27,12 @@ const SCOPE_NOTE = {
 // Модалка настроек. Свойства инструмента (порт, вид карточки) живут в
 // глобальном ~/.taskboard/config.json, настройки проекта (жизненный цикл,
 // среды, скрипт выпуска) — в <проект>/tasks/.taskboard.json
-export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
-  // Ключ мог остаться от вкладки, которой больше нет, — тогда открываем первую
+export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab }) {
+  // Ключ мог остаться от вкладки, которой больше нет, — тогда открываем первую.
+  // `initialTab` важнее сохранённой: окно открыли ради конкретной настройки, и
+  // высадить человека на прошлой вкладке значит заставить искать самому
   const [tab, setTab] = useState(() => {
+    if (TABS.some((t) => t.key === initialTab)) return initialTab
     const saved = localStorage.getItem(TAB_KEY)
     return TABS.some((t) => t.key === saved) ? saved : TABS[0].key
   })
