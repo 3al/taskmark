@@ -307,6 +307,65 @@ class OrphanRequirementTest(RequiresProject):
         self.assertEqual(REQUIRES, load_project_config(self.tasks).get("requires"))
 
 
+class UnknownIdOnBoardTest(RequiresProject):
+    """Неопознанная запись видна на доске, а не только в консоли (TASK-133).
+
+    Задачу двигают и мышью, и тогда скрипт не зовут вовсе: единственный, кто
+    расскажет о записи, которую механизм не понимает, — валидатор.
+    """
+
+    def _task(self, task_id: str, confirmed: str = "~", waived: str = "~") -> Path:
+        path = self.tasks / f"{task_id}-t.md"
+        path.write_text(f"""---
+id: {task_id}
+title: Задача
+epic: ~
+type: feature
+status: testing
+created: 2026-08-01 10:00
+confirmed: {confirmed}
+waived: {waived}
+---
+
+## Описание
+
+Текст.
+
+## Чеклист
+
+- [x] Сделано
+
+## Заметки агента
+
+## История коммитов
+""", encoding="utf-8")
+        return path
+
+    def test_unknown_id_is_a_data_problem(self) -> None:
+        self._task("TASK-001", confirmed="testing/verified")
+
+        text = "\n".join(self.warnings(requires=REQUIRES))
+
+        self.assertIn("TASK-001", text)
+        self.assertIn("testing/verified", text)
+
+    def test_known_id_is_silent(self) -> None:
+        self._task("TASK-001", confirmed="verified")
+
+        text = "\n".join(self.warnings(requires=REQUIRES))
+
+        self.assertNotIn("не опознано", text)
+
+    def test_waiver_itself_is_not_reported(self) -> None:
+        """Списание в «Проблемах данных» не показывается — принятое решение:
+        неустранимая строка обесценивала бы соседние. Речь только о неопознанном."""
+        self._task("TASK-001", waived="verified")
+
+        text = "\n".join(self.warnings(requires=REQUIRES))
+
+        self.assertNotIn("не опознано", text)
+
+
 class SourceTest(unittest.TestCase):
     """Копирование жизненного цикла соседнего проекта берёт и требования."""
 

@@ -768,6 +768,88 @@ class TypeScopeTest(RequirementsTestCase):
         self.assertNotIn("commits", result.stdout)
 
 
+class UnknownIdTest(RequirementsTestCase):
+    """Запись, которую движок не понимает, не должна молчать (TASK-133).
+
+    `confirmed` и `waived` — плоские списки идентификаторов, и всё незнакомое
+    движок игнорирует: требование остаётся невыполненным, хотя поле выглядит
+    заполненным. Такая запись переживает и возврат назад — снимается только
+    распознанное, — поэтому сказать о ней обязан скрипт.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._requires({"testing": [{"id": "verified", "check": "confirm",
+                                     "ask": "проверку подтвердил человек"}]})
+
+    def test_unknown_confirmed_id_is_reported(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "testing/verified"})
+
+        result = self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("testing/verified", result.stdout)
+
+    def test_unknown_waived_id_is_reported(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"waived": "нет-такого"})
+
+        result = self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertIn("нет-такого", result.stdout)
+
+    def test_known_id_is_silent(self) -> None:
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "verified"})
+
+        result = self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertNotIn("не опознан", result.stdout.lower())
+
+    def test_empty_fields_are_silent(self) -> None:
+        self._task(status="testing")
+
+        result = self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertNotIn("не опознан", result.stdout.lower())
+
+    def test_id_of_another_stage_is_known(self) -> None:
+        """Требование другого этапа — не «неопознанное»: задача могла закрыть его
+        раньше, и жаловаться на честную запись нельзя."""
+        self._requires({"testing": [{"id": "verified", "check": "confirm"}],
+                        "ready_for_release": [{"id": "commits",
+                                               "check": "section_filled",
+                                               "name": "История коммитов"}]})
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "commits"})
+
+        result = self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertNotIn("не опознан", result.stdout.lower())
+
+    def test_recommended_id_is_known(self) -> None:
+        """Рекомендация каталога тоже настоящее требование: её подтверждают, и
+        запись об этом — не мусор."""
+        rec = self.mod.CATALOG["release_notes"]["recommends"][0]
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": rec["id"]})
+
+        result = self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertNotIn("не опознан", result.stdout.lower())
+
+    def test_nothing_is_deleted(self) -> None:
+        """Механизм только показывает: запись может быть опечаткой в конфиге, и
+        тогда стирается факт, а не мусор."""
+        path = self._task(status="testing")
+        self.mod._set_fields(path, {"confirmed": "testing/verified"})
+
+        self._run("TASK-001", "development", "--agent", "Тест")
+
+        self.assertIn("testing/verified", path.read_text(encoding="utf-8"))
+
+
 class ReportingTest(RequirementsTestCase):
     """Долг узнаётся тем же вызовом, которым скилл и так спрашивает маршрут."""
 

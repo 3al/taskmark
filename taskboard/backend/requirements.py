@@ -125,6 +125,36 @@ def _step_requirements(cfg: dict, status: str, path) -> list[dict]:
     return unmet(move_requirements(cfg, pipeline, status, nxt), path)
 
 
+def unknown_requirement_ids(cfg: dict, pipeline, task_path) -> list[str]:
+    """Записи в `confirmed` / `waived`, которых нет ни у одного требования.
+
+    Зеркало функции скрипта. Движок незнакомое игнорирует: требование остаётся
+    невыполненным, хотя поле выглядит заполненным, и возврат назад такую запись
+    не снимает — снимается только распознанное. Задачу двигают и мышью, поэтому
+    сказать о ней должен ещё и валидатор.
+
+    Известны идентификаторы всех этапов маршрута, включая рекомендации каталога:
+    задача могла закрыть требование другого этапа раньше.
+    """
+    try:
+        content = Path(task_path).read_text(encoding="utf-8-sig")
+    except OSError:
+        return []
+    meta, _body = parse_frontmatter(content)
+    written = (parse_req_ids(meta.get(CONFIRMED_FIELD))
+               + parse_req_ids(meta.get(WAIVED_FIELD)))
+    if not written:
+        return []
+    rows = _rows(pipeline if pipeline is not None else load_pipeline(cfg))
+    known = {_one_line(r.get("id")).lower()
+             for s in rows for r in stage_requirements(cfg, rows, s["key"])}
+    out: list[str] = []
+    for value in written:
+        if value.lower() not in known and value not in out:
+            out.append(value)
+    return out
+
+
 def declaration_issues(cfg: dict, pipeline: list[dict] | None = None) -> list[str]:
     """Что в объявленных требованиях не сработает — человеческими словами.
 

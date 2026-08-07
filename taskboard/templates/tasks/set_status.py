@@ -587,8 +587,15 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             # Что потребует новый этап — сказанное на входе, а не в момент отказа
             "announce": stage_announcement(cfg, pipeline, status, task_file),
             # Смена статуса — единственный момент, когда файл задачи заведомо
-            # открывают: заодно показываем, что в нём разъехалось
-            "warnings": check_task_file(task_file)}
+            # открывают: заодно показываем, что в нём разъехалось. Сюда же —
+            # записи о требованиях, которых механизм не знает: они выглядят
+            # закрытыми этапами, а не гасят ничего
+            "warnings": check_task_file(task_file) + [
+                f"в полях {CONFIRMED_FIELD}/{WAIVED_FIELD} не опознано: "
+                f"{', '.join(unknown)} — таких требований в маршруте нет, и "
+                f"этап они не закрывают"
+                for unknown in [unknown_requirement_ids(cfg, pipeline, task_file)]
+                if unknown]}
 
 
 # --- Заметки агента и структура файла задачи --------------------------------
@@ -1250,6 +1257,35 @@ def requirement_met(req: dict, task_path) -> bool:
         done = [i.lower() for i in parse_req_ids(_read_meta(path).get(CONFIRMED_FIELD))]
         return _one_line(req.get("id")).lower() in done
     return True
+
+
+def unknown_requirement_ids(cfg: dict, pipeline: list[dict], task_path) -> list[str]:
+    """Идентификаторы в `confirmed` / `waived`, которых нет ни у одного требования.
+
+    Движок сравнивает записи с `id` из конфига и **всё незнакомое игнорирует**:
+    требование остаётся невыполненным, хотя поле выглядит заполненным. Возврат
+    назад такую запись не снимает (снимается только распознанное), и увидеть её
+    иначе как чтением конфига нельзя — значит сказать обязан скрипт.
+
+    Известными считаются идентификаторы **всех** этапов маршрута, включая
+    рекомендации каталога: задача могла закрыть требование другого этапа раньше,
+    и честная запись об этом не мусор.
+
+    Удалять ничего нельзя: запись может быть опечаткой в конфиге, а не в задаче,
+    и тогда стёрся бы факт.
+    """
+    meta = _read_meta(Path(task_path))
+    written = parse_req_ids(meta.get(CONFIRMED_FIELD)) + parse_req_ids(meta.get(WAIVED_FIELD))
+    if not written:
+        return []
+    known = {_one_line(r.get("id")).lower()
+             for s in pipeline
+             for r in stage_requirements(cfg, pipeline, s["key"])}
+    seen: list[str] = []
+    for value in written:
+        if value.lower() not in known and value not in seen:
+            seen.append(value)
+    return seen
 
 
 def requirement_applies(req: dict, task_path) -> bool:

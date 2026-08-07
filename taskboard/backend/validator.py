@@ -10,7 +10,7 @@ from backend.board_repair import _section_for_status, row_matches_file, task_fil
 from backend.config import is_lost_section
 from backend.scaffold import (detect_harnesses, environment_issues, harness_choice,
                               script_capabilities)
-from backend.requirements import declaration_issues
+from backend.requirements import declaration_issues, unknown_requirement_ids
 from backend.stall import plan_blocks_repair, stall_issues
 from backend.statuses import load_pipeline
 
@@ -213,6 +213,16 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
         if m and m.group(1) not in on_board:
             warnings.append(f"{f.name}: файла нет на доске")
             repairable += 1
+        # Запись о требовании, которого нет в маршруте: этап она не закрывает, а
+        # поле выглядит заполненным. Кнопкой это не чинится — запись может быть
+        # опечаткой в конфиге, и стёрся бы факт, — поэтому без repairable
+        if m and cfg.get("requires"):
+            unknown = unknown_requirement_ids(cfg, pipeline.statuses(), f)
+            if unknown:
+                warnings.append(
+                    f"{m.group(1)}: в подтверждениях и списаниях не опознано — "
+                    f"{', '.join(unknown)}: таких требований в маршруте нет, "
+                    f"и этап они не закрывают")
 
     # Настройка, опередившая развёрнутый скрипт: требования этапа объявлены,
     # а исполняет их он, и обновляется он отдельно — кнопкой. Молчать тут
