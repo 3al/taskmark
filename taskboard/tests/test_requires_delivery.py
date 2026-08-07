@@ -245,6 +245,21 @@ created: 2026-08-01 10:00
 
         self.assertEqual(["TASK-001"], [t["id"] for t in hit])
 
+    def test_debt_now_and_on_exit_are_told_apart(self) -> None:
+        """Значок долга появится не у всех сразу — и это должно быть видно.
+
+        Задача, прошедшая этап, получает долг немедленно; та, что стоит на этапе,
+        — только когда уйдёт. Одно число в предупреждении и другое на доске
+        выглядят как ошибка, хотя оба верны.
+        """
+        self._task("TASK-001", "testing")      # development пройден → долг сразу
+        self._task("TASK-002", "development")  # стоит на этапе → при выходе
+
+        hit = {t["id"]: t["when"] for t in self.impact(
+            {"development": [dict(self.COMMITS)]})}
+
+        self.assertEqual({"TASK-001": "now", "TASK-002": "exit"}, hit)
+
     def test_closed_task_is_not_counted(self) -> None:
         """У задачи в конце маршрута долга нет: её больше никуда не двигают,
         и пугать человеком числом закрытых задач незачем."""

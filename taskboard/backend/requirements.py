@@ -96,8 +96,15 @@ def gate_impact(tasks_dir, old_cfg: dict, new_cfg: dict) -> list[dict]:
         added = [r for r in _step_requirements(new_cfg, status, path)
                  if r["id"] not in was]
         if added:
+            # Долг сейчас и долг при выходе — разные вещи, и человек видит их
+            # порознь: у первых значок на карточке появится сразу, у вторых —
+            # когда задача уйдёт с этапа. Не сказать этого значит показать одно
+            # число в предупреждении и другое на доске
+            now = {r["id"] for r in task_debt(directory, task_id,
+                                             new_cfg).get("debt", [])}
             out.append({"id": task_id, "title": info.get("title", ""),
                         "status": status,
+                        "when": "now" if any(r["id"] in now for r in added) else "exit",
                         "requirements": [requirement_text(r) for r in added]})
     return out
 

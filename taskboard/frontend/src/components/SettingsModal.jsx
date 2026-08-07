@@ -269,9 +269,17 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
               <div className="space-y-1 max-h-64 overflow-y-auto">
                 {gated.map((t) => (
                   <div key={t.id} className="text-xs flex gap-2">
-                    <span className="text-amber-300 shrink-0">{t.id}</span>
+                    <span className={`shrink-0 ${t.when === 'now' ? 'text-amber-300' : 'text-zinc-400'}`}>
+                      {t.id}
+                    </span>
                     <span className="text-zinc-400 truncate">{t.title}</span>
-                    <span className="ml-auto text-zinc-500 shrink-0">
+                    {/* Когда именно требование их коснётся: у прошедших этап
+                        значок долга появится сразу, у стоящих на нём — при уходе.
+                        Иначе предупреждение и доска показывают разные числа */}
+                    <span className="ml-auto shrink-0 text-[10px] text-zinc-500 border border-zinc-700 rounded px-1">
+                      {t.when === 'now' ? 'долг сразу' : 'при уходе с этапа'}
+                    </span>
+                    <span className="text-zinc-500 shrink-0">
                       {t.requirements.join('; ')}
                     </span>
                   </div>
@@ -280,7 +288,11 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
               {/* Экран должен отвечать на «и что мне теперь делать»: без этого
                   список задач читается угрозой, и включать требование не хочется */}
               <div className="text-xs text-zinc-400 space-y-1 border-t border-zinc-800 pt-3">
-                <div>На вашу работу это не влияет: карточки переносятся как раньше.</div>
+                <div>
+                  На вашу работу это не влияет: карточки переносятся как раньше.
+                  Значок `⚠` на карточке появится у тех, кто этап уже прошёл;
+                  у остальных — когда они с него уйдут.
+                </div>
                 <div>
                   Взявшись за такую задачу, агент либо выполнит требование, либо
                   отметит, что к этой задаче оно не относится, — и в обоих случаях
