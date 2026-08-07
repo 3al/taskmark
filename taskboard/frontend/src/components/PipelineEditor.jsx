@@ -278,7 +278,10 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     {!status.offramp && (
                       <button onClick={() => setOpenReq(open ? null : status.key)}
                               title="Что должно быть выполнено, чтобы уйти с этапа"
-                              className={`px-1.5 text-xs ${declared.length ? 'text-amber-300' : 'text-zinc-500'} hover:text-zinc-200`}>
+                              className={`px-1.5 mr-2 text-xs rounded ${
+                                open ? 'bg-zinc-700/60 text-zinc-100' :
+                                declared.length ? 'text-amber-300' : 'text-zinc-500'
+                              } hover:text-zinc-200`}>
                         ✓{declared.length || ''}
                         {recommended.length > 0 && <span className="text-sky-400">•</span>}
                       </button>
@@ -289,7 +292,8 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     <button onClick={() => move(i, 1)} disabled={i === pipeline.length - 1}
                             title="Ниже"
                             className="px-1.5 text-zinc-500 hover:text-zinc-200 disabled:opacity-30">↓</button>
-                    <button onClick={() => remove(i)} title="Убрать из пайплайна"
+                    <button onClick={() => remove(i)}
+                            title={`Убрать «${status.label}» из маршрута — это не сворачивание, статус исчезнет из пайплайна`}
                             className="px-1.5 text-zinc-500 hover:text-rose-400">✕</button>
                   </div>
                 </div>
@@ -301,8 +305,18 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     {/* Сказано вслух: требование проверяется на выходе, а не на
                         входе. На живой настройке это сбивало дважды — человек
                         ждал срабатывания при переносе в статус */}
-                    <div className="text-[11px] text-zinc-300">
-                      Чтобы уйти с этапа «{status.label}», должно быть выполнено:
+                    {/* Своя кнопка «Свернуть»: без неё рука ищет ближайшее
+                        похожее на закрытие — крестик в ряду выше, а он убирает
+                        статус из маршрута, и список схлопывается ровно как от
+                        сворачивания */}
+                    <div className="flex items-start gap-2">
+                      <div className="text-[11px] text-zinc-300">
+                        Чтобы уйти с этапа «{status.label}», должно быть выполнено:
+                      </div>
+                      <button onClick={() => setOpenReq(null)}
+                              className="ml-auto shrink-0 text-[10px] text-zinc-400 hover:text-zinc-200">
+                        Свернуть
+                      </button>
                     </div>
                     {declared.length === 0 && recommended.length === 0 && (
                       <div className="text-[11px] text-zinc-400">
