@@ -59,7 +59,9 @@ function RequirementForm({ predicates, onAdd }) {
     setName(''); setAsk(''); setId('')
   }
 
-  const input = 'bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500'
+  // Поля внутри раскрытой панели темнее её фона: панель светлее строки статуса,
+  // и поля на ней должны читаться вложенными, а не сливаться с обычной формой
+  const input = 'bg-zinc-900/70 border border-zinc-600/70 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500'
   return (
     <div className="space-y-1.5">
       <select className={`${input} w-full`} value={check}
@@ -68,7 +70,7 @@ function RequirementForm({ predicates, onAdd }) {
           <option key={key} value={key}>{meta.label}</option>
         ))}
       </select>
-      {spec.hint && <div className="text-[10px] text-zinc-600">{spec.hint}</div>}
+      {spec.hint && <div className="text-[10px] text-zinc-400">{spec.hint}</div>}
       <div className="flex gap-1.5">
         {spec.param && (
           <input className={`${input} flex-1`} value={name}
@@ -85,7 +87,7 @@ function RequirementForm({ predicates, onAdd }) {
                title="Под этим именем требование записывается в файл задачи — например verified. Латиницей, без пробелов"
                onChange={(e) => setId(e.target.value)} />
         <button onClick={submit} disabled={!ready}
-                className="text-xs px-2 rounded border border-zinc-700 text-zinc-300 hover:border-sky-600 disabled:opacity-30">
+                className="text-xs px-2 rounded border border-zinc-500/70 text-zinc-200 hover:border-sky-500 hover:text-white disabled:opacity-30">
           Добавить
         </button>
       </div>
@@ -282,15 +284,17 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                 </div>
 
                 {open && (
-                  <div className="mt-2 pt-2 border-t border-zinc-700/60 space-y-2">
+                  // Панель светлее строки статуса: раскрытая часть — отдельный
+                  // слой, и на одном оттенке с формой она не считывалась вовсе
+                  <div className="mt-2 -mx-1 px-3 py-2.5 rounded-lg bg-zinc-700/30 border border-zinc-600/40 space-y-2">
                     {/* Сказано вслух: требование проверяется на выходе, а не на
                         входе. На живой настройке это сбивало дважды — человек
                         ждал срабатывания при переносе в статус */}
-                    <div className="text-[11px] text-zinc-400">
+                    <div className="text-[11px] text-zinc-300">
                       Чтобы уйти с этапа «{status.label}», должно быть выполнено:
                     </div>
                     {declared.length === 0 && recommended.length === 0 && (
-                      <div className="text-[11px] text-zinc-600">
+                      <div className="text-[11px] text-zinc-400">
                         ничего — этап проходится без проверок
                       </div>
                     )}
@@ -305,11 +309,11 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                         {/* Чем проверяется и к кому не относится — видно в строке:
                             иначе требование в списке не самодокументируемо, и
                             понять его можно только вспомнив, как заводил */}
-                        <span className="text-[10px] text-zinc-400 border border-zinc-700 rounded px-1 shrink-0">
+                        <span className="text-[10px] text-zinc-300 border border-zinc-500/70 rounded px-1 shrink-0">
                           {reqKind(req, predicates)}
                         </span>
                         {req.except_types?.length > 0 && (
-                          <span className="text-[10px] text-zinc-500 border border-zinc-700/60 rounded px-1 shrink-0"
+                          <span className="text-[10px] text-zinc-400 border border-zinc-600/70 rounded px-1 shrink-0"
                                 title="К задачам этих типов требование не относится">
                             кроме: {req.except_types.join(', ')}
                           </span>
@@ -323,17 +327,17 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                       <div key={req.id} className="flex items-center gap-2 text-xs text-zinc-400">
                         <span className="text-sky-400 shrink-0">•</span>
                         <span className="truncate">{reqText(req, predicates)}</span>
-                        <span className="text-[10px] text-zinc-500 border border-zinc-700/60 rounded px-1 shrink-0">
+                        <span className="text-[10px] text-zinc-400 border border-zinc-600/70 rounded px-1 shrink-0">
                           {reqKind(req, predicates)}
                         </span>
                         <button onClick={() => addRequirement(status.key, req)}
-                                className="ml-auto shrink-0 text-[11px] px-1.5 rounded border border-zinc-700 hover:border-sky-600 hover:text-zinc-200">
+                                className="ml-auto shrink-0 text-[11px] px-1.5 rounded border border-zinc-500/70 text-zinc-200 hover:border-sky-500 hover:text-white">
                           Сделать обязательным
                         </button>
                       </div>
                     ))}
                     {recommended.length > 0 && (
-                      <div className="text-[10px] text-zinc-600">
+                      <div className="text-[10px] text-zinc-400">
                         Пока требование не обязательно, агент получает о нём напоминание,
                         но этап проходит.
                       </div>
