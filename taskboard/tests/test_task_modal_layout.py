@@ -107,5 +107,35 @@ class WideContentScrollsInsideTest(unittest.TestCase):
                          "название в шапке ничем не ограничено по ширине")
 
 
+class TaskIdIsCopyableTest(unittest.TestCase):
+    """Номер задачи копируется нажатием, а не выделением мышью (TASK-149).
+
+    Он нужен отдельно от содержимого постоянно — им зовут агента, его пишут в
+    коммит и в сообщение коллеге. Кнопка копирования в шапке была одна и
+    забирала задачу целиком; номер приходилось выделять руками.
+    """
+
+    def setUp(self) -> None:
+        self.src = MODAL.read_text(encoding="utf-8")
+        self.button = (SRC / "components" / "CopyButton.jsx").read_text(encoding="utf-8")
+
+    def test_id_has_its_own_copy_button(self) -> None:
+        m = re.search(r"\{taskId\}(.{0,400})", self.src, re.S)
+        self.assertIsNotNone(m, "номер задачи в шапке не найден")
+
+        self.assertIn("CopyButton", m.group(1) if m else "",
+                      "рядом с номером задачи нет кнопки копирования")
+
+    def test_button_copies_the_id_alone(self) -> None:
+        """Не задачу целиком: для этого есть кнопка справа в той же шапке."""
+        m = re.search(r"<CopyButton[^>]*text=\{taskId\}", self.src, re.S)
+        self.assertIsNotNone(m, "кнопка у номера копирует не сам номер")
+
+    def test_copy_button_supports_a_small_size(self) -> None:
+        """Иконка ростом со шрифт номера — иначе она перетягивает на себя строку."""
+        self.assertIn("size", self.button,
+                      "у кнопки копирования нет размера — рядом с номером она будет крупной")
+
+
 if __name__ == "__main__":
     unittest.main()
