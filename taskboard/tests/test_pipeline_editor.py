@@ -33,5 +33,46 @@ class TestPipelineEditorInsert(unittest.TestCase):
                          'статус снова добавляется в конец списка')
 
 
+class TestTypeExceptions(unittest.TestCase):
+    """Исключение по типу задачи настраивается из редактора (TASK-141).
+
+    Ключ `except_types` читали оба конца движка, а бейдж «кроме: …» показывался
+    в списке — но задать его было нечем: требование, добавленное человеком,
+    накрывало все типы, и поправить это можно было только правкой
+    `tasks/.taskboard.json` в редакторе текста.
+    """
+
+    def setUp(self) -> None:
+        # Исходник в сообщение не кладём: провал печатал бы весь файл целиком
+        self.src = EDITOR.read_text(encoding='utf-8')
+
+    def has(self, needle: str) -> bool:
+        return needle in self.src
+
+    def test_types_come_from_the_delivery_catalog(self) -> None:
+        """Свой список типов в редакторе разошёлся бы с поставкой молча."""
+        self.assertTrue(re.search(r"import \{[^}]*TASK_TYPES[^}]*\} from '\.\./taskTypes'",
+                                  self.src),
+                        'типы берутся не из каталога поставки')
+
+    def test_form_puts_exceptions_into_the_requirement(self) -> None:
+        m = re.search(r'function RequirementForm\((.+?)\n\}\n', self.src, re.S)
+        self.assertIsNotNone(m, 'форма требования не найдена')
+        body = m.group(1) if m else ''
+
+        self.assertTrue('except_types' in body,
+                        'форма не умеет задавать исключение по типу')
+
+    def test_declared_requirement_exceptions_are_editable(self) -> None:
+        """Бейдж читался, но не правился — а требование живёт дольше формы."""
+        self.assertTrue(self.has('setExcept'),
+                        'исключение существующего требования нельзя изменить')
+
+    def test_types_named_by_label_not_key(self) -> None:
+        """Человек имеет дело с «Обсуждением», а не с `discussion`."""
+        self.assertFalse(self.has("req.except_types.join(', ')"),
+                         'в бейдже показываются служебные ключи типов')
+
+
 if __name__ == '__main__':
     unittest.main()

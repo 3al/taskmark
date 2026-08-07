@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { COLOR_STYLE } from '../statuses'
+import { TASK_TYPES } from '../taskTypes'
 
 // Роли действий: подписи бейджей рядом со статусом-целью
 const ACTION_LABEL = {
@@ -39,6 +40,38 @@ const reqKind = (req, predicates) => {
   return param && spec.phrase ? spec.phrase.replace('{}', param) : spec.label
 }
 
+// Тип задачи по-человечески. Незнакомый ключ (правка конфига руками, чужой
+// проект) показываем как есть: подставленное имя соседнего типа соврало бы
+const typeLabel = (key) => TASK_TYPES[key]?.label || key
+
+// Типы, к которым требование не относится. Чипы, а не поле ввода: `except_types`
+// хранит ключи каталога, и набирать их руками — тот же промах, что писать
+// «обсуждение» вместо `discussion`, только молча (исключение читается, ни на что
+// не находится, требование применяется ко всем).
+function TypeExceptions({ value, onChange }) {
+  const chosen = value || []
+  const toggle = (key) => onChange(chosen.includes(key)
+    ? chosen.filter((k) => k !== key)
+    : [...chosen, key])
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <span className="text-[10px] text-zinc-400 mr-0.5">Не касается задач:</span>
+      {Object.entries(TASK_TYPES).map(([key, meta]) => (
+        <button key={key} onClick={() => toggle(key)}
+                title={chosen.includes(key)
+                  ? `Требование не относится к задачам «${meta.label}»`
+                  : `Исключить задачи «${meta.label}» из этого требования`}
+                className={`text-[10px] rounded px-1.5 py-0.5 border ${chosen.includes(key)
+                  ? 'border-amber-600/70 bg-amber-500/10 text-amber-300'
+                  : 'border-zinc-600/60 text-zinc-500 hover:text-zinc-200'}`}>
+          {meta.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // Форма своего требования. Список проверок приходит от бэкенда (`predicates`):
 // зашитый в JS перечень разошёлся бы с движком молча, и редактор предлагал бы
 // то, чего скрипт не умеет
@@ -47,6 +80,7 @@ function RequirementForm({ predicates, onAdd }) {
   const [name, setName] = useState('')
   const [ask, setAsk] = useState('')
   const [id, setId] = useState('')
+  const [skipTypes, setSkipTypes] = useState([])
   const spec = predicates?.[check] || {}
   const ready = id.trim() && (!spec.param || name.trim())
 
@@ -56,8 +90,9 @@ function RequirementForm({ predicates, onAdd }) {
       id: id.trim(), check,
       ...(spec.param ? { [spec.param]: name.trim() } : {}),
       ...(ask.trim() ? { ask: ask.trim() } : {}),
+      ...(skipTypes.length ? { except_types: skipTypes } : {}),
     })
-    setName(''); setAsk(''); setId('')
+    setName(''); setAsk(''); setId(''); setSkipTypes([])
   }
 
   // Поля внутри раскрытой панели темнее её фона: панель светлее строки статуса,
@@ -101,6 +136,11 @@ function RequirementForm({ predicates, onAdd }) {
                 className="text-xs px-2 rounded border border-zinc-500/70 text-zinc-200 hover:border-sky-500 hover:text-white disabled:opacity-30">
           Добавить
         </button>
+      </div>
+      {/* Исключение — не про то, как проверять, а про то, кого проверять:
+          поэтому вне блока полей предиката, они от выбора проверки не зависят */}
+      <div className="pl-2.5">
+        <TypeExceptions value={skipTypes} onChange={setSkipTypes} />
       </div>
     </div>
   )
@@ -203,6 +243,25 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
     else delete next[key]
     emitRequires(next)
   }
+
+  // Исключение правится у уже объявленного требования, а не только задаётся при
+  // создании: требование живёт дольше формы, и понимание «это обсуждений не
+  // касается» приходит позже — обычно на первом ложном отказе
+  const setExceptTypes = (key, id, types) => {
+    const next = { ...(requires || {}) }
+    next[key] = declaredOn(key).map((r) => {
+      if (r.id !== id) return r
+      // Пустой список не храним: ключа нет — требование ко всем типам, и лишний
+      // `except_types: []` в конфиге читался бы как незаконченная настройка
+      const { except_types: _drop, ...rest } = r
+      return types.length ? { ...rest, except_types: types } : rest
+    })
+    emitRequires(next)
+  }
+
+  // Какое исключение раскрыто. Один за раз: чипы всех требований сразу
+  // превращают список в простыню, а правят их по одному
+  const [openExcept, setOpenExcept] = useState('')
 
   const label = 'block text-xs text-zinc-500 mb-1'
   const field = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-sky-500'
@@ -323,31 +382,49 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                         ничего — этап проходится без проверок
                       </div>
                     )}
-                    {declared.map((req) => (
+                    {declared.map((req) => {
+                      const editing = openExcept === `${status.key}:${req.id}`
+                      const skip = req.except_types || []
+                      return (
                       // Служебное имя (`id`) в строке не показываем: человек с ним
                       // дела не имеет — оно нужно агенту и всплывает во frontmatter
                       // задачи. Остаётся в подсказке, чтобы было где посмотреть
-                      <div key={req.id} className="flex items-center gap-2 text-xs"
-                           title={`Служебное имя: ${req.id} — под ним требование записывается в файл задачи`}>
-                        <span className="text-emerald-400 shrink-0">✓</span>
-                        <span className="truncate">{reqText(req, predicates)}</span>
-                        {/* Чем проверяется и к кому не относится — видно в строке:
-                            иначе требование в списке не самодокументируемо, и
-                            понять его можно только вспомнив, как заводил */}
-                        <span className="text-[10px] text-zinc-300 border border-zinc-500/70 rounded px-1 shrink-0">
-                          {reqKind(req, predicates)}
-                        </span>
-                        {req.except_types?.length > 0 && (
-                          <span className="text-[10px] text-zinc-400 border border-zinc-600/70 rounded px-1 shrink-0"
-                                title="К задачам этих типов требование не относится">
-                            кроме: {req.except_types.join(', ')}
+                      <div key={req.id}>
+                        <div className="flex items-center gap-2 text-xs"
+                             title={`Служебное имя: ${req.id} — под ним требование записывается в файл задачи`}>
+                          <span className="text-emerald-400 shrink-0">✓</span>
+                          <span className="truncate">{reqText(req, predicates)}</span>
+                          {/* Чем проверяется и к кому не относится — видно в строке:
+                              иначе требование в списке не самодокументируемо, и
+                              понять его можно только вспомнив, как заводил */}
+                          <span className="text-[10px] text-zinc-300 border border-zinc-500/70 rounded px-1 shrink-0">
+                            {reqKind(req, predicates)}
                           </span>
+                          {/* Кнопка, а не подпись, и она есть всегда: раньше бейдж
+                              «кроме: …» только читался, а задать исключение было
+                              нечем — приходилось править tasks/.taskboard.json.
+                              «Все типы» без исключений тоже сказано вслух, иначе
+                              настройку не найти, пока не увидишь у чужого требования */}
+                          <button onClick={() => setOpenExcept(editing ? '' : `${status.key}:${req.id}`)}
+                                  title="Типы задач, к которым требование не относится"
+                                  className={`text-[10px] rounded px-1 shrink-0 border hover:border-sky-500 ${
+                                    skip.length ? 'border-amber-700/70 text-amber-300/90'
+                                                : 'border-zinc-700 text-zinc-500'}`}>
+                            {skip.length ? `кроме: ${skip.map(typeLabel).join(', ')}` : 'все типы'}
+                          </button>
+                          <button onClick={() => dropRequirement(status.key, req.id)}
+                                  title="Убрать требование"
+                                  className="ml-auto px-1 text-zinc-500 hover:text-rose-400 shrink-0">✕</button>
+                        </div>
+                        {editing && (
+                          <div className="mt-1 mb-1.5 pl-5">
+                            <TypeExceptions value={skip}
+                                            onChange={(types) => setExceptTypes(status.key, req.id, types)} />
+                          </div>
                         )}
-                        <button onClick={() => dropRequirement(status.key, req.id)}
-                                title="Убрать требование"
-                                className="ml-auto px-1 text-zinc-500 hover:text-rose-400 shrink-0">✕</button>
                       </div>
-                    ))}
+                      )
+                    })}
                     {/* Откуда взялась строка, должно быть видно без наведения:
                         иначе рекомендация читается как чьё-то забытое требование */}
                     {recommended.length > 0 && (
@@ -362,6 +439,15 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                         <span className="text-[10px] text-zinc-400 border border-zinc-600/70 rounded px-1 shrink-0">
                           {reqKind(req, predicates)}
                         </span>
+                        {/* Исключения поставки видно до включения: у рекомендаций
+                            релизного хвоста это «кроме: Обсуждение», и знать об
+                            этом лучше заранее, а не по отсутствию долга */}
+                        {req.except_types?.length > 0 && (
+                          <span className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1 shrink-0"
+                                title="К задачам этих типов требование не относится">
+                            кроме: {req.except_types.map(typeLabel).join(', ')}
+                          </span>
+                        )}
                         <button onClick={() => addRequirement(status.key, req)}
                                 className="ml-auto shrink-0 text-[11px] px-1.5 rounded border border-zinc-500/70 text-zinc-200 hover:border-sky-500 hover:text-white">
                           Сделать обязательным

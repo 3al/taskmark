@@ -116,6 +116,35 @@ class DeclarationWarningTest(RequiresProject):
 
         self.assertTrue(text, "требование без id должно быть замечено")
 
+    def test_unknown_except_type_reported(self) -> None:
+        """Исключение по несуществующему типу не сработает ни на одной задаче.
+
+        Промах здесь бесшумный вдвойне: движок исключение читает, ни на что не
+        находит и требование применяет ко всем — то есть человек видит в списке
+        «кроме: …» и уверен, что настроил, а гейт стоит там, где не должен.
+        """
+        text = "\n".join(self.warnings(requires={"testing": [
+            {"id": "verified", "check": "confirm", "except_types": ["обсуждение"]}]}))
+
+        self.assertIn("обсуждение", text)
+
+    def test_excluding_every_type_reported(self) -> None:
+        """Требование, исключённое для всех типов, не сработает никогда."""
+        from backend.config import TASK_TYPES
+
+        text = "\n".join(self.warnings(requires={"testing": [
+            {"id": "verified", "check": "confirm",
+             "except_types": list(TASK_TYPES)}]}))
+
+        self.assertIn("verified", text)
+
+    def test_known_except_type_is_silent(self) -> None:
+        text = "\n".join(self.warnings(requires={"testing": [
+            {"id": "commits", "check": "section_filled", "name": "История коммитов",
+             "except_types": ["discussion"]}]}))
+
+        self.assertEqual("", text)
+
     def test_correct_declaration_is_silent(self) -> None:
         self.assertEqual([], [w for w in self.warnings(requires=REQUIRES)
                               if "требован" in w.lower()])

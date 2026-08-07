@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.config import TASK_TYPES
 from backend.notes import append_note
 from backend.statuses import load_pipeline
 from backend.task_parser import find_task_file, parse_frontmatter, set_meta_fields
@@ -206,6 +207,35 @@ def declaration_issues(cfg: dict, pipeline: list[dict] | None = None) -> list[st
             if param and not _one_line(req.get(param)):
                 out.append(f"Требование «{rid}» на этапе {where}: для проверки "
                            f"«{spec['label']}» нужен {spec.get('param_label', param)}")
+            out.extend(_except_types_issues(req, rid, where))
+    return out
+
+
+def _except_types_issues(req: dict, rid: str, where: str) -> list[str]:
+    """Что не так с исключением по типу задачи.
+
+    Промах здесь бесшумный вдвойне: движок читает исключение, ни на один тип его
+    не находит и требование применяет ко всем — а человек видит в списке
+    «кроме: …» и уверен, что настроил. Fail-open тут работает против него.
+    """
+    skip = req.get("except_types") or req.get("except_type")
+    if isinstance(skip, str):
+        skip = [skip]
+    if not isinstance(skip, (list, tuple)):
+        if skip is None:
+            return []
+        return [f"Требование «{rid}» на этапе {where}: исключение по типу задачи "
+                f"задано не списком — оно не сработает"]
+
+    names = [_one_line(t) for t in skip]
+    unknown = [n for n in names if n and n.lower() not in TASK_TYPES]
+    out = [f"Требование «{rid}» на этапе {where}: типа задачи «{n}» в проекте нет — "
+           f"исключение не сработает ни на одной задаче" for n in unknown]
+
+    known = {n.lower() for n in names if n.lower() in TASK_TYPES}
+    if known and known >= set(TASK_TYPES):
+        out.append(f"Требование «{rid}» на этапе {where} исключено для всех типов "
+                   f"задач: оно не сработает никогда")
     return out
 
 
