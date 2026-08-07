@@ -585,7 +585,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             # напоминает о хвостах задачи, этап говорит о невыполненном на выходе
             "stage_reminders": stage_reminders(pipeline, from_status, pending, task_id),
             # Что потребует новый этап — сказанное на входе, а не в момент отказа
-            "announce": stage_announcement(cfg, pipeline, status, task_file),
+            "announce": stage_announcement(cfg, pipeline, status, task_file, task_id),
             # Смена статуса — единственный момент, когда файл задачи заведомо
             # открывают: заодно показываем, что в нём разъехалось. Сюда же —
             # записи о требованиях, которых механизм не знает: они выглядят
@@ -1408,12 +1408,22 @@ def _requirement_line(req: dict, task_id: str = "") -> str:
     интерпретатора читающий только что набрал сам, номер задачи за него может
     подставить только скрипт.
     """
-    rid = _one_line(req.get("id"))
-    task = f"{task_id} " if task_id else ""
-    how = (f"отметить: {task}--confirm {rid} \"как подтвердили\""
-           if _one_line(req.get("check")) == "confirm"
-           else "сделать и повторить")
+    how = _confirm_hint(req, task_id) or "сделать и повторить"
     return f"{requirement_wording(req)} — {how}"
+
+
+def _confirm_hint(req: dict, task_id: str = "") -> str:
+    """Чем гасится требование-подтверждение — пустая строка для остальных.
+
+    Отметку делает агент за человека, поэтому подсказка нужна там же, где
+    названо требование: слова «проверил, всё ок» приходят в чат, и другого
+    сигнала, что их надо записать, у агента нет. Остальные требования закрывает
+    сама работа, и советовать по ним нечего.
+    """
+    if _one_line(req.get("check")) != "confirm":
+        return ""
+    task = f"{task_id} " if task_id else ""
+    return f"отметить: {task}--confirm {_one_line(req.get('id'))} \"как подтвердили\""
 
 
 def gate_message(task_id: str, pipeline: list[dict], current: str,
@@ -1450,7 +1460,7 @@ def stage_reminders(pipeline: list[dict], current: str, pending: list[dict],
 
 
 def stage_announcement(cfg: dict, pipeline: list[dict], status: str,
-                       task_path=None) -> str:
+                       task_path=None, task_id: str = "") -> str:
     """Что этап потребует на выходе — сказанное при входе в него.
 
     Требование, о котором узнают в момент отказа, выглядит придиркой; то же
@@ -1458,14 +1468,35 @@ def stage_announcement(cfg: dict, pipeline: list[dict], status: str,
 
     Задача известна — требования, к её типу не относящиеся, не называются:
     обещать то, чего не спросят, хуже, чем молчать.
+
+    У требований-подтверждений названо и то, чем они гасятся: человек говорит
+    «проверил» посреди этапа, а не при уходе с него, — на выходе подсказка
+    опоздает.
+
+    Рекомендации каталога называются наравне с объявленными, но своими словами:
+    иначе проект, ничего не объявлявший, узнавал бы имя требования только из
+    напоминания при уходе — то есть уже после момента, — и агенту оставалось бы
+    угадывать его. Угаданное мимо каталога ничего не гасит и оседает мусором.
     """
-    reqs = [r for r in stage_requirements(cfg, pipeline, status) if r.get("mandatory")]
+    reqs = stage_requirements(cfg, pipeline, status)
     if task_path is not None:
         reqs = [r for r in reqs if requirement_applies(r, task_path)]
-    if not reqs:
-        return ""
-    return (f"этап «{_label_of(pipeline, status)}» требует на выходе: "
-            + "; ".join(requirement_wording(r) for r in reqs))
+    parts = []
+    label = _label_of(pipeline, status)
+    for mandatory, what in ((True, "требует на выходе: "), (False, "на выходе ждёт: ")):
+        said = [_announced(r, task_id) for r in reqs
+                if bool(r.get("mandatory")) is mandatory]
+        if said:
+            # Этап называется один раз: во второй части он тот же самый
+            lead = what if parts else f"этап «{label}» {what}"
+            parts.append(lead + "; ".join(said))
+    return ", ".join(parts)
+
+
+def _announced(req: dict, task_id: str) -> str:
+    """Требование в анонсе: формулировка и — у подтверждений — чем гасится."""
+    hint = _confirm_hint(req, task_id)
+    return f"{requirement_wording(req)} — {hint}" if hint else requirement_wording(req)
 
 
 def task_debt(tasks_dir, task_id: str, cfg: dict | None = None) -> dict:

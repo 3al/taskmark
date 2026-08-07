@@ -938,6 +938,54 @@ class ReportingTest(RequirementsTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("проверку подтвердил человек", result.stdout)
 
+    def test_announcement_says_how_to_close_a_confirmation(self) -> None:
+        """Назвать требование мало: надо сказать, чем оно гасится (TASK-143).
+
+        Подтверждение приходит **посреди** этапа — человек говорит «проверил»
+        в чате. Анонс печатается на входе, то есть до этого момента: другого
+        места, где агент вовремя узнает про `--confirm`, нет.
+        """
+        self._requires({"testing": [{"id": "verified", "check": "confirm",
+                                     "ask": "проверку подтвердил человек"}]})
+        self._task(status="development")
+
+        result = self._run("TASK-001", "testing", "--agent", "Тест")
+
+        self.assertIn("--confirm verified", result.stdout)
+        self.assertIn("TASK-001", result.stdout)
+
+    def test_announcement_names_recommendations_too(self) -> None:
+        """Проект без объявленных требований тоже должен узнать имя вовремя.
+
+        У него `verified` звучал ровно один раз — в напоминании при уходе с
+        этапа, то есть после того, как человек уже сказал «проверил». Отметить
+        подтверждение агенту было нечем, кроме угадывания имени, а угаданное
+        мимо каталога не гасит требование и оседает мусором в `confirmed`.
+        """
+        self._requires({})
+        self._task(status="development")
+
+        result = self._run("TASK-001", "testing", "--agent", "Тест")
+
+        self.assertIn("--confirm verified", result.stdout)
+        # Рекомендация не запрещает уход: сказать про неё «требует» — соврать
+        self.assertNotIn("требует", result.stdout)
+
+    def test_announcement_of_a_non_confirmation_stays_short(self) -> None:
+        """«Сделать и повторить» на входе в этап — совет ни о чём.
+
+        Хвост про отметку имеет смысл только у требований-подтверждений:
+        остальные закрываются самой работой, и говорить о них нечего.
+        """
+        self._requires({"testing": [{"id": "commits", "check": "section_filled",
+                                     "name": "История коммитов"}]})
+        self._task(status="development")
+
+        result = self._run("TASK-001", "testing", "--agent", "Тест")
+
+        self.assertIn("История коммитов", result.stdout)
+        self.assertNotIn("повторить", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

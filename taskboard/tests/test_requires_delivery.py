@@ -467,5 +467,38 @@ class SourceTest(unittest.TestCase):
         self.assertIn("requires", LIFECYCLE_KEYS)
 
 
+class ConfirmationRuleTest(unittest.TestCase):
+    """Агент должен знать, чем отмечается подтверждение человека (TASK-143).
+
+    Требование `confirm` означает «подтвердил человек», и человек подтверждает
+    словами в чате. Если агенту негде узнать про `--confirm`, подтверждение
+    остаётся в переписке и умирает вместе с сессией: во frontmatter задачи не
+    появляется ни отметки, ни следа разговора.
+    """
+
+    RULES = (Path(__file__).resolve().parent.parent
+             / "templates" / "agentic" / "rules_section.md")
+
+    def setUp(self) -> None:
+        self.text = self.RULES.read_text(encoding="utf-8")
+
+    def test_rules_name_the_flag(self) -> None:
+        """Правила проекта — единственный канал, который у агента есть всегда.
+
+        Всё остальное он читает по случаю: скилл — если позвали, `--help` — если
+        полез, отказ гейта — уже после момента подтверждения.
+        """
+        # Исходник в сообщение не кладём: провал печатал бы весь файл правил
+        self.assertTrue("--confirm" in self.text,
+                        "правила не говорят, чем отметить подтверждение человека")
+
+    def test_rules_forbid_confirming_for_the_human(self) -> None:
+        """Отметка фиксирует чужое слово, а не заменяет его."""
+        import re
+
+        self.assertTrue(re.search(r"(?s)--confirm.{0,600}не подтверждай", self.text),
+                        "правила не запрещают подтверждать за человека")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
