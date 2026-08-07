@@ -156,6 +156,22 @@ class PredicateVocabularyTest(unittest.TestCase):
                     self.assertTrue(spec.get("param_label"),
                                     "параметр без подписи: человек не поймёт, что вводить")
 
+    def test_confirmation_asks_for_its_wording(self) -> None:
+        """У подтверждения формулировка обязательна: без неё непонятно, что
+        именно человек подтверждает, — сам предикат об этом не говорит."""
+        from backend.requirements import PREDICATES
+
+        self.assertTrue(PREDICATES["confirm"].get("ask_label"))
+
+    def test_section_predicates_need_no_wording(self) -> None:
+        """У секции заголовок и есть человеческий текст: отдельная формулировка
+        к нему — то же самое, написанное дважды."""
+        from backend.requirements import PREDICATES
+
+        for name in ("section_present", "section_filled"):
+            with self.subTest(predicate=name):
+                self.assertIsNone(PREDICATES[name].get("ask_label"))
+
 
 class GateImpactTest(RequiresProject):
     """Цена включения требования видна до сохранения, а не после.

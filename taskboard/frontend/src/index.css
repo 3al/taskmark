@@ -17,6 +17,13 @@ body {
   letter-spacing: 0.01em;
 }
 
+/* Раскрытый список выпадашки рисует система, и фон самого `select` она не
+   наследует — с полупрозрачным он выходит светлым пятном посреди тёмной формы.
+   Задаём опциям цвет явно */
+select option {
+  @apply bg-zinc-900 text-zinc-200;
+}
+
 /* Тонкие скроллбары под тёмную тему */
 *::-webkit-scrollbar { width: 8px; height: 8px; }
 *::-webkit-scrollbar-track { background: transparent; }

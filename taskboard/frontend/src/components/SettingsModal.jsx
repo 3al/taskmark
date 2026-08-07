@@ -192,7 +192,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp }) {
       {/* Высота формы фиксирована, а не подстраивается под вкладку: иначе окно
           прыгает при каждом переключении. Короткие состояния (перезапуск,
           миграции, вопрос про задачи) растягивать незачем — им max-h */}
-      <div className={`bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-3xl overflow-hidden flex flex-col shadow-2xl ${
+      {/* Ширина рассчитана на самую тесную форму — требования этапа: там в строку
+          идут проверка, её параметр, формулировка и служебное имя */}
+      <div className={`bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-4xl overflow-hidden flex flex-col shadow-2xl ${
         serverAction || removals || migrations ? 'max-h-[90vh]' : 'h-[min(90vh,640px)]'
       }`}>
         <div className="px-5 py-4 border-b border-zinc-800 text-lg font-semibold">

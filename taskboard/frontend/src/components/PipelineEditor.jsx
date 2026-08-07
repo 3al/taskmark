@@ -61,7 +61,7 @@ function RequirementForm({ predicates, onAdd }) {
 
   // Поля внутри раскрытой панели темнее её фона: панель светлее строки статуса,
   // и поля на ней должны читаться вложенными, а не сливаться с обычной формой
-  const input = 'bg-zinc-900/70 border border-zinc-600/70 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500'
+  const input = 'bg-zinc-900 border border-zinc-600/70 rounded px-2 py-1 text-xs focus:outline-none focus:border-sky-500'
   return (
     <div className="space-y-1.5">
       <select className={`${input} w-full`} value={check}
@@ -77,9 +77,14 @@ function RequirementForm({ predicates, onAdd }) {
                  placeholder={spec.param_label}
                  onChange={(e) => setName(e.target.value)} />
         )}
-        <input className={`${input} flex-1`} value={ask}
-               placeholder="формулировка для человека"
-               onChange={(e) => setAsk(e.target.value)} />
+        {/* Формулировка — не у всех проверок: у секции её заголовок и есть
+            человеческий текст, и псевдоним к нему был бы тем же самым дважды.
+            Где она нужна, решает словарь предикатов, а не вёрстка */}
+        {spec.ask_label && (
+          <input className={`${input} flex-1`} value={ask}
+                 placeholder={spec.ask_label}
+                 onChange={(e) => setAsk(e.target.value)} />
+        )}
         {/* Единственное место, где человек имеет дело со служебным именем: оно
             попадёт во frontmatter задачи (`confirmed: verified`), и осмысленное
             там читается лучше сгенерированного */}
