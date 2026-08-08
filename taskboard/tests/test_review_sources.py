@@ -86,6 +86,27 @@ class DeployTest(unittest.TestCase):
             with self.subTest(enabled=enabled):
                 self.assertIn("git diff", self._deploy(enabled))
 
+    def test_steps_are_numbered_without_holes(self) -> None:
+        """Вырезанный шаг не должен оставить дыру в нумерации."""
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                steps = [int(ln.split()[2].rstrip("."))
+                         for ln in self._deploy(enabled).splitlines()
+                         if ln.startswith("## Шаг ")]
+                self.assertEqual(steps, list(range(len(steps))))
+
+    def test_enabled_offers_sending_comments_with_moderation(self) -> None:
+        """Отправка в чужой MR — только показ текста и подтверждение человека."""
+        text = self._deploy(True)
+        self.assertIn("Предложить отправку замечаний в MR", text)
+        self.assertIn("после подтверждения человека", text)
+        self.assertIn("merge request", text)
+
+    def test_disabled_hides_sending_step(self) -> None:
+        text = self._deploy(False)
+        self.assertNotIn("Предложить отправку замечаний", text)
+        self.assertNotIn("merge request", text)
+
     def test_saved_setting_survives_reload(self) -> None:
         scaffold_project(self.tasks_dir, self.cfg, {"harnesses": HARNESSES})
         save_project_config(self.tasks_dir, {KEY: True})
