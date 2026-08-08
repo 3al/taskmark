@@ -105,6 +105,17 @@ export function statusStyle(status) {
   return COLOR_STYLE[color] || COLOR_STYLE.zinc
 }
 
+// Статус по его подписи. В файле задачи история переводов записана подписями —
+// их читает человек, — а цвет known только по ключу. Подпись, которой в
+// пайплайне уже нет (статус выключили после того, как задача через него
+// прошла), остаётся текстом без цвета: врать оттенком чужого статуса хуже,
+// чем не красить вовсе
+export function statusStyleByLabel(label) {
+  const norm = String(label || '').trim().toLowerCase()
+  const meta = pipeline.find((s) => String(s.label || '').trim().toLowerCase() === norm)
+  return meta ? COLOR_STYLE[meta.color] || COLOR_STYLE.zinc : null
+}
+
 // Порядок колонок по умолчанию — порядок пайплайна (пользователь может
 // переставить колонки сам, его выбор хранится в localStorage)
 export function defaultColumnOrder() {

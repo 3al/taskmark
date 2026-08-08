@@ -528,6 +528,11 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
                 "error": f"Доска обновлена, но во {task_file.name} нет frontmatter — "
                          f"проставьте status: {status} вручную"}
 
+    # Структуру файла снимаем до собственных записей: строка перевода вернёт
+    # снесённый заголовок секции на место, и посчитанные после неё
+    # предупреждения молчали бы о том, что заголовок вообще сносили
+    structure = check_task_file(task_file)
+
     # Прыжок вперёд законен, но пропущенные шаги стоит видеть в логе
     keys = [s["key"] for s in pipeline]
     prev = next((s["key"] for s in pipeline
@@ -544,6 +549,13 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
 
     # Доехали до конца маршрута — «ждёт» про закрытую задачу больше не правда
     cleared = clear_stall(tasks_dir, task_id) if is_terminal(pipeline, status) else None
+
+    # След перевода — первым: дальше в ту же секцию может лечь строка о снятом
+    # подтверждении, и она объясняет уже случившийся переход. Подпись строки —
+    # источник, а не модель: модель уточняет его в скобках, но и без неё видно,
+    # что переход прошёл через инструмент
+    add_transition(tasks_dir, task_id, _label_of(pipeline, from_status),
+                   _label_of(pipeline, status), agent)
 
     # Возврат назад: этапы правее цели задача пройдёт заново, и подтверждения
     # прошлой итерации к новой не относятся
@@ -594,7 +606,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             # открывают: заодно показываем, что в нём разъехалось. Сюда же —
             # записи о требованиях, которых механизм не знает: они выглядят
             # закрытыми этапами, а не гасят ничего
-            "warnings": check_task_file(task_file) + [
+            "warnings": structure + [
                 f"в полях {CONFIRMED_FIELD}/{WAIVED_FIELD} не опознано: "
                 f"{', '.join(unknown)} — таких требований в маршруте нет, и "
                 f"этап они не закрывают"
@@ -629,6 +641,15 @@ TASK_SECTIONS = ("Описание", RELEASE_SECTION, CHECKLIST_SECTION, "Ист
                  NOTES_SECTION, COMMITS_SECTION)
 
 NOTE_RE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\*\* · [^·]+ · .+$")
+
+# Перевод статуса — та же строка комментария, но в позиции автора стоит
+# источник перехода: «доска» у переноса мышью, «скрипт (Модель)» здесь. Источник
+# — часть факта наравне со статусами: по нему видно, прошёл переход через
+# инструмент или мимо него, а мимо инструмента теряются хвосты задачи.
+# Формула зеркалит `backend/notes.py`: скрипт автономен и пишет сам, но
+# расходиться форматам нельзя — историю читают разбором и рисуют одинаково.
+TRANSITION_TEXT = "{was} → {now}"
+SCRIPT_SOURCE = "скрипт"
 
 
 def _headings(lines: list[str]) -> list[str]:
@@ -795,6 +816,27 @@ def add_note(tasks_dir: Path, task_id: str, text: str,
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"ok": True, "task": task_id, "file": path.name, "note": note,
             "warnings": check_task_file(path)}
+
+
+def add_transition(tasks_dir: Path, task_id: str, was: str, now: str,
+                   agent: str | None = None) -> dict | None:
+    """Записать перевод статуса строкой в «Комментарии».
+
+    Пишется **всегда**, а не только когда на этапе объявлены требования:
+    история переводов обязана быть полной у любого проекта. Возврат назад даёт
+    две строки — сам перевод и снятое подтверждение: это разные факты об одном
+    событии, и склеенные они теряют и полноту, и единый формат.
+
+    None — переводить было нечего: повторный вызов с тем же статусом
+    идемпотентен, и записывать «Testing → Testing» значит засорять хронологию.
+    """
+    was, now = _one_line(was), _one_line(now)
+    if not was or not now or was == now:
+        return None
+    agent = _one_line(agent)
+    source = f"{SCRIPT_SOURCE} ({agent})" if agent else SCRIPT_SOURCE
+    return add_note(tasks_dir, task_id,
+                    TRANSITION_TEXT.format(was=was, now=now), agent=source)
 
 
 def current_status(tasks_dir: Path, task_id: str) -> str | None:

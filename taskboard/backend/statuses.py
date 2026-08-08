@@ -155,6 +155,16 @@ class Pipeline:
         meta = self._by_key.get(key)
         return meta["section"] if meta else None
 
+    def label_of(self, key: str) -> str:
+        """Подпись статуса для человека; неизвестный остаётся собой.
+
+        Ключ без подписи — не ошибка: статус могли выключить из пайплайна уже
+        после того, как задача через него прошла, и в истории он должен
+        сохраниться таким, каким записан.
+        """
+        meta = self._by_key.get(key)
+        return (meta or {}).get("label") or key
+
     def status_for_section(self, title: str) -> str | None:
         """Статус по заголовку раздела доски (регистр и отступы не важны)."""
         needle = (title or "").strip().lower()

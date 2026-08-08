@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.notes import append_note
+from backend.notes import append_note, append_transition
 from backend.requirements import requirement_names, reset_confirmations
 from backend.stall import clear_stall, is_terminal
 from backend.statuses import Pipeline, load_pipeline
@@ -270,6 +270,14 @@ def move_task(
     result = {"ok": True, "task": task_id, "section": to_section, "status": status}
     if touch_status and status:
         set_task_status(tasks_dir, task_id, status)
+        # След перевода — первым: дальше в ту же секцию может лечь строка о
+        # снятом подтверждении, и она объясняет уже случившийся переход.
+        # Починка доски сюда не попадает (touch_status=False): она двигает
+        # строку под файл задачи, статуса не меняя, — переводом это не является
+        moved_path = find_task_file(tasks_dir, task_id)
+        if moved_path is not None:
+            append_transition(moved_path, pipeline.label_of(was_status),
+                              pipeline.label_of(status))
         if reason and pipeline.is_offramp(status):
             path = find_task_file(tasks_dir, task_id)
             if path is not None:

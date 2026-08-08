@@ -5,7 +5,7 @@ import { api } from '../api'
 import { statusLabel, statusStyle } from '../statuses'
 import { TASK_TYPES, taskType } from '../taskTypes'
 import { highlight, rehypeHighlight } from '../highlight'
-import { mdComponents, rehypeNoteMeta } from '../markdown'
+import { mdComponents, rehypeNoteMeta, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
 import CopyButton from './CopyButton'
 import MarkdownEditor from './MarkdownEditor'
@@ -132,7 +132,9 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
   // Плагин пересобираем только при смене запроса: иначе react-markdown
   // перерисовывает всё дерево на каждый рендер модалки
   const rehypePlugins = useMemo(
-    () => (query?.trim() ? [rehypeNoteMeta, rehypeHighlight(query)] : [rehypeNoteMeta]),
+    () => (query?.trim()
+      ? [rehypeNoteMeta, rehypeStatusMove, rehypeHighlight(query)]
+      : [rehypeNoteMeta, rehypeStatusMove]),
     [query],
   )
   // Оттенок шапки модалки в цвет статуса задачи (применится после загрузки)

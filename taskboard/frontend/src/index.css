@@ -97,6 +97,12 @@ select option {
    приглушаем, чтобы взгляд шёл по сути, а не по одинаковым префиксам */
 .md-body .note-meta { @apply text-zinc-500 font-normal; }
 
+/* Перевод статуса в хронологии — событие, а не мысль агента. Отличается формой,
+   а не только текстом: без маркера списка и с отбивкой слева, чтобы взгляд
+   отделял «что случилось» от «что выяснилось», не читая строку */
+.md-body li.status-move { @apply list-none -ml-4 pl-3 border-l-2 border-zinc-700/70; }
+.md-body .status-chip { @apply font-medium; }
+
 /* Совпадения поиска в теле задачи */
 .md-body mark, mark.search-hit { @apply bg-amber-400/30 text-amber-100 rounded px-0.5; }
 
