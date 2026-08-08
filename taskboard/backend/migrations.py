@@ -12,8 +12,9 @@ from pathlib import Path
 
 from backend import config
 from backend.board_parser import parse_board
+from backend.notes import LEGACY_NOTES_SECTION, NOTES_SECTION
 from backend.queue_ops import ensure_section
-from backend.scaffold import sync_rules
+from backend.scaffold import script_capabilities, sync_rules
 from backend.statuses import CATALOG, load_pipeline
 
 
@@ -88,6 +89,45 @@ def retire_artifact_names(tasks_dir: Path) -> list[str]:
     except Exception:
         pass
     return actions
+
+
+def rename_notes_section(tasks_dir: Path, cfg: dict) -> list[str]:
+    """Переименовать секцию «Заметки агента» в «Комментарии» (TASK-131).
+
+    Имя описывало автора, а автор давно не один: в секцию пишет и человек с
+    доски (подтверждение требования, снятие его при возврате). Правильное имя —
+    по содержимому, и оно едет по всем существующим файлам задач разом: два
+    имени, поддерживаемые при чтении, остались бы навсегда.
+
+    **Идти впереди скрипта нельзя.** `set_status.py` живёт в проекте
+    развёрнутой копией и обновляется отдельно, кнопкой: старая копия, не найдя
+    знакомого заголовка, заведёт рядом вторую секцию. Поэтому миграция ждёт
+    копию, которая про новое имя знает (`comments` в её контракте).
+
+    Файл, где уже есть «Комментарии», не трогаем: сливать две секции — правка
+    содержимого, а не имени, и решать это должен человек.
+
+    Возвращает список выполненных действий (пусто — переименовывать нечего).
+    """
+    if not tasks_dir.is_dir() or "comments" not in script_capabilities(tasks_dir, cfg):
+        return []
+
+    heading = re.compile(rf"^{re.escape(LEGACY_NOTES_SECTION)}\s*$", flags=re.MULTILINE)
+    fresh = re.compile(rf"^{re.escape(NOTES_SECTION)}\s*$", flags=re.MULTILINE)
+    count = 0
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        try:
+            content = path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        if fresh.search(content) or not heading.search(content):
+            continue
+        try:
+            path.write_text(heading.sub(NOTES_SECTION, content), encoding="utf-8")
+        except OSError:
+            continue
+        count += 1
+    return [f"Секция «Заметки агента» → «Комментарии»: {count} файлов задач"] if count else []
 
 
 def apply_config_migrations(tasks_dir: Path, old: dict, new: dict,

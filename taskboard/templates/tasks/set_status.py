@@ -22,9 +22,9 @@ Python из Microsoft Store), `python3` (macOS/Linux).
 Номер задачи в справочных режимах можно давать и значением флага
 (`--targets TASK-004`) — обе формы работают.
 
-Заметку агента тоже пишет скрипт: время он берёт из системы (выставить его
+Комментарий тоже пишет скрипт: время он берёт из системы (выставить его
 задним числом «на глаз» нельзя), строку ставит в конец секции, а снесённый
-заголовок «Заметки агента» возвращает на его место в шаблоне:
+заголовок «Комментарии» возвращает на его место в шаблоне:
 
   py tasks/set_status.py TASK-004 --note "корень бага в _apply_role_ui()" --agent "Claude Opus 5"
   py tasks/set_status.py TASK-004 testing --note "готово к проверке" --agent "Claude Opus 5"
@@ -45,7 +45,7 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   --agent TEXT            Кто меняет статус: попадёт в хвост строки доски.
                           Без него сохраняется прежний исполнитель, дата обновляется.
                           При --note — своя модель, обязательна
-  --note ТЕКСТ            Заметка агента: время системное, строка — в конец секции
+  --note ТЕКСТ            Комментарий: время системное, строка — в конец секции
   --position start|end    Куда вставить в целевом разделе (по умолчанию start)
   --block TASK-NNN        Задача ждёт другую (правит blocked_by и blocks у обеих)
   --unblock [TASK-NNN]    Снять блокировку; без значения — все
@@ -83,7 +83,7 @@ def _utf8_console() -> None:
 # объявлена, скрипт про неё не знает, а человек уверен, что она работает.
 # Имена, а не номер версии, — как CAPABILITIES в backend/app.py: набор
 # расширяется, не заводя таблицы соответствия версий возможностям.
-SCRIPT_CAPABILITIES = {"stall", "task_types", "requires"}
+SCRIPT_CAPABILITIES = {"stall", "task_types", "requires", "comments"}
 
 # Дефолты дублируют backend/config.py: скрипт автономен и работает
 # без запущенного сервера, в том числе в проектах без установленного taskboard
@@ -553,7 +553,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             and keys_all.index(status) < keys_all.index(from_status)):
         unconfirmed = reset_confirmations(task_file, cfg, pipeline, status)
         if unconfirmed:
-            # Строкой в заметки, а не только в консоль: снятие объясняет, почему
+            # Строкой в комментарии, а не только в консоль: снятие объясняет, почему
             # то же самое подтверждали дважды. Без него история показывает два
             # подтверждения подряд без причины между ними.
             # Имя — своё, если передано; иначе событие подписывает сам скрипт:
@@ -602,12 +602,18 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
                 if unknown]}
 
 
-# --- Заметки агента и структура файла задачи --------------------------------
-# Заметку пишет скрипт, а не агент руками: время он берёт из системы, поэтому
-# выставить его «на глаз» задним числом нельзя, а строка всегда встаёт в конец
-# секции — так лог остаётся хронологией, а не набором строк в случайном порядке.
+# --- Комментарии и структура файла задачи -----------------------------------
+# Комментарий пишет скрипт, а не агент руками: время он берёт из системы,
+# поэтому выставить его «на глаз» задним числом нельзя, а строка всегда встаёт
+# в конец секции — так лог остаётся хронологией, а не набором строк в случайном
+# порядке.
 
-NOTES_SECTION = "Заметки агента"
+NOTES_SECTION = "Комментарии"
+# Прежнее имя секции: она называлась по автору, а пишет туда давно не только
+# агент (подтверждения с доски). Файлы задач переименовывает разовая миграция
+# инструмента; здесь имя нужно, чтобы не заводить вторую секцию и не ругаться
+# на файл, до которого миграция не дошла, — заголовок чинится на месте
+LEGACY_NOTES_SECTION = "Заметки агента"
 COMMITS_SECTION = "История коммитов"
 CHECKLIST_SECTION = "Чеклист"
 
@@ -635,11 +641,32 @@ def _headings(lines: list[str]) -> list[str]:
     return out
 
 
+def _rename_legacy_notes(lines: list[str]) -> list[str]:
+    """Привести прежний заголовок секции комментариев к нынешнему имени.
+
+    Секцию переименовала разовая миграция инструмента, но файл мог до неё не
+    дойти (проект без запущенного taskboard, отдельная копия задачи). Чинить
+    молча можно только заголовок, которого в файле ещё нет: если рядом уже
+    стоит «Комментарии», два заголовка сливать нельзя — это правка содержимого,
+    а не имени, и её должен увидеть человек.
+    """
+    heads = [h.lower() for h in _headings(lines)]
+    if NOTES_SECTION.lower() in heads or LEGACY_NOTES_SECTION.lower() not in heads:
+        return lines
+    out = []
+    for line in lines:
+        m = re.match(r"^##\s+(.*)$", line)
+        if m and m.group(1).strip().lower() == LEGACY_NOTES_SECTION.lower():
+            line = f"## {NOTES_SECTION}"
+        out.append(line)
+    return out
+
+
 def check_task_file(path: Path) -> list[str]:
     """Что разъехалось в файле задачи: секции, их порядок, хронология заметок.
 
     Не запрет, а видимость: файл правят руками, и нарушения копятся молча —
-    снесённый заголовок секции, «История коммитов» посреди файла, заметки
+    снесённый заголовок секции, «История коммитов» посреди файла, комментарии
     вразнобой. Проверка идёт при каждой смене статуса, поэтому агент видит
     список сразу, а не через пять задач.
     """
@@ -647,6 +674,9 @@ def check_task_file(path: Path) -> list[str]:
         lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
     except OSError:
         return []
+    # Прежнее имя секции — не нарушение структуры, а неприехавшая миграция:
+    # ругаться на неё значит выдать агенту предупреждение за чужую работу
+    lines = _rename_legacy_notes(lines)
 
     warnings: list[str] = []
     heads = _headings(lines)
@@ -694,23 +724,23 @@ def check_task_file(path: Path) -> list[str]:
             if m:
                 stamps.append(m.group(1))
             elif line.startswith("- "):
-                # Ругаемся только на попытку записать заметку: свободный текст
+                # Ругаемся только на попытку записать комментарий: свободный текст
                 # старых задач (формат до перехода на строки списка) не наше дело
                 malformed += 1
         if malformed:
-            warnings.append(f"строк не в формате заметки: {malformed} "
+            warnings.append(f"строк не в формате комментария: {malformed} "
                             f"(нужно `- **ГГГГ-ММ-ДД ЧЧ:ММ** · Модель · суть`)")
         for prev, cur in zip(stamps, stamps[1:]):
             if cur < prev:
-                warnings.append(f"заметки не в хронологии: {cur} после {prev} — "
-                                f"новая заметка пишется в конец секции (--note)")
+                warnings.append(f"комментарии не в хронологии: {cur} после {prev} — "
+                                f"новый комментарий пишется в конец секции (--note)")
                 break
 
     return warnings
 
 
 def _insert_notes_section(lines: list[str]) -> list[str]:
-    """Вернуть снесённую секцию заметок на её место — перед историей коммитов."""
+    """Вернуть снесённую секцию комментариев на её место — перед историей коммитов."""
     block = [f"## {NOTES_SECTION}", ""]
     for i, line in enumerate(lines):
         m = re.match(r"^##\s+(.*)$", line)
@@ -723,7 +753,7 @@ def _insert_notes_section(lines: list[str]) -> list[str]:
 
 def add_note(tasks_dir: Path, task_id: str, text: str,
              agent: str | None = None) -> dict:
-    """Дописать заметку агента в конец секции «Заметки агента».
+    """Дописать комментарий в конец секции «Комментарии».
 
     agent обязателен: модель — единственное, чего скрипт про агента не знает,
     а копирование её из соседней строки как раз и делает историю ложной.
@@ -735,17 +765,17 @@ def add_note(tasks_dir: Path, task_id: str, text: str,
 
     text = _one_line(text)
     if not text:
-        return {"ok": False, "error": "Пустая заметка: нужен текст — --note \"суть\""}
+        return {"ok": False, "error": "Пустой комментарий: нужен текст — --note \"суть\""}
 
     agent = _one_line(agent)
     if not agent:
         return {"ok": False,
                 "error": "Не указана модель: добавьте --agent \"Модель\". Имя берётся "
-                         "из текущей сессии, а не из соседней строки заметок"}
+                         "из текущей сессии, а не из соседней строки комментариев"}
 
     note = f"- **{datetime.now().strftime('%Y-%m-%d %H:%M')}** · {agent} · {text}"
 
-    lines = path.read_text(encoding="utf-8").splitlines()
+    lines = _rename_legacy_notes(path.read_text(encoding="utf-8").splitlines())
     if _section_bounds(lines, NOTES_SECTION) is None:
         lines = _insert_notes_section(lines)
     start, end = _section_bounds(lines, NOTES_SECTION) or (0, 0)
@@ -1147,7 +1177,7 @@ def requirement_text(req: dict) -> str:
     """Голая формулировка требования, как её написал человек в конфиге.
 
     По смыслу это утверждение о выполненном («проверку подтвердил человек»),
-    поэтому в заметках она стоит сама по себе, без служебного префикса.
+    поэтому в комментариях она стоит сама по себе, без служебного префикса.
     """
     return _one_line(req.get("ask") or req.get("name") or req.get("id"))
 
@@ -1441,7 +1471,7 @@ def gate_message(task_id: str, pipeline: list[dict], current: str,
               f"[{r.get('stage_label') or r.get('stage')}]"
               for r in blocked]
     lines.append(f"Пропустить намеренно: {task_id} --waive <id> --reason \"почему\" "
-                 "(останется строкой в заметках агента)")
+                 "(останется строкой в комментариях)")
     return "\n".join(lines)
 
 
@@ -1525,10 +1555,10 @@ def task_debt(tasks_dir, task_id: str, cfg: dict | None = None) -> dict:
 
 def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
                       text: str, agent: str | None, what: str | None) -> dict:
-    """Записать факт (подтверждение или списание) и оставить строку в заметках.
+    """Записать факт (подтверждение или списание) и оставить строку в комментариях.
 
     Во frontmatter идёт только идентификатор — плоским списком, как `blocked_by`.
-    Человеческая причина живёт в «Заметках агента» со временем из системы: она
+    Человеческая причина живёт в «Комментариях» со временем из системы: она
     нужна тому, кто придёт к задаче позже, а не механизму.
     """
     tasks_dir = Path(tasks_dir)
@@ -1545,12 +1575,12 @@ def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
                          f"остаётся в файле для того, кто придёт позже"}
 
     # Повтор ничего не меняет — и писать о нём нечего: событие было одно, а
-    # вторая одинаковая строка засоряет хронологию, ради которой заметки и ведут
+    # вторая одинаковая строка засоряет хронологию, ради которой комментарии и ведут
     ids = parse_req_ids(_read_meta(path).get(field))
     if req_id.lower() in [i.lower() for i in ids]:
         return {"ok": True, "task": task_id, "id": req_id, "already": True, "note": ""}
 
-    # В строке — формулировка требования, а не его идентификатор: заметки
+    # В строке — формулировка требования, а не его идентификатор: комментарии
     # читает человек, и служебное имя ему ничего не говорит. Для подтверждения
     # префикса нет вовсе — формулировка сама им является («проверку подтвердил
     # человек»), и «подтверждено: проверку подтвердил человек» было тавтологией
@@ -1865,13 +1895,13 @@ def main() -> None:
                         default=None,
                         help="Отметить требование выполненным (нужен --agent)")
     parser.add_argument("--waive", metavar="ID", default=None,
-                        help="Списать требование: нужен --reason, след — в заметках")
+                        help="Списать требование: нужен --reason, след — в комментариях")
     parser.add_argument("--unwaive", metavar="ID", nargs="?", const="", default=None,
                         help="Снять списание (без значения — все)")
     parser.add_argument("--unconfirm", metavar="ID", nargs="?", const="", default=None,
                         help="Снять подтверждение, не двигая задачу (без значения — все)")
     parser.add_argument("--note", metavar="ТЕКСТ", default=None,
-                        help="Дописать заметку агента (время — системное, строка — в конец)")
+                        help="Дописать комментарий (время — системное, строка — в конец)")
     parser.add_argument("--agent", default=None,
                         help="Кто меняет статус (попадёт в строку доски); при --note — модель")
     parser.add_argument("--position", choices=["start", "end"], default="start",
@@ -2002,7 +2032,7 @@ def main() -> None:
         if not args.status and args.note is None:
             return
 
-    # Заметка сама по себе статус не трогает. Но вместе со сменой статуса она
+    # Комментарий сам по себе статус не трогает. Но вместе со сменой статуса он
     # описывает **её** («переведена в …»), поэтому пишется только после того, как
     # переход состоялся: при отказе гейта строка оставалась в файле, и история
     # задачи начинала врать о событии, которого не было
@@ -2013,7 +2043,7 @@ def main() -> None:
         if not result.get("ok"):
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
-        print(f"[OK] {result['task']}: заметка записана в «{NOTES_SECTION}»")
+        print(f"[OK] {result['task']}: комментарий записан в «{NOTES_SECTION}»")
         print(result["note"])
         for warning in result.get("warnings", []):
             print(f"[!] {warning}")
@@ -2033,11 +2063,11 @@ def main() -> None:
 
     print(f"[OK] {result['task']} → {result['status']} (раздел «{result['section']}»)")
 
-    # Переход состоялся — теперь можно записать заметку о нём
+    # Переход состоялся — теперь можно записать комментарий о нём
     if args.note is not None:
         note = add_note(tasks_dir, args.task_id, args.note, agent=args.agent)
         if note.get("ok"):
-            print(f"[OK] {note['task']}: заметка записана в «{NOTES_SECTION}»")
+            print(f"[OK] {note['task']}: комментарий записан в «{NOTES_SECTION}»")
             print(note["note"])
         else:
             print(f"[ERROR] {note.get('error')}", file=sys.stderr)

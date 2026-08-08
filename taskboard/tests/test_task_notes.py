@@ -1,4 +1,4 @@
-"""Заметки агента: запись скриптом и проверка структуры файла (TASK-067).
+"""Комментарии: запись скриптом и проверка структуры файла (TASK-067).
 
 Текстовый слой правил про заметки существует с TASK-007 (формат строки, время
 из системы, «модель — своя») и всё равно нарушается: агент дописывает несколько
@@ -69,8 +69,8 @@ class NotesFixture(unittest.TestCase):
         return path
 
     def _notes(self, path: Path) -> list[str]:
-        """Строки секции «Заметки агента»."""
-        body = path.read_text(encoding="utf-8").split("## Заметки агента", 1)[-1]
+        """Строки секции «Комментарии»."""
+        body = path.read_text(encoding="utf-8").split("## Комментарии", 1)[-1]
         body = body.split("\n## ", 1)[0]
         return [ln for ln in body.splitlines() if ln.strip()]
 
@@ -131,14 +131,14 @@ class AddNoteTest(NotesFixture):
 
     def test_missing_section_restored_before_commits(self) -> None:
         """Снесённый заголовок восстанавливается на своём месте, а не в конце файла."""
-        body = task_from_template("TASK-001", "Тестовая").replace("## Заметки агента\n\n", "")
+        body = task_from_template("TASK-001", "Тестовая").replace("## Комментарии\n\n", "")
         path = self._task(body=body)
         result = self.mod.add_note(self.tasks, "TASK-001", "секцию снесли", agent="Claude Opus 5")
         self.assertTrue(result.get("ok"), result.get("error"))
 
         text = path.read_text(encoding="utf-8")
-        self.assertIn("## Заметки агента", text, "секция не восстановлена")
-        self.assertLess(text.index("## Заметки агента"), text.index("## История коммитов"),
+        self.assertIn("## Комментарии", text, "секция не восстановлена")
+        self.assertLess(text.index("## Комментарии"), text.index("## История коммитов"),
                         "секция восстановлена не на своём месте")
         self.assertEqual(len(self._notes(path)), 1)
 
@@ -163,8 +163,8 @@ class TaskFileCheckTest(NotesFixture):
 
     def test_out_of_order_notes_reported(self) -> None:
         body = task_from_template("TASK-001", "Тестовая").replace(
-            "## Заметки агента\n",
-            "## Заметки агента\n\n"
+            "## Комментарии\n",
+            "## Комментарии\n\n"
             "- **2026-07-30 02:25** · k3 · поздняя\n"
             "- **2026-07-30 02:18** · k3 · ранняя\n")
         self._task(body=body)
@@ -173,16 +173,16 @@ class TaskFileCheckTest(NotesFixture):
                         f"нарушенный порядок заметок не замечен: {warnings}")
 
     def test_missing_section_reported(self) -> None:
-        body = task_from_template("TASK-001", "Тестовая").replace("## Заметки агента\n\n", "")
+        body = task_from_template("TASK-001", "Тестовая").replace("## Комментарии\n\n", "")
         self._task(body=body)
         warnings = self.mod.check_task_file(self.tasks / "TASK-001-test.md")
-        self.assertTrue(any("Заметки агента" in w for w in warnings),
+        self.assertTrue(any("Комментарии" in w for w in warnings),
                         f"пропажа секции не замечена: {warnings}")
 
     def test_commits_not_last_reported(self) -> None:
         body = task_from_template("TASK-001", "Тестовая").replace(
-            "## Заметки агента\n\n## История коммитов\n",
-            "## История коммитов\n\n## Заметки агента\n")
+            "## Комментарии\n\n## История коммитов\n",
+            "## История коммитов\n\n## Комментарии\n")
         self._task(body=body)
         warnings = self.mod.check_task_file(self.tasks / "TASK-001-test.md")
         self.assertTrue(any("История коммитов" in w for w in warnings),
@@ -191,8 +191,8 @@ class TaskFileCheckTest(NotesFixture):
     def test_note_without_format_reported(self) -> None:
         """Заметка без времени или без модели — ровно то, что чинит --note."""
         body = task_from_template("TASK-001", "Тестовая").replace(
-            "## Заметки агента\n",
-            "## Заметки агента\n\n- k3: 2026-07-30: без времени и разделителей\n")
+            "## Комментарии\n",
+            "## Комментарии\n\n- k3: 2026-07-30: без времени и разделителей\n")
         self._task(body=body)
         warnings = self.mod.check_task_file(self.tasks / "TASK-001-test.md")
         self.assertTrue(any("формат" in w.lower() for w in warnings),
@@ -214,8 +214,8 @@ class TaskFileCheckTest(NotesFixture):
         чего агент не делал, обесценивает предупреждение о том, что он сломал.
         """
         body = task_from_template("TASK-001", "Тестовая").replace(
-            "## Заметки агента\n\n## История коммитов\n",
-            "## Заметки агента\n\n"
+            "## Комментарии\n\n## История коммитов\n",
+            "## Комментарии\n\n"
             "<!-- Компактно. Макс ~15 строк.\n"
             "     Формат: АГЕНТ (модель): ДАТА ВРЕМЯ: суть -->\n\n"
             "k3: 2026-07-26: старый формат заметки до перехода на строки списка\n")
@@ -223,7 +223,7 @@ class TaskFileCheckTest(NotesFixture):
         self.assertEqual(self.mod.check_task_file(self.tasks / "TASK-001-test.md"), [])
 
     def test_set_status_returns_warnings(self) -> None:
-        body = task_from_template("TASK-001", "Тестовая").replace("## Заметки агента\n\n", "")
+        body = task_from_template("TASK-001", "Тестовая").replace("## Комментарии\n\n", "")
         self._task(body=body)
         result = self.mod.set_status(self.tasks, "TASK-001", "development")
         self.assertTrue(result.get("ok"), result.get("error"))
@@ -250,7 +250,7 @@ class NoteCliTest(NotesFixture):
         self.assertNotEqual(result.returncode, 0, "CLI записал заметку без модели")
 
     def test_cli_prints_warnings_on_status_change(self) -> None:
-        body = task_from_template("TASK-001", "Тестовая").replace("## Заметки агента\n\n", "")
+        body = task_from_template("TASK-001", "Тестовая").replace("## Комментарии\n\n", "")
         self._task(body=body)
         result = self._run("TASK-001", "development")
         self.assertEqual(result.returncode, 0, result.stderr)

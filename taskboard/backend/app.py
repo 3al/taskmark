@@ -26,7 +26,8 @@ from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
 from backend.create_task_runner import create_task
 from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import (apply_config_migrations, migrate_global_config,
-                                pipeline_removals, retire_artifact_names)
+                                pipeline_removals, rename_notes_section,
+                                retire_artifact_names)
 from backend.pipeline_sources import list_sources
 from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
                                   apply_preset_exceptions, confirm_requirements,
@@ -868,6 +869,9 @@ def api_scaffold(body: ScaffoldIn | None = None) -> dict:
             "harnesses": {h: bool(harnesses.get(h)) for h in HARNESSES},
             "vault": bool(options.get("vault"))})
     result = scaffold_project(tasks_dir, cfg, options)
+    # Скрипт проекта только что обновился — теперь он знает про «Комментарии»,
+    # и файлы задач можно переименовать вслед за ним, не дожидаясь рестарта
+    rename_notes_section(tasks_dir, cfg)
     watcher.watch(tasks_dir)
     return {"ok": True, **result}
 
@@ -971,9 +975,14 @@ def _startup() -> None:
     # у кого они переименованы, возвращаем к именам поставки. Проходим по
     # всем проектам реестра, а не только по активному, — иначе миграция
     # ждала бы переключения на проект, где скиллы уже сломаны
+    # …и там же секция «Заметки агента» переезжает в «Комментарии» (TASK-131):
+    # имя описывало автора, а пишет туда и человек с доски. Проход идёт только
+    # по проектам, где развёрнутый set_status.py про новое имя уже знает
     for proj in registry.list_projects().get("projects", []):
+        tasks_dir = Path(proj["tasks_dir"])
         try:
-            retire_artifact_names(Path(proj["tasks_dir"]))
+            retire_artifact_names(tasks_dir)
+            rename_notes_section(tasks_dir, load_project_config(tasks_dir))
         except Exception:
             pass
     # Проверка обновлений — фоном и только при согласии (update_check: auto).
