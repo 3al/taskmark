@@ -58,7 +58,8 @@ class SettingsSurviveTest(unittest.TestCase):
     def test_all_controls_are_present(self) -> None:
         src = source()
         for key in ("dnd_full_board", "port", "card_title_size", "card_title_lines",
-                    "card_meta_size", "harnesses", "vault", "release_script"):
+                    "card_meta_size", "harnesses", "vault", "review_sources",
+                    "release_script"):
             self.assertIn(key, src, f"настройка {key} пропала из формы")
 
     def test_pipeline_editor_is_still_mounted(self) -> None:
@@ -74,7 +75,7 @@ class SettingsSurviveTest(unittest.TestCase):
         src = source()
         payload = src[src.index("const updates = ()"):src.index("const check")]
         for key in ("port", "dnd_full_board", "release_script", "harnesses",
-                    "vault", "pipeline", "actions"):
+                    "vault", "review_sources", "pipeline", "actions"):
             self.assertIn(key, payload, f"{key} не уходит в сохранение")
 
 

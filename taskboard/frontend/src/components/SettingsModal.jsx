@@ -130,6 +130,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
+    review_sources: !!config.review_sources,
     ...(pipeline ? {
       pipeline: pipeline.pipeline.map((s) => s.key),
       actions: pipeline.actions,
@@ -459,6 +460,23 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     <div className="text-[11px] text-zinc-500">
                       vault/ — внешняя память проекта: скилл write-vault, шаблоны заметок,
                       блоки про волт в скиллах и правилах
+                    </div>
+                  </span>
+                </label>
+                {/* Ходить ли агенту в чужой форж — решение человека: наличие
+                    MCP-инструмента об этом не говорит */}
+                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2">
+                  <input
+                    type="checkbox"
+                    checked={!!config.review_sources}
+                    onChange={(e) => set('review_sources', e.target.checked)}
+                    className="mt-0.5 accent-sky-500"
+                  />
+                  <span>
+                    Внешние источники ревью
+                    <div className="text-[11px] text-zinc-500">
+                      скилл review-task берёт предмет из merge request через
+                      MCP-инструменты окружения; выключено — этих шагов в скилле нет
                     </div>
                   </span>
                 </label>

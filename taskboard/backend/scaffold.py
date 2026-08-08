@@ -31,6 +31,9 @@ VAULT_TEMPLATES = TEMPLATES_DIR / "vault"
 #   skills — скиллы, поставляемые только вместе с возможностью
 OPTIONAL_BLOCKS = (
     {"key": "vault", "marker": "vault", "skills": ("write-vault",)},
+    # Внешние источники ревью: свой скилл им не нужен — это шаги внутри
+    # review-task, которых у выключившего возможность просто нет
+    {"key": "review_sources", "marker": "review_sources", "skills": ()},
 )
 
 # Папка волта фиксирована: скиллы и правила ссылаются на `vault/` десятками
