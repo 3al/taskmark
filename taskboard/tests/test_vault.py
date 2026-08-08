@@ -21,8 +21,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import DEFAULTS  # noqa: E402
-from backend.scaffold import (SKILLS_TEMPLATES, VAULT_SKILLS, environment_issues,  # noqa: E402
-                              render_rules, scaffold_project)
+from backend.scaffold import (SKILLS_TEMPLATES, environment_issues,  # noqa: E402
+                              feature_skills, render_rules, scaffold_project)
 from backend.validator import validate_project  # noqa: E402
 
 BOTH = {"claude": True, "opencode": True}
@@ -55,7 +55,7 @@ class VaultTest(unittest.TestCase):
     def test_write_vault_is_shipped(self) -> None:
         """Скилл есть в шаблонах: без него волт-блоки ссылаются в пустоту."""
         self.assertTrue((SKILLS_TEMPLATES / "write-vault" / "SKILL.md").is_file())
-        self.assertIn("write-vault", VAULT_SKILLS)
+        self.assertIn("write-vault", feature_skills("vault"))
 
     def test_vault_skill_deployed_with_vault(self) -> None:
         self._deploy(vault=True)

@@ -19,13 +19,19 @@ SKILLS_TEMPLATES = AGENTIC_TEMPLATES / ".claude" / "skills"
 COMMANDS_TEMPLATES = AGENTIC_TEMPLATES / ".opencode" / "commands"
 VAULT_TEMPLATES = TEMPLATES_DIR / "vault"
 
-# Маркеры волт-блоков в шаблонах скиллов и правил: при vault=False вырезаются целиком
-VAULT_START = "<!-- vault -->"
-VAULT_END = "<!-- /vault -->"
-
-# Инструменты, которые нужны только волту: без него это лишние файлы, на
-# которые к тому же никто не ссылается (волт-блоки соседних скиллов вырезаны)
-VAULT_SKILLS = ("write-vault",)
+# Опциональные блоки шаблонов: возможность проекта → что исчезает из поставки,
+# когда она выключена. Реестр, а не пара констант: заказчик у механизма не один
+# (волт, дальше — внешние источники ревью), и вторая зашитая пара развела бы
+# вырезание по копиям. Выключенная возможность агенту не видна вовсе: блок
+# `<!-- marker -->…<!-- /marker -->` уходит вместе с маркерами, а её скиллы не
+# разворачиваются — иначе это инструмент к тому, чего в проекте нет, на который
+# к тому же никто не ссылается (блоки соседних скиллов вырезаны).
+#   key    — ключ возможности в конфиге проекта
+#   marker — имя маркера в шаблонах скиллов и правил
+#   skills — скиллы, поставляемые только вместе с возможностью
+OPTIONAL_BLOCKS = (
+    {"key": "vault", "marker": "vault", "skills": ("write-vault",)},
+)
 
 # Папка волта фиксирована: скиллы и правила ссылаются на `vault/` десятками
 # упоминаний в тексте — подстановка имени в каждое усложнила бы шаблоны ради
@@ -88,21 +94,60 @@ HARNESS_RULES_FILE = {"claude": "CLAUDE.md", "opencode": "AGENTS.md"}
 _RULES_OPTION = {"CLAUDE.md": "rules_claude", "AGENTS.md": "rules_agents"}
 
 
-def _strip_vault_blocks(text: str) -> str:
-    """Вырезать блоки <!-- vault --> ... <!-- /vault --> вместе с маркерами.
+def _block_markers(marker: str) -> tuple[str, str]:
+    """Открывающий и закрывающий маркер опционального блока в шаблоне."""
+    return f"<!-- {marker} -->", f"<!-- /{marker} -->"
 
-    Если внутри вырезанного блока был заголовок «## Шаг N» — перенумеровать
-    последующие шаги и ссылки на них («шаг 6-7» → «шаг 5-6»).
+
+def feature_skills(key: str) -> tuple[str, ...]:
+    """Скиллы, поставляемые только вместе с возможностью (пусто — таких нет)."""
+    for spec in OPTIONAL_BLOCKS:
+        if spec["key"] == key:
+            return spec["skills"]
+    return ()
+
+
+def _skipped_skills(features: set[str]) -> set[str]:
+    """Скиллы всех выключенных возможностей — их в проект не разворачиваем."""
+    return {name for spec in OPTIONAL_BLOCKS if spec["key"] not in features
+            for name in spec["skills"]}
+
+
+def _enabled_features(values: dict | None) -> set[str]:
+    """Возможности, включённые в переданном наборе.
+
+    Набор — конфиг проекта или опции развёртывания: ключи в них одни и те же,
+    а спрашивают у них одно и то же — какие блоки шаблонов остаются.
     """
+    values = values if isinstance(values, dict) else {}
+    return {spec["key"] for spec in OPTIONAL_BLOCKS if values.get(spec["key"])}
+
+
+def strip_optional_blocks(text: str, features) -> str:
+    """Вырезать блоки выключенных возможностей вместе с маркерами.
+
+    features — включённые возможности; их блоки остаются как есть, вместе с
+    маркерами: по ним же режим проекта опознаётся по файлам.
+    Если внутри вырезанного блока был заголовок «## Шаг N» — перенумеровать
+    последующие шаги и ссылки на них («шаг 6-7» → «шаг 5-6»). Перенумерация
+    одна на проход, сколько бы блоков ни сняли.
+    """
+    enabled = set(features)
+    cut = {spec["marker"] for spec in OPTIONAL_BLOCKS if spec["key"] not in enabled}
+    if not cut:
+        return text
+    starts = {_block_markers(m)[0] for m in cut}
+    ends = {_block_markers(m)[1] for m in cut}
+
     out: list[str] = []
     skip = False
     removed_steps: list[int] = []
     for line in text.splitlines():
         marker = line.strip()
-        if marker == VAULT_START:
+        if not skip and marker in starts:
             skip = True
             continue
-        if marker == VAULT_END:
+        if skip and marker in ends:
             skip = False
             continue
         if skip:
@@ -111,30 +156,34 @@ def _strip_vault_blocks(text: str) -> str:
                 removed_steps.append(int(m.group(1)))
             continue
         out.append(line)
-    result = "\n".join(out)
 
-    # Перенумерация: каждый вырезанный шаг сдвигает большие номера на -1
-    for n in sorted(removed_steps):
-        result = re.sub(
-            r"(шаг\w*\s+)(\d+)(?:-(\d+))?",
-            lambda m: _decrement_step_ref(m, n),
-            result,
-            flags=re.IGNORECASE,
-        )
+    result = _renumber_steps("\n".join(out), removed_steps)
 
     # Схлопнуть серии пустых строк, оставшиеся после вырезки
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result.rstrip("\n") + "\n"
 
 
-def _decrement_step_ref(m: re.Match, removed: int) -> str:
-    """Уменьшить номер шага (и конец диапазона) на 1, если он больше вырезанного."""
-    num = int(m.group(2))
-    head = m.group(1) + (str(num - 1) if num > removed else str(num))
-    if m.group(3):
-        tail = int(m.group(3))
-        head += "-" + (str(tail - 1) if tail > removed else str(tail))
-    return head
+def _renumber_steps(text: str, removed: list[int]) -> str:
+    """Сдвинуть номера шагов и ссылки на них на число вырезанных шагов перед ними.
+
+    Считается за один проход по всем вырезанным блокам: сдвиг «на -1» на
+    каждый блок по очереди применялся к уже сдвинутым номерам, и при двух
+    вырезанных шагах нумерация оставалась с дырой.
+    """
+    if not removed:
+        return text
+
+    def shift(num: int) -> str:
+        return str(num - sum(1 for r in removed if r < num))
+
+    def replace(m: re.Match) -> str:
+        head = m.group(1) + shift(int(m.group(2)))
+        if m.group(3):
+            head += "-" + shift(int(m.group(3)))
+        return head
+
+    return re.sub(r"(шаг\w*\s+)(\d+)(?:-(\d+))?", replace, text, flags=re.IGNORECASE)
 
 
 def _copy_file(src: Path, dst: Path) -> bool:
@@ -179,11 +228,10 @@ def render_rules(cfg: dict) -> str:
     if offramps:
         line += "  (+ вне маршрута: " + ", ".join(s["key"] for s in offramps) + ")"
 
-    # Про волт в правилах пишем только тем, у кого он есть: иначе агент читает
-    # инструкцию к хранилищу, которого в проекте нет
+    # Про выключенную возможность в правилах не пишем: иначе агент читает
+    # инструкцию к тому, чего в проекте нет
     template = (AGENTIC_TEMPLATES / "rules_section.md").read_text(encoding="utf-8")
-    if not cfg.get("vault"):
-        template = _strip_vault_blocks(template)
+    template = strip_optional_blocks(template, _enabled_features(cfg))
 
     return template.format(
         pipeline_line=line,
@@ -289,7 +337,10 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
 
     opt_skills = options.get("skills", any(active.values()))
     opt_commands = options.get("commands", active["opencode"])
-    opt_vault = options.get("vault", False)
+    # Какие опциональные блоки остаются в текстах — решает пользователь здесь и
+    # сейчас (чекбоксы развёртывания), а не состояние проекта на диске
+    opt_features = _enabled_features(options)
+    opt_vault = "vault" in opt_features
     parts = options.get("parts")
 
     created: list[str] = []
@@ -392,8 +443,10 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
                     # Команды нужны только opencode: у остальных их не бывает
                     if agentic == "commands" and not active["opencode"]:
                         continue
-                    c, r, s, d = refresh_agentic(project_root, agentic, vault=True, cfg=cfg,
-                                                 names=list(VAULT_SKILLS), overwrite=False)
+                    c, r, s, d = refresh_agentic(
+                        project_root, agentic, cfg=cfg, overwrite=False,
+                        features=project_features(project_root, cfg) | {"vault"},
+                        names=list(feature_skills("vault")))
                     created += c
                     replaced += r
                     diverged += d
@@ -424,9 +477,10 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     # --- Агентское окружение (в корне проекта) ---
 
     if opt_skills:
-        # Режим волта здесь задаёт пользователь чекбоксом, а не текущее состояние проекта
-        c, r, s, d = refresh_agentic(project_root, "skills", vault=opt_vault, cfg=cfg,
-                                     overwrite=overwrite)
+        # Состав блоков здесь задаёт пользователь чекбоксами, а не текущее
+        # состояние проекта
+        c, r, s, d = refresh_agentic(project_root, "skills", features=opt_features,
+                                     cfg=cfg, overwrite=overwrite)
         created += c
         replaced += r
         skipped += s
@@ -452,7 +506,7 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         diverged += d
 
     if opt_commands:
-        c, r, s, d = refresh_agentic(project_root, "commands", vault=opt_vault,
+        c, r, s, d = refresh_agentic(project_root, "commands", features=opt_features,
                                      overwrite=overwrite)
         created += c
         replaced += r
@@ -621,44 +675,47 @@ def _same_content(current: str | None, expected: str) -> bool:
     return current is not None and current.splitlines() == expected.splitlines()
 
 
-def _skill_targets(project_root: Path, vault: bool | None = None,
+def _skill_targets(project_root: Path, features: set[str] | None = None,
                    cfg: dict | None = None) -> list[tuple[str, Path, str]]:
     """(имя, путь развёрнутого файла, эталонный текст) для каждого скилла шаблона.
 
     Перечисляем только скиллы шаблонов: чужие файлы рядом (собственные скиллы
     пользователя) в целевой список не попадают и не трогаются.
-    Эталон выбирается по режиму волта: явный (выбор пользователя при
-    развёртывании) или, если не задан, определённый по самому проекту.
+    Эталон выбирается по набору возможностей: явному (выбор пользователя при
+    развёртывании) или, если не задан, определённому по самому проекту.
     """
-    if vault is None:
-        vault = uses_vault(project_root, cfg)
+    if features is None:
+        features = project_features(project_root, cfg)
+    skipped = _skipped_skills(features)
     skills_dir = _deployed_skills(project_root, cfg)
     out: list[tuple[str, Path, str]] = []
     for skill_dir in sorted(SKILLS_TEMPLATES.iterdir()):
         if not skill_dir.is_dir():
             continue
-        # Волт-скиллы без волта не поставляются: иначе проект получает
-        # инструмент к хранилищу, которого у него нет
-        if skill_dir.name in VAULT_SKILLS and not vault:
+        # Скилл выключенной возможности не поставляется: иначе проект получает
+        # инструмент к тому, чего у него нет
+        if skill_dir.name in skipped:
             continue
         raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-        text = raw if vault else _strip_vault_blocks(raw)
-        out.append((skill_dir.name, skills_dir / skill_dir.name / "SKILL.md", text))
+        out.append((skill_dir.name, skills_dir / skill_dir.name / "SKILL.md",
+                    strip_optional_blocks(raw, features)))
     return out
 
 
-def _command_targets(project_root: Path, vault: bool | None = None,
+def _command_targets(project_root: Path, features: set[str] | None = None,
                      cfg: dict | None = None) -> list[tuple[str, Path, str]]:
     """(имя, путь развёрнутого файла, эталонный текст) для команд opencode.
 
-    Обёртка волт-скилла едет только вместе с волтом — как и сам скилл.
+    Обёртка едет только вместе со своим скиллом — то есть с возможностью,
+    которой он принадлежит.
     """
-    if vault is None:
-        vault = uses_vault(project_root, cfg)
+    if features is None:
+        features = project_features(project_root, cfg)
+    skipped = _skipped_skills(features)
     return [
         (f.stem, _deployed_commands(project_root) / f.name, f.read_text(encoding="utf-8"))
         for f in sorted(COMMANDS_TEMPLATES.glob("*.md"))
-        if vault or f.stem not in VAULT_SKILLS
+        if f.stem not in skipped
     ]
 
 
@@ -771,21 +828,39 @@ def agentic_paths(project_root: Path) -> list[Path]:
     return [p for p in candidates if p.is_dir()]
 
 
-def uses_vault(project_root: Path, cfg: dict | None = None) -> bool:
-    """Нужны ли в скиллах блоки волта знаний.
+def project_features(project_root: Path, cfg: dict | None = None) -> set[str]:
+    """Возможности проекта, от которых зависит состав текстов поставки.
 
     Приоритет у выбора пользователя из конфига проекта: галка должна что-то
     менять, а перезаписывать файлы молча мы больше не имеем права — со
     сменой эталона расхождение просто становится видно в баннере.
     Ключа нет (проект развёрнут до его появления) — определяем по самим
-    файлам: при vault=False блоки вырезаны вместе с маркерами.
+    файлам: у выключенной возможности блоки вырезаны вместе с маркерами.
     """
-    if isinstance(cfg, dict) and "vault" in cfg:
-        return bool(cfg["vault"])
-    for skill in _deployed_skills(project_root, cfg).glob("*/SKILL.md"):
-        if VAULT_START in (_read(skill) or ""):
-            return True
-    return False
+    values = cfg if isinstance(cfg, dict) else {}
+    out: set[str] = set()
+    for spec in OPTIONAL_BLOCKS:
+        enabled = (bool(values[spec["key"]]) if spec["key"] in values
+                   else _marker_deployed(project_root, spec["marker"], cfg))
+        if enabled:
+            out.add(spec["key"])
+    return out
+
+
+def _marker_deployed(project_root: Path, marker: str, cfg: dict | None) -> bool:
+    """Остались ли маркеры возможности в развёрнутых скиллах проекта."""
+    start = _block_markers(marker)[0]
+    return any(start in (_read(skill) or "")
+               for skill in _deployed_skills(project_root, cfg).glob("*/SKILL.md"))
+
+
+def uses_vault(project_root: Path, cfg: dict | None = None) -> bool:
+    """Нужны ли в скиллах блоки волта знаний — частный случай project_features.
+
+    Волт отличается от прочих опциональных блоков тем, что он ещё и часть
+    поставки (папка `vault/`), поэтому спрашивают о нём отдельно и по имени.
+    """
+    return "vault" in project_features(project_root, cfg)
 
 
 RULES_FILES = ("AGENTS.md", "CLAUDE.md")
@@ -936,13 +1011,13 @@ def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = No
             "diff": "\n".join(diff_lines), "added": added, "removed": removed}
 
 
-def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
+def refresh_agentic(project_root: Path, part: str, features: set[str] | None = None,
                     names: list[str] | None = None, cfg: dict | None = None,
                     overwrite: bool = True) -> tuple[list[str], list[str], list[str], list[str]]:
     """Развернуть/обновить скиллы, команды или секцию правил до эталона.
 
-    vault=None — сохранить режим волта, уже сложившийся в проекте (точечное
-    обновление из UI). names — обновить только перечисленные элементы.
+    features=None — сохранить набор возможностей, уже сложившийся в проекте
+    (точечное обновление из UI). names — обновить только перечисленные элементы.
     overwrite=False — недостающее создать, а расходящееся не трогать: в
     правленном скилле могут быть инструкции пользователя, и одна кнопка не
     должна их стирать. Такие файлы возвращаются в diverged.
@@ -968,8 +1043,8 @@ def refresh_agentic(project_root: Path, part: str, vault: bool | None = None,
             project_root, overwrite=overwrite, names=names)
         return created, replaced, skipped, diverged
 
-    targets = (_skill_targets(project_root, vault, cfg) if part == "skills"
-               else _command_targets(project_root, vault, cfg))
+    targets = (_skill_targets(project_root, features, cfg) if part == "skills"
+               else _command_targets(project_root, features, cfg))
     if names is not None:
         wanted = set(names)
         targets = [t for t in targets if t[0] in wanted]
