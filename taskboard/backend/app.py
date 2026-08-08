@@ -28,9 +28,10 @@ from backend.epics import annotate_epics, epic_name, list_epics, register_epic
 from backend.migrations import (apply_config_migrations, migrate_global_config,
                                 pipeline_removals, retire_artifact_names)
 from backend.pipeline_sources import list_sources
-from backend.requirements import (PREDICATES, annotate_debt, confirm_requirements,
+from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
+                                  apply_preset_exceptions, confirm_requirements,
                                   gate_impact, move_debt, requirement_text,
-                                  task_debt, task_waivers)
+                                  task_debt, task_waivers, unreviewed_task_types)
 from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
 from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
                               scaffold_project, uses_vault)
@@ -566,6 +567,40 @@ def api_confirm(task_id: str, body: ConfirmIn) -> dict:
     if not result.get("ok"):
         raise HTTPException(404, result.get("error", "Задача не найдена"))
     return result
+
+
+@app.post("/api/requires/exceptions")
+def api_apply_requires_exceptions() -> dict:
+    """Дописать в требования проекта исключения, появившиеся в поставке.
+
+    Правит **только** `except_types` и только дописыванием: `requires` —
+    настройки пользователя, он мог переписать формулировку или снять требование
+    ещё с каких-то типов. Приведение к эталону затёрло бы его работу, поэтому
+    остального конфига эта кнопка не касается вовсе.
+    """
+    tasks_dir, cfg = _ctx()
+    updated, applied = apply_preset_exceptions(cfg, load_pipeline(cfg).statuses())
+    if not applied:
+        return {"ok": True, "applied": []}
+    save_project_config(tasks_dir, {"requires": updated["requires"]})
+    return {"ok": True, "applied": applied}
+
+
+@app.post("/api/requires/types-reviewed")
+def api_mark_types_reviewed() -> dict:
+    """Отметить типы задач просмотренными: спрашиваем про них один раз.
+
+    Ничего не настраивает — требования человек правит сам, и решить за него,
+    относится ли его требование к новому типу, нельзя. Задача этой отметки одна:
+    не спрашивать второй раз. Вечная строка в баннере обесценивает соседние.
+    """
+    tasks_dir, cfg = _ctx()
+    types = unreviewed_task_types(cfg, load_pipeline(cfg).statuses())
+    if not types:
+        return {"ok": True, "marked": []}
+    known = list(cfg.get(KNOWN_TYPES_FIELD) or [])
+    save_project_config(tasks_dir, {KNOWN_TYPES_FIELD: known + types})
+    return {"ok": True, "marked": types}
 
 
 @app.get("/api/tasks/stalled")

@@ -316,6 +316,169 @@ def _requirement_kind(req: dict) -> tuple[str, str]:
     return (_one_line(req.get("check")).lower(), _one_line(req.get("name")).lower())
 
 
+def _except_types(req: dict) -> list[str]:
+    """Типы задач, которых требование не касается. Обе формы ключа равноправны."""
+    value = req.get("except_types") or req.get("except_type") or []
+    if isinstance(value, str):
+        value = [value]
+    return [_one_line(t) for t in value if _one_line(t)]
+
+
+def preset_exception_gaps(cfg: dict, pipeline) -> list[dict]:
+    """Исключения, которые поставка сняла позже, чем проект снял свой снимок.
+
+    `requires` материализуются в настройках проекта один раз — когда человек
+    добавляет статус. Дальше поставка живёт своей жизнью: появляется новый тип
+    задачи, у требования появляется исключение для него, а проект об этом не
+    узнаёт. Первая же задача такого типа упирается в отказ, которому нечего
+    предъявить: «сделать и повторить», хотя делать нечего и не будет.
+
+    Возвращает [{status, stage_label, id, text, missing}] — только **недостающие
+    типы**. Всё остальное расхождение с поставкой это авторство человека:
+    формулировку, предикат и имя секции он правит под себя, и приводить их
+    к эталону значило бы затирать его работу.
+
+    Сопоставление — по смыслу требования (`_requirement_kind`), а не по `id`:
+    идентификатор человек придумывает сам.
+    """
+    declared_all = cfg.get("requires") or {}
+    if not declared_all:
+        return []
+    out: list[dict] = []
+    for meta in _rows(pipeline):
+        status = meta.get("key")
+        declared = _req_list(declared_all.get(status))
+        presets = _req_list(meta.get("recommends"))
+        if not declared or not presets:
+            continue
+        by_kind = {_requirement_kind(r): r for r in presets}
+        for req in declared:
+            preset = by_kind.get(_requirement_kind(req))
+            if preset is None:
+                # Требования, которого в поставке нет, сверять не с чем: оно
+                # придумано человеком целиком
+                continue
+            have = {t.lower() for t in _except_types(req)}
+            missing = [t for t in _except_types(preset) if t.lower() not in have]
+            if missing:
+                out.append({"status": status,
+                            "stage_label": _one_line(meta.get("label")) or status,
+                            "id": _one_line(req.get("id")),
+                            "text": requirement_text(req),
+                            "missing": missing})
+    return out
+
+
+def apply_preset_exceptions(cfg: dict, pipeline) -> tuple[dict, list[dict]]:
+    """Дописать недостающие исключения в настройки проекта.
+
+    **Дописать, а не привести к эталону.** `requires` — настройки пользователя:
+    он мог переписать формулировку, сменить предикат, снять требование ещё с
+    каких-то типов. Затирать это нельзя, как нельзя было затирать чужие записи
+    в `.gitignore` при разворачивании команд.
+
+    Возвращает (новый конфиг, что дописано). Исходный не меняется: решение
+    сохранять его — не наше.
+    """
+    gaps = preset_exception_gaps(cfg, pipeline)
+    if not gaps:
+        return cfg, []
+    updated = dict(cfg)
+    requires = {k: [dict(r) for r in _req_list(v)]
+                for k, v in (cfg.get("requires") or {}).items()}
+    updated["requires"] = requires
+    for gap in gaps:
+        for req in requires.get(gap["status"], []):
+            if _one_line(req.get("id")).lower() != gap["id"].lower():
+                continue
+            # Пишем в тот ключ, который человек уже завёл: у обеих форм один
+            # смысл, и менять её на свою — та же перезапись чужого решения
+            key = "except_type" if ("except_type" in req
+                                    and "except_types" not in req) else "except_types"
+            req[key] = _except_types(req) + gap["missing"]
+    return updated, gaps
+
+
+KNOWN_TYPES_FIELD = "known_task_types"
+
+
+def unreviewed_task_types(cfg: dict, pipeline) -> list[str]:
+    """Типы, про которые человеку стоит пересмотреть **свои** требования.
+
+    Требование, которого в поставке нет, дописать за человека нельзя: применимо
+    оно к новому типу или нет, знает только он. Но и молчать нельзя — иначе
+    первая задача такого типа упирается в отказ без объяснения, а держало
+    задачу-ревью именно пользовательское требование.
+
+    Кандидаты берутся из самой поставки: тип, который она где-то исключает, —
+    из тех, ради которых требования снимают. Отпадает он, только когда назван
+    во **всех** собственных требованиях проекта.
+
+    Считать «человек про тип знает» по проекту целиком нельзя: тип, названный
+    в одном требовании, глушил бы вопрос про соседнее — а упирается задача
+    именно в то, где его забыли.
+
+    Показывается **один раз**: нажатие кнопки записывает типы в
+    `known_task_types`, и второй раз проект не спрашивают — настроил человек
+    или решил, что требование к типу относится, дело его. Вечная строка в
+    баннере обесценивает соседние.
+    """
+    declared_all = cfg.get("requires") or {}
+    if not declared_all:
+        return []
+    rows = _rows(pipeline)
+    presets = {_requirement_kind(r): r
+               for meta in rows for r in _req_list(meta.get("recommends"))}
+    # Требования поставки не считаем: у них своя кнопка, она знает, что дописать
+    own = [req for meta in rows
+           for req in _req_list(declared_all.get(meta.get("key")))
+           if _requirement_kind(req) not in presets]
+    if not own:
+        return []
+    known = {_one_line(t).lower() for t in (cfg.get(KNOWN_TYPES_FIELD) or [])}
+    listed = [{t.lower() for t in _except_types(req)} for req in own]
+    offered: list[str] = []
+    for meta in rows:
+        for preset in _req_list(meta.get("recommends")):
+            for key in _except_types(preset):
+                low = key.lower()
+                if low in known or key in offered:
+                    continue
+                if all(low in types for types in listed):
+                    continue
+                offered.append(key)
+    return offered
+
+
+def unreviewed_types_message(types: list[str]) -> str:
+    """Строка баннера: какой тип появился и что с ним делать."""
+    labels = ", ".join(f"«{TASK_TYPES.get(k, {}).get('label', k)}»" for k in types)
+    return (f"В поставке есть тип задач {labels}, для которого требования этапов "
+            f"обычно снимают, — у ваших требований он не назван. Посмотрите, "
+            f"относятся ли они к нему: иначе задача такого типа упрётся в отказ, "
+            f"закрыть который нечем")
+
+
+def exception_gaps_message(gaps: list[dict]) -> str:
+    """Строка баннера: какие требования и о каких типах не знают.
+
+    Поимённо — иначе кнопку нажимают вслепую. Типы называются подписью из
+    каталога, а не ключом: ключ человек видит только в конфиге.
+    """
+    if not gaps:
+        return ""
+    names = ", ".join(f"«{g['text']}»" for g in gaps)
+    keys: list[str] = []
+    for gap in gaps:
+        for key in gap["missing"]:
+            if key not in keys:
+                keys.append(key)
+    labels = ", ".join(f"«{TASK_TYPES.get(k, {}).get('label', k)}»" for k in keys)
+    return (f"В поставке требования {names} не касаются задач типа {labels}, "
+            f"а в настройках проекта касаются — задача такого типа упрётся "
+            f"в отказ, которого нечем закрыть")
+
+
 def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dict]:
     """Что этап просит на выходе: объявленное проектом и рекомендованное каталогом.
 

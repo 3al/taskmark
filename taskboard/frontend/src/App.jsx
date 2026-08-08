@@ -504,6 +504,15 @@ export default function App() {
     // Скрипт не знает про объявленные требования этапов — чинится тем же
     // обновлением: пользователю всё равно, какую из двух кнопок нажать
     requires_unsupported: { part: 'status_script', label: 'Обновить' },
+    // Снимок требований отстал от поставки. Чинится не разворачиванием файлов,
+    // а дописыванием в конфиг проекта — поэтому свой путь, а не `part`
+    requires_exceptions_stale: { action: 'requiresExceptions', label: 'Дописать',
+                                 help: 'lifecycle' },
+    // Требование придумал человек — дописать за него нельзя, применимо оно
+    // к новому типу или нет, знает только он. Кнопка открывает настройки и
+    // гасит повторный вопрос: настроит или решит, что относится, — его дело
+    requires_types_unreviewed: { action: 'typesReviewed', label: 'Настроить',
+                                 help: 'lifecycle' },
     // Правила — часть механизма, а не опция: без них агент не знает процесса
     no_rules: { part: 'rules', label: 'Развернуть', help: 'agentic' },
     // Отсутствие целой части чинится так же, как её устаревание: одной кнопкой
@@ -530,6 +539,27 @@ export default function App() {
     }
     if (fix.modal === 'scaffold') {
       setShowScaffold(true)
+      return
+    }
+    if (fix.action === 'requiresExceptions') {
+      try {
+        await api.applyRequiresExceptions()
+        refresh()
+      } catch (e) {
+        setError(e.message)
+      }
+      return
+    }
+    if (fix.action === 'typesReviewed') {
+      // Отметку ставим до открытия настроек: вопрос задан, ответ за человеком.
+      // Не поставить её значит спрашивать снова каждую загрузку доски
+      try {
+        await api.markTypesReviewed()
+      } catch (e) {
+        setError(e.message)
+      }
+      openSettings('lifecycle')
+      refresh()
       return
     }
     try {

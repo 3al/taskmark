@@ -148,7 +148,10 @@ def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
 # где имена зашиты, — переименовавший получал скиллы, зовущие несуществующий
 # файл. `release_script` остаётся: это не переименование, а точка расширения
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
-                "dnd_full_board", "harnesses", "vault", "delete_tasks"}
+                "dnd_full_board", "harnesses", "vault", "delete_tasks",
+                # Типы задач, про которые проекту уже говорили: требования
+                # настраивает человек, и спрашивать второй раз незачем
+                "known_task_types"}
 
 
 def lost_section(cfg: dict) -> str:

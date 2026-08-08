@@ -62,6 +62,12 @@ export const api = {
   repairPlan: () => request('/api/board/repair'),
   repairApply: () => request('/api/board/repair', { method: 'POST' }),
   scaffold: (options) => request('/api/scaffold', { method: 'POST', body: JSON.stringify(options) }),
+  // Дописывает в требования проекта исключения по типу задачи, появившиеся
+  // в поставке позже. Правит только их — остальное в requires писал человек
+  applyRequiresExceptions: () => request('/api/requires/exceptions', { method: 'POST' }),
+  // Отмечает типы просмотренными. Ничего не настраивает: требования правит
+  // человек, а отметка лишь гасит повторный вопрос
+  markTypesReviewed: () => request('/api/requires/types-reviewed', { method: 'POST' }),
   agenticStale: () => request('/api/agentic/stale'),
   agenticDiff: (part, name) =>
     request(`/api/agentic/diff?part=${encodeURIComponent(part)}&name=${encodeURIComponent(name)}`),

@@ -10,7 +10,9 @@ from backend.board_repair import _section_for_status, row_matches_file, task_fil
 from backend.config import is_lost_section
 from backend.scaffold import (detect_harnesses, environment_issues, harness_choice,
                               script_capabilities)
-from backend.requirements import declaration_issues, unknown_requirement_ids
+from backend.requirements import (declaration_issues, exception_gaps_message,
+                                  preset_exception_gaps, unknown_requirement_ids,
+                                  unreviewed_task_types, unreviewed_types_message)
 from backend.stall import plan_blocks_repair, stall_issues
 from backend.statuses import load_pipeline
 
@@ -158,6 +160,26 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
                         f"tasks/.taskboard.json), но развёрнутый {status_script} "
                         f"про них не знает: агент проходит этапы, а проверка молчит"),
             "names": [status_script]})
+
+    # Снимок требований, отставший от поставки: исключение по типу задачи там
+    # появилось, а в настройках проекта осталось прежним. Молчать нельзя —
+    # задача нового типа упирается в отказ, который сам себя не объясняет
+    # («сделать и повторить», хотя делать нечего). Чинится дописыванием, а не
+    # приведением к эталону: requires принадлежат человеку
+    gaps = preset_exception_gaps(cfg, pipeline.statuses())
+    if gaps:
+        degraded.append({"code": "requires_exceptions_stale",
+                         "message": exception_gaps_message(gaps),
+                         "names": [g["id"] for g in gaps]})
+
+    # Требование, придуманное человеком, дописать за него нельзя: применимо оно
+    # к новому типу или нет, знает только он. Поэтому не чиним, а спрашиваем —
+    # и спрашиваем один раз, нажатие записывает типы как просмотренные
+    unreviewed = unreviewed_task_types(cfg, pipeline.statuses())
+    if unreviewed:
+        degraded.append({"code": "requires_types_unreviewed",
+                         "message": unreviewed_types_message(unreviewed),
+                         "names": unreviewed})
 
     # Битая декларация требований: движок на ней молчит и пропускает этап
     # (fail-open — отказ из-за опечатки в конфиге хуже неработающей проверки),
