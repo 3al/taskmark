@@ -21,7 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.requirements import annotate_debt, move_debt  # noqa: E402
+from backend.requirements import (annotate_debt, is_terminal,  # noqa: E402
+                                  move_debt, task_debt)
 from backend.statuses import load_pipeline  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -140,6 +141,28 @@ class DebtOnBoardTest(unittest.TestCase):
         self.assertEqual([r["id"] for r in forward], ["verified"])
         self.assertEqual(backward, [], "назад долг не считается")
         self.assertEqual(offramp, [], "в съезде долга нет")
+
+    def test_terminal_move_is_marked_terminal(self) -> None:
+        """Перенос в конец маршрута надо отличать: долга после него не будет.
+
+        Требования пройденных этапов там по-прежнему не выполнены — и это
+        последний момент, когда их можно выполнить, — но «долгом» они не
+        станут: в терминальном статусе он не считается (см. `crossed`).
+        Обещать «агент закроет позже» здесь значит врать: закрывать некому.
+        """
+        self._task("TASK-001", "testing")
+        pipeline = load_pipeline(self.cfg)
+
+        self.assertTrue(is_terminal(pipeline, "done"))
+        self.assertFalse(is_terminal(pipeline, "ready_for_release"))
+        # Долг в терминальную цель считается как обычно: список непройденного
+        # нужен окну, меняется только то, как оно его называет
+        self.assertEqual(
+            [r["id"] for r in move_debt(self.tasks, "TASK-001", self.cfg, "done", pipeline)],
+            ["verified"])
+        self.assertEqual(
+            task_debt(self.tasks, "TASK-001", self.cfg, pipeline)["debt"], [],
+            "в testing долга ещё нет — он считается по пройденным этапам")
 
 
 class HumanConfirmTest(unittest.TestCase):
@@ -352,6 +375,12 @@ class DebtApiTest(unittest.TestCase):
         self.assertIn("move-debt", app, "нет эндпоинта, у которого доска спросит долг")
         self.assertIn("annotate_debt", app, "долг не приезжает на карточки доски")
 
+    def test_endpoint_tells_target_is_terminal(self) -> None:
+        """Окно должно знать, конец ли это маршрута: после него долга не будет."""
+        app = (ROOT / "backend" / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn('"terminal"', app, "ответ move-debt не говорит о конце маршрута")
+
     def test_task_endpoint_carries_debt(self) -> None:
         app = (ROOT / "backend" / "app.py").read_text(encoding="utf-8")
 
@@ -376,6 +405,21 @@ class DebtUiTest(unittest.TestCase):
 
         self.assertIn("moveDebt", src, "доска не спрашивает долг перед переносом")
         self.assertIn("pendingDebt", src, "нет диалога о переносе с долгом")
+
+    def test_terminal_move_is_not_called_debt(self) -> None:
+        """В конце маршрута окно не обещает ни долга, ни того, что агент его закроет.
+
+        Долг там не считается вовсе, а «позже» не существует: задача закрыта.
+        Требования при этом остаются невыполненными — про это сказать надо,
+        но своими словами.
+        """
+        src = (SRC / "App.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("terminal", src, "окно не различает конец маршрута")
+        self.assertIn("Останутся невыполненными", src,
+                      "нет честной формулировки для терминального переноса")
+        self.assertIn("агент закроет позже", src,
+                      "формулировка для обычного переноса пропала")
 
     def test_api_client_has_move_debt(self) -> None:
         src = (SRC / "api.js").read_text(encoding="utf-8")

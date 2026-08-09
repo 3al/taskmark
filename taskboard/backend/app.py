@@ -33,7 +33,7 @@ from backend.migrations import (apply_config_migrations, migrate_global_config,
 from backend.pipeline_sources import list_sources
 from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
                                   apply_preset_exceptions, confirm_requirements,
-                                  gate_impact, move_debt, requirement_text,
+                                  gate_impact, is_terminal, move_debt, requirement_text,
                                   task_debt, task_waivers, unreviewed_task_types)
 from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
 from backend.scaffold import (HARNESSES, SINGLE_FILE_PARTS, agentic_diff,
@@ -556,6 +556,12 @@ def api_move_debt(task_id: str, section: str) -> dict:
     Спрашивается доской **до** переноса: рука человека не гейтится, но цену
     движения он должен видеть заранее, а не узнавать её от агента через два
     этапа. Ничего не пишет — это вопрос, а не действие.
+
+    `terminal` — цель в конце маршрута. Список требований там тот же, но
+    называть его долгом нельзя: в терминальном статусе долг не считается
+    (`crossed`), и обещание «агент закроет позже» неисполнимо — задача
+    закрыта, закрывать требование некому. Это, наоборот, последний момент,
+    когда его ещё можно выполнить, и окно должно сказать именно так.
     """
     tasks_dir, cfg = _ctx()
     pipeline = load_pipeline(cfg)
@@ -564,6 +570,7 @@ def api_move_debt(task_id: str, section: str) -> dict:
         return {"ok": True, "task": task_id, "debt": []}
     debt = move_debt(tasks_dir, task_id, cfg, target, pipeline)
     return {"ok": True, "task": task_id, "target": target,
+            "terminal": is_terminal(pipeline, target),
             "debt": [_debt_item(r) for r in debt]}
 
 

@@ -566,6 +566,11 @@ export default function App() {
         const debt = result.debt
         setPendingDebt({
           ...move, toTitle: sectionTitle, fromTitle, debt,
+          // Конец маршрута: долгом невыполненное там не станет — в терминальном
+          // статусе он не считается. Значит и обещать «агент закроет позже»
+          // нельзя: закрывать некому. Зато это последний момент, когда
+          // требование ещё можно выполнить, и сказать надо именно это
+          terminal: Boolean(result.terminal),
           confirmable: debt.filter((d) => d.confirmable),
           blocking: debt.filter((d) => !d.confirmable),
         })
@@ -953,7 +958,9 @@ export default function App() {
                   десятки, и «какая именно задача» — первое, что нужно знать */}
               {pendingDebt.confirmable.length > 0
                 ? `Задача ${pendingDebt.taskId}: подтвердите перед переносом`
-                : `Задача ${pendingDebt.taskId} уедет с долгом`}
+                : pendingDebt.terminal
+                  ? `Задача ${pendingDebt.taskId} закрывается с невыполненными требованиями`
+                  : `Задача ${pendingDebt.taskId} уедет с долгом`}
             </div>
             <div className="px-5 py-4 space-y-3 text-sm text-zinc-300/90">
               {/* Формулировка требования — утверждение о выполненном («проверку
@@ -978,9 +985,11 @@ export default function App() {
               {pendingDebt.blocking.length > 0 && (
                 <div className="space-y-1">
                   <div className="text-zinc-500">
-                    {pendingDebt.confirmable.length > 0
-                      ? 'Останется долгом, агент закроет позже:'
-                      : 'Задача уедет с долгом, агент закроет позже:'}
+                    {pendingDebt.terminal
+                      ? 'Останутся невыполненными: это конец маршрута, спросить их будет негде'
+                      : pendingDebt.confirmable.length > 0
+                        ? 'Останется долгом, агент закроет позже:'
+                        : 'Задача уедет с долгом, агент закроет позже:'}
                   </div>
                   <ul className="space-y-1 text-zinc-400">
                     {pendingDebt.blocking.map((d) => (
@@ -1003,7 +1012,9 @@ export default function App() {
                 className="px-4 py-2 text-sm rounded-lg border border-zinc-700 text-zinc-300
                   hover:border-zinc-500 hover:bg-zinc-800 transition"
               >
-                {pendingDebt.confirmable.length > 0 ? 'Перенести без подтверждения' : 'Перенести с долгом'}
+                {pendingDebt.confirmable.length > 0
+                  ? 'Перенести без подтверждения'
+                  : pendingDebt.terminal ? 'Закрыть без них' : 'Перенести с долгом'}
               </button>
               {pendingDebt.confirmable.length > 0 && (
                 <button
