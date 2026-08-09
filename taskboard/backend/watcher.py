@@ -106,7 +106,7 @@ class TasksWatcher:
         fresh = Observer()
         for path, recursive, only in dict.fromkeys((str(p), rec, names)
                                                    for p, rec, names in paths):
-            fresh.schedule(_Handler(self._on_change, set(only) if only else None),
+            fresh.schedule(_Handler(self._on_change, set(only) if only else None, path),
                            path, recursive=recursive)
         fresh.daemon = True
         fresh.start()
@@ -213,17 +213,31 @@ class _Handler(FileSystemEventHandler):
     весь код проекта, правки которого к доске отношения не имеют.
     """
 
-    def __init__(self, callback, only: set[str] | None = None) -> None:
+    def __init__(self, callback, only: set[str] | None = None, root: str = "") -> None:
         self._callback = callback
         self._only = only
+        self._root = root
+
+    def _hidden(self, path: str) -> bool:
+        """Лежит ли файл в служебной папке наблюдаемого дерева.
+
+        Внутри `tasks/.taskboard/` инструмент пишет слепки поставки и бэкапы —
+        свои же записи не должны выглядеть правкой задач и дёргать доску.
+        Считаем от корня наблюдения: сам проект вполне может лежать по пути
+        со скрытой папкой, и объявлять его целиком служебным нельзя.
+        """
+        try:
+            parts = Path(path).relative_to(self._root).parts
+        except ValueError:
+            parts = Path(path).parts
+        return any(part.startswith(".") for part in parts)
 
     def on_any_event(self, event) -> None:
         if event.is_directory:
             return
-        # Служебное игнорируем: скрытые файлы и кэши питона
-        name = Path(event.src_path).name
-        if name.startswith(".") or "__pycache__" in event.src_path:
+        # Служебное игнорируем: скрытые файлы и папки, кэши питона
+        if self._hidden(event.src_path) or "__pycache__" in event.src_path:
             return
-        if self._only is not None and name not in self._only:
+        if self._only is not None and Path(event.src_path).name not in self._only:
             return
         self._callback()

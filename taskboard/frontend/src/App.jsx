@@ -631,10 +631,13 @@ export default function App() {
     no_epics: { part: 'epics', label: 'Создать' },
     // Шаблон задачи — эталон структуры: по нему создаются новые задачи
     no_template: { part: 'template', label: 'Создать' },
-    outdated_template: { part: 'template', label: 'Обновить' },
-    outdated_script: { part: 'create_script', label: 'Обновить' },
+    // Устаревшие файлы поставки ведут в то же окно расхождений, что и скиллы:
+    // расхождение может оказаться вашей правкой, и «Обновить» вслепую её
+    // потеряет. В окне видно причину, diff и выбор исхода
+    outdated_template: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_script: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     no_status_script: { part: 'status_script', label: 'Создать' },
-    outdated_status_script: { part: 'status_script', label: 'Обновить' },
+    outdated_status_script: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     // Скрипт не знает про объявленные требования этапов — чинится тем же
     // обновлением: пользователю всё равно, какую из двух кнопок нажать
     requires_unsupported: { part: 'status_script', label: 'Обновить' },

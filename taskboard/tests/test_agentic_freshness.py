@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend import baseline  # noqa: E402
 from backend.config import DEFAULTS  # noqa: E402
 from backend.scaffold import agentic_diff, agentic_stale_details, scaffold_project  # noqa: E402
 from backend.validator import validate_project  # noqa: E402
@@ -101,11 +102,20 @@ class AgenticFreshnessTest(unittest.TestCase):
 
     # --- Устаревание обнаруживается ---
 
-    def test_modified_skill_reported_outdated(self) -> None:
+    def _deployed_from(self, part: str, name: str, text: str) -> None:
+        """Слепок говорит, что разворачивали эту версию: значит шаблон ушёл вперёд.
+
+        Свежесть считается по слепку, а не по файлу (TASK-014): без подмены
+        слепка правка развёрнутого файла — кастомизация, а не устаревание.
+        """
+        baseline.write(self.root, part, name, text, self.cfg)
+
+    def test_outdated_skill_reported(self) -> None:
         self._scaffold(vault=False)
         skill = self._skill("start-task")
-        skill.write_text(skill.read_text(encoding="utf-8") + "\nстарый хвост\n",
-                         encoding="utf-8")
+        old = skill.read_text(encoding="utf-8") + "\nстарый хвост\n"
+        skill.write_text(old, encoding="utf-8")
+        self._deployed_from("skills", "start-task", old)
         self.assertIn("start-task", self._require_degraded("outdated_skills")["message"])
 
     def test_missing_skill_reported_as_gap_not_outdated(self) -> None:
@@ -121,10 +131,11 @@ class AgenticFreshnessTest(unittest.TestCase):
         self.assertIn("Не хватает скиллов", message)
         self.assertIn("fix-task", message)
 
-    def test_modified_command_reported_outdated(self) -> None:
+    def test_outdated_command_reported(self) -> None:
         self._scaffold(vault=False)
         cmd = self.root / ".opencode" / "commands" / "new-task.md"
         cmd.write_text("сломано", encoding="utf-8")
+        self._deployed_from("commands", "new-task", "сломано")
         self.assertIn("new-task", self._require_degraded("outdated_commands")["message"])
 
     # --- Точечное восстановление из UI ---

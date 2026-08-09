@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend import baseline  # noqa: E402
 from backend.config import DEFAULTS  # noqa: E402
 from backend.scaffold import environment_issues, scaffold_project  # noqa: E402
 from backend.validator import validate_project  # noqa: E402
@@ -241,11 +242,15 @@ class EnvironmentPartsTest(unittest.TestCase):
 
         self.assertRegex(gitignore.read_text(encoding="utf-8"), r"(?m)^commands/$")
 
-    def test_deployed_but_modified_is_outdated_not_missing(self) -> None:
-        """Правленные целиком скиллы — устаревание, а не отсутствие части."""
+    def test_deployed_but_outdated_is_not_missing(self) -> None:
+        """Отставшие целиком скиллы — устаревание, а не отсутствие части."""
         self._deploy(BOTH)
         for skill in (self.root / ".claude" / "skills").glob("*/SKILL.md"):
-            skill.write_text("# правки пользователя\n", encoding="utf-8")
+            skill.write_text("# прежняя версия\n", encoding="utf-8")
+            # Слепок говорит, что развернули именно её: значит шаблон ушёл
+            # вперёд. Без этого правка файла — кастомизация, о которой молчат
+            baseline.write(self.root, "skills", skill.parent.name,
+                           "# прежняя версия\n", self.cfg)
         codes = self._codes()
         self.assertIn("outdated_skills", codes)
         self.assertNotIn("no_skills", codes)
@@ -274,7 +279,9 @@ class EnvironmentPartsTest(unittest.TestCase):
         """Устаревание скилла видно и в opencode-раскладке — раньше туда не смотрели."""
         self._deploy(OPENCODE_ONLY)
         skill = self.root / ".opencode" / "skills" / "start-task" / "SKILL.md"
-        skill.write_text(skill.read_text(encoding="utf-8") + "\nхвост\n", encoding="utf-8")
+        old = skill.read_text(encoding="utf-8") + "\nхвост\n"
+        skill.write_text(old, encoding="utf-8")
+        baseline.write(self.root, "skills", "start-task", old, self.cfg)
         self.assertIn("outdated_skills", self._codes())
 
     def test_skills_not_duplicated_when_both_harnesses(self) -> None:

@@ -71,6 +71,13 @@ export const api = {
   agenticStale: () => request('/api/agentic/stale'),
   agenticDiff: (part, name) =>
     request(`/api/agentic/diff?part=${encodeURIComponent(part)}&name=${encodeURIComponent(name)}`),
+  // Исход расхождения выбирает пользователь: merge — слить, template — взять
+  // шаблон, keep — оставить свою версию (файл не трогаем, элемент затихает)
+  agenticResolve: (part, name, action) =>
+    request('/api/agentic/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ part, name, action }),
+    }),
   getConfig: () => request('/api/config'),
   pipeline: () => request('/api/pipeline'),
   pipelineSources: () => request('/api/pipeline/sources'),

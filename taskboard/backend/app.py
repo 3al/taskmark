@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend import changelog, help_docs, lifecycle, registry, updater, version
+from backend import (baseline, changelog, help_docs, lifecycle, registry,
+                     updater, version)
 from backend.board_parser import parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
@@ -35,7 +36,8 @@ from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
                                   gate_impact, move_debt, requirement_text,
                                   task_debt, task_waivers, unreviewed_task_types)
 from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
-from backend.scaffold import (HARNESSES, agentic_diff, agentic_stale_details,
+from backend.scaffold import (HARNESSES, SINGLE_FILE_PARTS, agentic_diff,
+                              agentic_stale_details, resolve_element,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
 from backend.stall import (annotate_stall, blocker_candidates, can_stall,
@@ -60,7 +62,7 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
                 "board_repair": True, "stall": True, "update": True,
-                "epic_tasks": True}
+                "epic_tasks": True, "agentic_merge": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -851,22 +853,51 @@ def api_help_section(section_id: str) -> dict:
     return section
 
 
+# Части поставки, расхождения которых разбираются в окне: многофайловые и
+# одиночные файлы в tasks/ — разрешаются они одинаково
+_DIFFABLE_PARTS = ("skills", "commands", "rules", "vault", *SINGLE_FILE_PARTS)
+
+
 @app.get("/api/agentic/stale")
 def api_agentic_stale() -> dict:
-    """Подробности по устаревшему агентскому окружению активного проекта."""
+    """Расхождения окружения активного проекта и чем их можно разрешить.
+
+    `can_merge` — есть ли git: слияние выполняет `git merge-file`, и без него
+    окно не должно предлагать кнопку, которая гарантированно откажет.
+    """
     tasks_dir, cfg = _ctx()
-    return {"items": agentic_stale_details(tasks_dir.parent, cfg)}
+    return {"items": agentic_stale_details(tasks_dir.parent, cfg),
+            "can_merge": baseline.git_available()}
 
 
 @app.get("/api/agentic/diff")
 def api_agentic_diff(part: str, name: str) -> dict:
-    """Unified diff «развёрнутое → эталон» для скилла, команды или правил."""
+    """Diff элемента: сводный, «что нового в шаблоне» и «что своего в проекте»."""
     tasks_dir, cfg = _ctx()
-    if part not in ("skills", "commands", "rules", "vault"):
+    if part not in _DIFFABLE_PARTS:
         raise HTTPException(400, f"Неизвестная часть: {part}")
     result = agentic_diff(tasks_dir.parent, part, name, cfg)
     if not result.get("ok"):
         raise HTTPException(404, result.get("error", "Элемент не найден"))
+    return result
+
+
+class ResolveIn(BaseModel):
+    part: str
+    name: str
+    action: str  # merge | template | keep
+
+
+@app.post("/api/agentic/resolve")
+def api_agentic_resolve(body: ResolveIn) -> dict:
+    """Разрешить расхождение элемента: слить, взять шаблон или оставить своё."""
+    tasks_dir, cfg = _ctx()
+    if body.part not in _DIFFABLE_PARTS:
+        raise HTTPException(400, f"Неизвестная часть: {body.part}")
+    result = resolve_element(tasks_dir.parent, body.part, body.name, body.action, cfg)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Не удалось разрешить расхождение"))
+    watcher.send("changed")
     return result
 
 

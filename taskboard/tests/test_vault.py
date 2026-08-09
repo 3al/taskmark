@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend import baseline  # noqa: E402
 from backend.config import DEFAULTS  # noqa: E402
 from backend.scaffold import (SKILLS_TEMPLATES, environment_issues,  # noqa: E402
                               feature_skills, render_rules, scaffold_project)
@@ -120,7 +121,11 @@ class VaultTest(unittest.TestCase):
         """structure.md и шаблоны заметок — поставка: отставание видно."""
         self._deploy(vault=True)
         structure = self.root / "vault" / "SYS" / "structure.md"
-        structure.write_text("# мои правила\n", encoding="utf-8")
+        structure.write_text("# прежние правила\n", encoding="utf-8")
+        # Развернули именно эту версию — значит отстали от шаблона, а не
+        # правили файл сами (свежесть считается по слепку, TASK-014)
+        baseline.write(self.root, "vault", "SYS/structure.md",
+                       "# прежние правила\n", self.cfg)
         self.assertIn("outdated_vault", self._codes())
 
     def test_user_data_of_vault_not_checked(self) -> None:

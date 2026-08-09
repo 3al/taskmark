@@ -411,10 +411,15 @@ class StatusScriptScaffoldTest(unittest.TestCase):
         self.assertIn("no_status_script", self._codes())
 
     def test_outdated_script_reported_and_fixable(self) -> None:
+        from backend import baseline
         from backend.scaffold import scaffold_project
 
         original = self.script.read_text(encoding="utf-8")
-        self.script.write_text("устаревшая версия", encoding="utf-8")
+        self.script.write_text("прежняя версия", encoding="utf-8")
+        # Развернули именно её — значит копия отстала от шаблона. Правка без
+        # подмены слепка была бы кастомизацией, а о ней не сообщают (TASK-014)
+        baseline.write(self.tasks.parent, "status_script", "set_status.py",
+                       "прежняя версия", self.cfg)
         self.assertIn("outdated_status_script", self._codes())
 
         result = scaffold_project(self.tasks, self.cfg, {"parts": ["status_script"]})

@@ -8,6 +8,7 @@ import shutil
 from datetime import date
 from pathlib import Path, PurePosixPath
 
+from backend import baseline, template_history
 from backend.config import TASK_TYPES
 from backend.epics import EPICS_FILE
 from backend.statuses import load_pipeline
@@ -269,8 +270,10 @@ def sync_rules(project_root: Path, cfg: dict, names: list[str] | None = None) ->
         section = _renumber_rules(render_rules(cfg), content[:start])
         fresh = content[:start] + section.rstrip("\n") + "\n" + content[end:]
         if fresh != content:
+            baseline.backup(project_root, "rules", name, content[start:end], cfg)
             target.write_text(fresh, encoding="utf-8")
             updated.append(name)
+        _remember(project_root, "rules", name, _current_text("rules", target) or "", cfg)
     return updated
 
 
@@ -306,6 +309,7 @@ def _append_rules(project_root: Path, names: list[str], cfg: dict) -> tuple[list
             continue
         section = _renumber_rules(rules_text, content)
         target.write_text(content.rstrip("\n") + "\n\n" + section, encoding="utf-8")
+        _remember(project_root, "rules", name, _current_text("rules", target) or "", cfg)
         appended.append(name)
     return appended, present
 
@@ -356,6 +360,7 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
 
     # --- Структура tasks/ (полностью или только запрошенные части) ---
     tasks_dir.mkdir(parents=True, exist_ok=True)
+    project_root = tasks_dir.parent
     want = set(parts) if parts else {"board", "create_script", "status_script",
                                      "template", "epics", "gitignore", "logs"}
 
@@ -379,13 +384,19 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         script_name = cfg.get(cfg_key, template_name)
         script_path = tasks_dir / script_name
         template_text = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
-        if not script_path.exists():
+        current = _read(script_path)
+        if current is None:
             script_path.write_text(template_text, encoding="utf-8")
+            _remember(project_root, part, script_name, template_text, cfg)
             created.append(script_name)
-        elif script_path.read_text(encoding="utf-8-sig") == template_text:
+        elif _same_content(current, template_text):
             skipped.append(script_name)
+            if baseline.read(project_root, part, script_name, cfg) is None:
+                _remember(project_root, part, script_name, template_text, cfg)
         elif overwrite:
+            baseline.backup(project_root, part, script_name, current, cfg)
             script_path.write_text(template_text, encoding="utf-8")
+            _remember(project_root, part, script_name, template_text, cfg)
             replaced.append(script_name)
         else:
             diverged.append(script_name)
@@ -395,13 +406,19 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     if "template" in want:
         template_path = tasks_dir / TASK_TEMPLATE_FILE
         template_text = (TASKS_TEMPLATES / TASK_TEMPLATE_FILE).read_text(encoding="utf-8")
-        if not template_path.exists():
+        current = _read(template_path)
+        if current is None:
             template_path.write_text(template_text, encoding="utf-8")
+            _remember(project_root, "template", TASK_TEMPLATE_FILE, template_text, cfg)
             created.append(TASK_TEMPLATE_FILE)
-        elif _same_content(_read(template_path), template_text):
+        elif _same_content(current, template_text):
             skipped.append(TASK_TEMPLATE_FILE)
+            if baseline.read(project_root, "template", TASK_TEMPLATE_FILE, cfg) is None:
+                _remember(project_root, "template", TASK_TEMPLATE_FILE, template_text, cfg)
         elif overwrite:
+            baseline.backup(project_root, "template", TASK_TEMPLATE_FILE, current, cfg)
             template_path.write_text(template_text, encoding="utf-8")
+            _remember(project_root, "template", TASK_TEMPLATE_FILE, template_text, cfg)
             replaced.append(TASK_TEMPLATE_FILE)
         else:
             diverged.append(TASK_TEMPLATE_FILE)
@@ -425,13 +442,11 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             logs_path.mkdir()
             created.append(f"{logs_name}/")
 
-    project_root = tasks_dir.parent
-
     # Точечное восстановление: только запрошенные части
     if parts:
         names = options.get("names")
         if "vault" in want:
-            c, r, s, d = deploy_vault(project_root, overwrite=True, names=names)
+            c, r, s, d = deploy_vault(project_root, overwrite=True, names=names, cfg=cfg)
             created += c
             replaced += r
             skipped += s
@@ -502,7 +517,7 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     # Волт — часть поставки, а не только режим текстов: без структуры скиллы
     # ссылались бы на папку, которой никто не создаёт
     if opt_vault:
-        c, r, s, d = deploy_vault(project_root, overwrite=overwrite)
+        c, r, s, d = deploy_vault(project_root, overwrite=overwrite, cfg=cfg)
         created += c
         replaced += r
         skipped += s
@@ -674,8 +689,21 @@ def _same_content(current: str | None, expected: str) -> bool:
     Ровно то сравнение, что показывает пользователю agentic_diff: иначе
     расхождение, невидимое в diff (редактор съел хвостовой перевод строки),
     даёт баннер устаревания, который нечем объяснить и нельзя убрать правкой.
+    Живёт оно в `baseline`: там же сравниваются слепок с эталоном, и двух
+    разных «одинаково» у нас быть не должно.
     """
-    return current is not None and current.splitlines() == expected.splitlines()
+    return baseline.same_text(current, expected)
+
+
+def _remember(project_root: Path, part: str, name: str, text: str,
+              cfg: dict | None = None) -> None:
+    """Записать слепок развёрнутого элемента — то, из чего проект развернули.
+
+    Вызывается сразу после записи файла: без слепка следующее расхождение
+    снова станет безымянным («отличается от шаблона»), а слить правки будет
+    не с чем.
+    """
+    baseline.write(project_root, part, name, text, cfg)
 
 
 def _skill_targets(project_root: Path, features: set[str] | None = None,
@@ -740,7 +768,7 @@ def _vault_targets(project_root: Path) -> list[tuple[str, Path, str]]:
 
 
 def deploy_vault(project_root: Path, overwrite: bool = False,
-                 names: list[str] | None = None
+                 names: list[str] | None = None, cfg: dict | None = None
                  ) -> tuple[list[str], list[str], list[str], list[str]]:
     """Развернуть структуру `vault/`: правила, шаблоны заметок, каркас таксономии.
 
@@ -763,12 +791,17 @@ def deploy_vault(project_root: Path, overwrite: bool = False,
         current = _read(path)
         if _same_content(current, expected):
             skipped.append(name)
+            if baseline.read(project_root, "vault", rel, cfg) is None:
+                _remember(project_root, "vault", rel, expected, cfg)
             continue
         if current is not None and not overwrite:
             diverged.append(name)
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
+        if current is not None:
+            baseline.backup(project_root, "vault", rel, current, cfg)
         path.write_text(expected, encoding="utf-8")
+        _remember(project_root, "vault", rel, expected, cfg)
         (created if current is None else replaced).append(name)
 
     # Точечное обновление — только названные файлы: остального пользователь
@@ -928,6 +961,47 @@ def _current_text(part: str, path: Path) -> str | None:
     return content[bounds[0]:bounds[1]] if bounds else None
 
 
+# Части поставки из одного файла в tasks/: сравниваются и разрешаются так же,
+# как многофайловые, поэтому в окно расхождений попадают наравне с ними.
+# Имя элемента переименуемо настройкой, имя шаблона — нет
+SINGLE_FILE_PARTS = ("create_script", "status_script", "template")
+
+
+def _single_targets(project_root: Path, part: str,
+                    cfg: dict | None = None) -> list[tuple[str, Path, str]]:
+    """(имя, путь, эталон) для одиночного файла поставки в tasks/."""
+    cfg = cfg or {}
+    if part == "template":
+        name = template_name = TASK_TEMPLATE_FILE
+    else:
+        cfg_key, template_name = next((k, t) for p, k, t in TOOL_SCRIPTS if p == part)
+        name = cfg.get(cfg_key, template_name)
+    tasks_dir = project_root / cfg.get("tasks_dir", "tasks")
+    return [(name, tasks_dir / name,
+             (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8"))]
+
+
+def part_targets(project_root: Path, part: str,
+                 cfg: dict | None = None) -> list[tuple[str, Path, str]]:
+    """(имя, путь, эталон) для элементов части — единая точка для всех частей.
+
+    cfg обязателен везде, где эталон зависит от настроек проекта: без него
+    режим волта определяется по файлам на диске, а список расхождений считан
+    по конфигу — окно и баннер начинают спорить друг с другом.
+    """
+    if part == "skills":
+        return _skill_targets(project_root, cfg=cfg)
+    if part == "commands":
+        return _command_targets(project_root, cfg=cfg)
+    if part == "vault":
+        return _vault_targets(project_root)
+    if part == "rules":
+        return _rules_targets(project_root, cfg or {})
+    if part in SINGLE_FILE_PARTS:
+        return _single_targets(project_root, part, cfg)
+    return []
+
+
 def _deployed_parts(project_root: Path,
                     cfg: dict | None = None) -> list[tuple[str, list[tuple[str, Path, str]]]]:
     """Развёрнутые части окружения с их эталонами.
@@ -947,71 +1021,249 @@ def _deployed_parts(project_root: Path,
     rules = _rules_targets(project_root, cfg or {})
     if rules:
         parts.append(("rules", rules))
+    for part in SINGLE_FILE_PARTS:
+        targets = _single_targets(project_root, part, cfg)
+        if targets[0][1].is_file():
+            parts.append((part, targets))
     return parts
 
 
-def agentic_stale_details(project_root: Path, cfg: dict | None = None) -> list[dict]:
-    """Подробности по расхождениям: [{part, name, state, path}].
+def _template_source(part: str, name: str, features: set[str]):
+    """(файл шаблона, приведение его текста к развёрнутому виду) или None.
 
-    state: "modified" — файл есть, но отличается от шаблона;
-           "missing"  — шаблон появился позже развёртывания.
+    Нужно, чтобы искать предка в истории шаблонов: сравнивать историческую
+    версию надо с тем, что в этот проект действительно положили бы, — у
+    скиллов это текст с вырезанными блоками выключенных возможностей.
+
+    Правила исключены намеренно: их секция не копируется, а собирается кодом
+    под пайплайн проекта, и старый текст шаблона без старого кода к
+    развёрнутому виду не привести.
+    """
+    if part == "skills":
+        return SKILLS_TEMPLATES / name / "SKILL.md", lambda t: strip_optional_blocks(t, features)
+    if part == "commands":
+        return COMMANDS_TEMPLATES / f"{name}.md", None
+    if part == "vault":
+        return VAULT_TEMPLATES / name, None
+    if part in SINGLE_FILE_PARTS:
+        template_name = (TASK_TEMPLATE_FILE if part == "template"
+                         else next(t for p, _k, t in TOOL_SCRIPTS if p == part))
+        return TASKS_TEMPLATES / template_name, None
+    return None
+
+
+def resolved_base(project_root: Path, part: str, name: str, current: str | None,
+                  cfg: dict | None = None) -> dict:
+    """Основа сравнения и слияния: {text, origin, exact, version, ratio}.
+
+    origin: "store" — слепок, записанный при развёртывании: это факт, из чего
+            элемент развернули;
+            "history" — ближайшая по содержанию версия шаблона из истории
+            инструмента. Это подбор: проект мог быть развёрнут до появления
+            слепка, а мог и вовсе не разворачиваться из шаблона — тексты
+            бывают старше самого инструмента;
+            None — основы нет, слить не с чем.
+    """
+    stored = baseline.read(project_root, part, name, cfg)
+    if stored is not None:
+        return {"text": stored, "origin": "store", "exact": True,
+                "version": None, "ratio": None, "usable": True}
+    source = (None if current is None
+              else _template_source(part, name, project_features(project_root, cfg)))
+    guess = (template_history.guess_base(source[0], current, source[1])
+             if source and source[0].is_file() else None)
+    if guess is None:
+        return {"text": None, "origin": None, "exact": False,
+                "version": None, "ratio": None, "usable": False}
+    # Негодная основа всё равно возвращается с процентом: отказ от слияния
+    # нужно объяснить, а не изобразить отсутствием кнопки
+    return {"text": guess["text"] if guess["usable"] else None, "origin": "history",
+            "exact": guess["exact"], "version": guess["version"],
+            "ratio": guess["ratio"], "usable": guess["usable"]}
+
+
+def element_state(project_root: Path, part: str, name: str, path: Path, expected: str,
+                  cfg: dict | None = None) -> str:
+    """Состояние элемента поставки с учётом предка (baseline.state).
+
+    Восстановленный из истории предок участвует в состоянии **только при
+    точном совпадении**: тогда это не догадка, а доказательство, что файл
+    после развёртывания не правили. Приблизительная догадка годится как
+    основа слияния, но переименовывать ею состояние нельзя — молчаливо
+    спрятанный баннер хуже честного «происхождение неизвестно».
+    """
+    current = _current_text(part, path)
+    base = resolved_base(project_root, part, name, current, cfg)
+    return baseline.state(current, expected, base["text"] if base["exact"] else None)
+
+
+def agentic_stale_details(project_root: Path, cfg: dict | None = None) -> list[dict]:
+    """Расхождения, о которых стоит сказать: [{part, name, state, path, mergeable}].
+
+    Кастомизированный элемент сюда не попадает: если шаблон с момента
+    развёртывания не двигался, файл актуален — правки в нём внёс сам
+    пользователь, и напоминать ему об этом нечем. Прежний критерий («файл
+    равен шаблону») означал вечный баннер на каждую свою правку.
     """
     items: list[dict] = []
     for part, targets in _deployed_parts(project_root, cfg):
         for name, path, expected in targets:
-            current = _current_text(part, path)
-            if _same_content(current, expected):
+            state = element_state(project_root, part, name, path, expected, cfg)
+            if state in (baseline.SAME, baseline.CUSTOMIZED):
                 continue
+            base = resolved_base(project_root, part, name,
+                                 _current_text(part, path), cfg)
             items.append({
                 "part": part,
                 "name": name,
-                "state": "missing" if current is None else "modified",
+                "state": state,
+                # Сливать можно только имея общую основу: без неё
+                # трёхстороннего merge не существует. Подобранная по истории
+                # шаблонов версия для этого годится — состояние она не меняет,
+                # но выбор «слить» возвращает
+                "mergeable": base["text"] is not None and state in (
+                    baseline.CONFLICT, baseline.UNKNOWN),
+                "base_origin": base["origin"],
+                "base_version": base["version"],
+                "base_exact": base["exact"],
+                "base_ratio": base["ratio"],
+                "base_usable": base["usable"],
                 "path": str(path.relative_to(project_root)).replace("\\", "/"),
             })
     return items
 
 
-def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = None) -> dict:
-    """Unified diff «развёрнутое → эталон» для скилла, команды, файла волта или секции правил.
+def _unified(before: str, after: str, from_label: str, to_label: str) -> str:
+    return "\n".join(difflib.unified_diff(
+        before.splitlines(), after.splitlines(),
+        fromfile=from_label, tofile=to_label, lineterm=""))
 
-    Направление выбрано так, чтобы «+» читалось как «появится после обновления».
-    Эталон берётся с учётом волт-режима проекта (иначе у проектов без волта
-    вырезанные блоки выглядели бы расхождением) и пайплайна — для правил.
+
+def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = None) -> dict:
+    """Что развёрнутое и эталон говорят друг о друге — тремя диффами.
+
+    - `diff` — «развёрнутое → эталон»: «+» читается как «появится после
+      обновления». Это то, что видно всегда, в том числе без слепка.
+    - `template_diff` — «слепок → эталон»: что нового в шаблоне.
+    - `local_diff` — «слепок → развёрнутое»: что своего в проекте.
+
+    Последние два — суть расхождения по отдельности: сводный diff смешивает
+    их в одну кучу, и по нему нельзя решить, что именно потеряешь. Без слепка
+    они пусты: разделить нечем.
     """
-    if part == "skills":
-        targets = _skill_targets(project_root, cfg=cfg)
-    elif part == "commands":
-        # cfg обязателен и здесь: без него режим волта определяется по файлам,
-        # и diff начинает спорить со списком расхождений, который считан по конфигу
-        targets = _command_targets(project_root, cfg=cfg)
-    elif part == "vault":
-        targets = _vault_targets(project_root)
-    else:
-        targets = _rules_targets(project_root, cfg or {})
-    target = next((t for t in targets if t[0] == name), None)
+    target = next((t for t in part_targets(project_root, part, cfg) if t[0] == name), None)
     if target is None:
         return {"ok": False, "error": f"Неизвестный элемент: {part}/{name}"}
 
     _name, path, expected = target
     current = _current_text(part, path)
-    if current is None:
-        state = "missing"
+    resolved = resolved_base(project_root, part, name, current, cfg)
+    base = resolved["text"]
+    base_label = "было развёрнуто" if resolved["origin"] == "store" else "основа сравнения"
+    state = element_state(project_root, part, name, path, expected, cfg)
+
+    diff = _unified(current or "", expected, f"{name} — в проекте", f"{name} — шаблон")
+    body = [ln for ln in diff.splitlines() if not ln.startswith(("---", "+++"))]
+
+    return {
+        "ok": True, "part": part, "name": name, "state": state,
+        "diff": diff,
+        "added": sum(1 for ln in body if ln.startswith("+")),
+        "removed": sum(1 for ln in body if ln.startswith("-")),
+        # Подпись основы зависит от того, факт это или подбор: называть
+        # угаданную версию «было развёрнуто» значит утверждать то, чего мы
+        # не знаем — файл мог никогда из шаблона не разворачиваться
+        "template_diff": ("" if base is None else
+                          _unified(base, expected, f"{name} — {base_label}",
+                                   f"{name} — шаблон")),
+        "local_diff": ("" if base is None else
+                       _unified(base, current or "", f"{name} — {base_label}",
+                                f"{name} — в проекте")),
+        "base_origin": resolved["origin"],
+        "base_version": resolved["version"],
+        "base_exact": resolved["exact"],
+        "base_ratio": resolved["ratio"],
+        "base_usable": resolved["usable"],
+        "mergeable": base is not None and state in (baseline.CONFLICT, baseline.UNKNOWN),
+    }
+
+
+def _write_element(part: str, path: Path, text: str) -> None:
+    """Записать элемент: правила — секцией внутри чужого файла, остальное целиком."""
+    if part != "rules":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return
+    content = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
+    bounds = _rules_bounds(content)
+    if bounds is None:
+        path.write_text(content.rstrip("\n") + "\n\n" + text.rstrip("\n") + "\n",
+                        encoding="utf-8")
+        return
+    start, end = bounds
+    path.write_text(content[:start] + text.rstrip("\n") + "\n" + content[end:],
+                    encoding="utf-8")
+
+
+def resolve_element(project_root: Path, part: str, name: str, action: str,
+                    cfg: dict | None = None) -> dict:
+    """Разрешить расхождение элемента одним из трёх исходов.
+
+    - `merge` — слить свои правки с новым шаблоном (`git merge-file`).
+      Конфликтующие куски остаются в файле маркерами: выбрать за человека
+      нельзя, но и прятать выбор от него незачем.
+    - `template` — взять шаблон, прежнее содержимое уходит в бэкап.
+    - `keep` — оставить свою версию: файл не трогаем, слепок приравниваем
+      шаблону. Элемент перестаёт светиться в баннере до следующей правки
+      шаблона — это согласие с текущим, а не вечное молчание.
+
+    Любой исход заканчивается одинаково: слепок = шаблон. Именно он, а не сам
+    файл, отвечает на вопрос «отстали ли мы от поставки».
+    """
+    target = next((t for t in part_targets(project_root, part, cfg) if t[0] == name), None)
+    if target is None:
+        return {"ok": False, "error": f"Неизвестный элемент: {part}/{name}"}
+
+    _name, path, expected = target
+    current = _current_text(part, path)
+    conflicts = 0
+
+    if action == "keep":
+        if current is None:
+            return {"ok": False, "error": f"Файла нет — оставлять нечего: {part}/{name}"}
+        _remember(project_root, part, name, expected, cfg)
+        return {"ok": True, "part": part, "name": name, "action": action,
+                "conflicts": 0, "backup": None,
+                "state": element_state(project_root, part, name, path, expected, cfg)}
+
+    if action == "merge":
+        resolved = resolved_base(project_root, part, name, current, cfg)
+        base = resolved["text"]
+        if base is None or current is None:
+            # Причину называем числом: «сливать не с чем» без объяснения
+            # выглядит произволом — у соседнего элемента кнопка ведь есть
+            near = (f" Ближайшая версия шаблона совпадает на "
+                    f"{round((resolved['ratio'] or 0) * 100)}%."
+                    if resolved["ratio"] is not None else "")
+            return {"ok": False,
+                    "error": "Нет основы для слияния: сливать не с чем — возьмите "
+                             f"шаблон или оставьте свою версию.{near}"}
+        merged = baseline.merge(base, current, expected)
+        if merged is None:
+            return {"ok": False, "error": "Слияние не выполнено: не найден git"}
+        text, conflicts = merged
+    elif action == "template":
+        text = expected
     else:
-        state = "modified" if not _same_content(current, expected) else "same"
+        return {"ok": False, "error": f"Неизвестное действие: {action}"}
 
-    diff_lines = list(difflib.unified_diff(
-        (current or "").splitlines(),
-        expected.splitlines(),
-        fromfile=f"{name} — в проекте",
-        tofile=f"{name} — шаблон",
-        lineterm="",
-    ))
-    body = [ln for ln in diff_lines if not ln.startswith(("---", "+++"))]
-    added = sum(1 for ln in body if ln.startswith("+"))
-    removed = sum(1 for ln in body if ln.startswith("-"))
-
-    return {"ok": True, "part": part, "name": name, "state": state,
-            "diff": "\n".join(diff_lines), "added": added, "removed": removed}
+    backup_path = (baseline.backup(project_root, part, name, current, cfg)
+                   if current is not None else None)
+    _write_element(part, path, text)
+    _remember(project_root, part, name, expected, cfg)
+    return {"ok": True, "part": part, "name": name, "action": action,
+            "conflicts": conflicts, "backup": backup_path,
+            "state": element_state(project_root, part, name, path, expected, cfg)}
 
 
 def refresh_agentic(project_root: Path, part: str, features: set[str] | None = None,
@@ -1043,7 +1295,7 @@ def refresh_agentic(project_root: Path, part: str, features: set[str] | None = N
 
     if part == "vault":
         created, replaced, skipped, diverged = deploy_vault(
-            project_root, overwrite=overwrite, names=names)
+            project_root, overwrite=overwrite, names=names, cfg=cfg)
         return created, replaced, skipped, diverged
 
     targets = (_skill_targets(project_root, features, cfg) if part == "skills"
@@ -1056,19 +1308,27 @@ def refresh_agentic(project_root: Path, part: str, features: set[str] | None = N
     replaced: list[str] = []
     skipped: list[str] = []
     diverged: list[str] = []
-    for _name, path, expected in targets:
+    for name, path, expected in targets:
         # Путь скиллов зависит от выбранных сред, поэтому берём его из цели,
         # а не из константы
         rel = str(path.relative_to(project_root)).replace("\\", "/")
         current = _read(path)
         if _same_content(current, expected):
             skipped.append(rel)  # различия только в переводах строк — не трогаем
+            # Файл и так шаблонный: заводим слепок, если его не было. Так
+            # проект, развёрнутый до появления слепков, лечится сам, а не
+            # остаётся с элементами неизвестного происхождения навсегда
+            if baseline.read(project_root, part, name, cfg) is None:
+                _remember(project_root, part, name, expected, cfg)
             continue
         if current is not None and not overwrite:
             diverged.append(rel)
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
+        if current is not None:
+            baseline.backup(project_root, part, name, current, cfg)
         path.write_text(expected, encoding="utf-8")
+        _remember(project_root, part, name, expected, cfg)
         (created if current is None else replaced).append(rel)
     return created, replaced, skipped, diverged
 
@@ -1105,15 +1365,20 @@ ENV_PARTS = (
 )
 
 
-def _script_state(tasks_dir: Path, cfg: dict, cfg_key: str,
-                  template_name: str) -> tuple[list[str], list[str]]:
-    """(нет, устарел) для скрипта-инструмента в tasks/."""
-    name = cfg.get(cfg_key, template_name)
-    path = tasks_dir / name
+# Состояния, о которых баннер молчит: файл либо шаблонный, либо правленный
+# пользователем при неизменившемся шаблоне — в обоих случаях он актуален
+_QUIET_STATES = (baseline.SAME, baseline.CUSTOMIZED)
+
+
+def _script_state(tasks_dir: Path, cfg: dict, part: str) -> tuple[list[str], list[str]]:
+    """(нет, устарел) для одиночного файла поставки в tasks/."""
+    project_root = tasks_dir.parent
+    targets = _single_targets(project_root, part, cfg)
+    name, path, expected = targets[0]
     if not path.is_file():
         return [name], []
-    template = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
-    return [], ([] if _same_content(_read(path), template) else [name])
+    state = element_state(project_root, part, name, path, expected, cfg)
+    return [], ([] if state in _QUIET_STATES else [name])
 
 
 # Маркер контракта в скрипте: `SCRIPT_CAPABILITIES = {"stall", ...}`. Читаем
@@ -1138,21 +1403,23 @@ def script_capabilities(tasks_dir: Path, cfg: dict) -> set[str]:
     return set(_CAPABILITY_RE.findall(m.group(1))) if m else set()
 
 
-def _targets_state(part: str,
-                   targets: list[tuple[str, Path, str]]) -> tuple[list[str], list[str], list[str]]:
+def _targets_state(project_root: Path, part: str, targets: list[tuple[str, Path, str]],
+                   cfg: dict | None = None) -> tuple[list[str], list[str], list[str]]:
     """(нет части целиком, недостающие элементы, разошедшиеся) для многофайловой части.
 
     Ни одного файла на диске — часть не разворачивали; хотя бы один есть —
     остальные разбираем поэлементно. Отсутствующий файл и отставший от шаблона
     — разные вещи: называть несуществующий скилл «устаревшим» значит врать
     в баннере (пользователь ищет, что же там устарело, а файла просто нет).
+    Кастомизированный элемент не устарел: шаблон с развёртывания не двигался.
     """
-    current = [(name, _current_text(part, path), expected) for name, path, expected in targets]
-    if targets and all(text is None for _n, text, _e in current):
-        return [name for name, _p, _e in targets], [], []
-    absent = [name for name, text, _e in current if text is None]
-    modified = [name for name, text, expected in current
-                if text is not None and not _same_content(text, expected)]
+    states = [(name, element_state(project_root, part, name, path, expected, cfg))
+              for name, path, expected in targets]
+    if targets and all(state == baseline.MISSING for _n, state in states):
+        return [name for name, _state in states], [], []
+    absent = [name for name, state in states if state == baseline.MISSING]
+    modified = [name for name, state in states
+                if state not in _QUIET_STATES and state != baseline.MISSING]
     return [], absent, modified
 
 
@@ -1188,16 +1455,8 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
         # partial — часть развёрнута, но отдельных элементов не хватает
         # (появился новый скилл, включили волт): чинится тем же «Развернуть»
         partial: list[str] = []
-        if part == "create_script":
-            missing, outdated = _script_state(tasks_dir, cfg, "create_script", "create_task.py")
-        elif part == "status_script":
-            missing, outdated = _script_state(tasks_dir, cfg, "status_script", "set_status.py")
-        elif part == "template":
-            path = tasks_dir / TASK_TEMPLATE_FILE
-            template = (TASKS_TEMPLATES / TASK_TEMPLATE_FILE).read_text(encoding="utf-8")
-            missing = [] if path.is_file() else [TASK_TEMPLATE_FILE]
-            outdated = ([] if not path.is_file() or _same_content(_read(path), template)
-                        else [TASK_TEMPLATE_FILE])
+        if part in SINGLE_FILE_PARTS:
+            missing, outdated = _script_state(tasks_dir, cfg, part)
         elif part == "epics":
             missing = [] if (tasks_dir / EPICS_FILE).is_file() else [EPICS_FILE]
             outdated = []  # реестр эпиков — данные пользователя, эталона нет
@@ -1205,17 +1464,13 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             name = cfg.get("logs_dir", "logs")
             missing = [] if (tasks_dir / name).is_dir() else [f"{name}/"]
             outdated = []
-        elif part == "skills":
+        elif part in ("skills", "commands", "vault"):
             missing, partial, outdated = _targets_state(
-                part, _skill_targets(project_root, cfg=cfg))
-        elif part == "commands":
-            missing, partial, outdated = _targets_state(
-                part, _command_targets(project_root, cfg=cfg))
-        elif part == "vault":
-            missing, partial, outdated = _targets_state(part, _vault_targets(project_root))
+                project_root, part, part_targets(project_root, part, cfg), cfg)
         else:  # rules
             missing = rules_missing(project_root, cfg)
-            _m, _absent, outdated = _targets_state(part, _rules_targets(project_root, cfg))
+            _m, _absent, outdated = _targets_state(
+                project_root, part, _rules_targets(project_root, cfg), cfg)
 
         for state, names in (("missing", missing), ("partial", partial), ("outdated", outdated)):
             # Недостающие элементы разворачиваются той же кнопкой, что и

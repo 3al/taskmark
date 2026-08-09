@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend import baseline  # noqa: E402
 from backend.config import DEFAULTS  # noqa: E402
 from backend.scaffold import (  # noqa: E402
     agentic_diff,
@@ -25,7 +26,22 @@ from backend.scaffold import (  # noqa: E402
 )
 
 
-class AgenticDetailsTest(unittest.TestCase):
+class BaselineMixin:
+    """Правка развёрнутого файла сама по себе устаревания не даёт (TASK-014).
+
+    Свежесть считается по слепку: пока шаблон не двигался, расхождение — это
+    кастомизация, о которой не сообщают. Чтобы получить устаревание, слепок
+    должен говорить, что разворачивали именно эту, прежнюю версию.
+    """
+
+    root: Path
+    cfg: dict
+
+    def _deployed_from(self, part: str, name: str, text: str) -> None:
+        baseline.write(self.root, part, name, text, self.cfg)
+
+
+class AgenticDetailsTest(BaselineMixin, unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -45,14 +61,18 @@ class AgenticDetailsTest(unittest.TestCase):
     def test_fresh_environment_has_no_details(self) -> None:
         self.assertEqual(agentic_stale_details(self.root), [])
 
-    def test_modified_skill_has_state_modified(self) -> None:
+    def test_outdated_skill_has_state_outdated(self) -> None:
         skill = self._skill("start-task")
-        skill.write_text(skill.read_text(encoding="utf-8") + "\nхвост\n", encoding="utf-8")
-        items = agentic_stale_details(self.root)
+        old = skill.read_text(encoding="utf-8") + "\nхвост\n"
+        skill.write_text(old, encoding="utf-8")
+        self._deployed_from("skills", "start-task", old)
+
+        items = agentic_stale_details(self.root, self.cfg)
+
         self.assertEqual(len(items), 1, items)
         self.assertEqual(items[0]["part"], "skills")
         self.assertEqual(items[0]["name"], "start-task")
-        self.assertEqual(items[0]["state"], "modified")
+        self.assertEqual(items[0]["state"], "outdated")
 
     def test_missing_skill_has_state_missing(self) -> None:
         self._skill("fix-task").unlink()
@@ -63,6 +83,7 @@ class AgenticDetailsTest(unittest.TestCase):
     def test_details_cover_commands_too(self) -> None:
         cmd = self.root / ".opencode" / "commands" / "new-task.md"
         cmd.write_text("сломано", encoding="utf-8")
+        self._deployed_from("commands", "new-task", "сломано")
         items = agentic_stale_details(self.root)
         self.assertEqual([(i["part"], i["name"]) for i in items], [("commands", "new-task")])
 
@@ -71,17 +92,18 @@ class AgenticDetailsTest(unittest.TestCase):
     def test_diff_shows_added_and_removed_lines(self) -> None:
         skill = self._skill("start-task")
         original = skill.read_text(encoding="utf-8").splitlines()
-        broken = ["ЛИШНЯЯ СТРОКА"] + original[1:]
-        skill.write_text("\n".join(broken) + "\n", encoding="utf-8")
+        broken = "\n".join(["ЛИШНЯЯ СТРОКА"] + original[1:]) + "\n"
+        skill.write_text(broken, encoding="utf-8")
+        self._deployed_from("skills", "start-task", broken)
 
-        result = agentic_diff(self.root, "skills", "start-task")
+        result = agentic_diff(self.root, "skills", "start-task", self.cfg)
 
         self.assertTrue(result["ok"], result)
         self.assertIn("@@", result["diff"])
         # Направление: развёрнутое -> шаблон, «+» = появится после обновления
         self.assertIn("-ЛИШНЯЯ СТРОКА", result["diff"])
         self.assertIn("+" + original[0], result["diff"])
-        self.assertEqual(result["state"], "modified")
+        self.assertEqual(result["state"], "outdated")
 
     def test_diff_counts_changes(self) -> None:
         skill = self._skill("start-task")
@@ -132,7 +154,9 @@ class AgenticDetailsTest(unittest.TestCase):
         рядом — «файлы совпадают».
         """
         cmd = self.root / ".opencode" / "commands" / "start-task.md"
-        cmd.write_text(cmd.read_text(encoding="utf-8") + "\nхвост\n", encoding="utf-8")
+        old = cmd.read_text(encoding="utf-8") + "\nхвост\n"
+        cmd.write_text(old, encoding="utf-8")
+        self._deployed_from("commands", "start-task", old)
         listed = [i for i in agentic_stale_details(self.root, self.cfg)
                   if i["part"] == "commands"]
         result = agentic_diff(self.root, "commands", "start-task", self.cfg)
@@ -152,7 +176,7 @@ class AgenticDetailsTest(unittest.TestCase):
         self.assertEqual(second.read_text(encoding="utf-8"), "тоже устарел")
 
 
-class VaultDiffTest(unittest.TestCase):
+class VaultDiffTest(BaselineMixin, unittest.TestCase):
     """Волт — такая же часть поставки: у его файлов тоже должен открываться diff (TASK-048)."""
 
     def setUp(self) -> None:
@@ -169,14 +193,15 @@ class VaultDiffTest(unittest.TestCase):
 
     def test_stale_details_name_opens_in_diff(self) -> None:
         """Имя из списка расхождений — рабочий ключ для diff, а не «неизвестный элемент»."""
-        self.structure.write_text(self.structure.read_text(encoding="utf-8") + "хвост\n",
-                                  encoding="utf-8")
+        old = self.structure.read_text(encoding="utf-8") + "хвост\n"
+        self.structure.write_text(old, encoding="utf-8")
+        self._deployed_from("vault", "SYS/structure.md", old)
         items = [i for i in agentic_stale_details(self.root, self.cfg) if i["part"] == "vault"]
         self.assertEqual([i["name"] for i in items], ["SYS/structure.md"], items)
 
         result = agentic_diff(self.root, "vault", items[0]["name"], self.cfg)
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["state"], "modified")
+        self.assertEqual(result["state"], "outdated")
         self.assertEqual((result["added"], result["removed"]), (0, 1), result["diff"])
 
     def test_diff_for_missing_vault_file_is_all_additions(self) -> None:
