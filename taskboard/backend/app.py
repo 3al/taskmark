@@ -334,7 +334,7 @@ def api_save_config(body: ConfigIn) -> dict:
     # Имён системных артефактов здесь нет: они перестали быть настройкой
     # (TASK-053) — переименование не доезжало до текстов скиллов и правил
     allowed = {"port", "theme", "tasks_dir", "update_check",
-               "release_manifest_url",
+               "release_manifest_url", "hide_empty_columns",
                *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 

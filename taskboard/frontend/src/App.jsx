@@ -3,7 +3,7 @@ import { DndContext, DragOverlay, PointerSensor, pointerWithin, rectIntersection
 import { api, subscribeChanges } from './api'
 import { isDropAllowed, defaultColumnOrder, setPipeline } from './statuses'
 import Header from './components/Header'
-import Column from './components/Column'
+import Column, { CollapsedColumn } from './components/Column'
 import TaskModal from './components/TaskModal'
 import EpicModal from './components/EpicModal'
 import NewTaskModal from './components/NewTaskModal'
@@ -16,10 +16,28 @@ import ReasonPrompt from './components/ReasonPrompt'
 import HelpModal from './components/HelpModal'
 import UpdateModal from './components/UpdateModal'
 
-// Колонки таскаем по указателю (pointerWithin), карточки — по пересечению прямоугольников
-function collisionDetection(args) {
-  if (args.active?.data?.current?.type === 'columnHeader') return pointerWithin(args)
-  return rectIntersection(args)
+// Колонки таскаем по указателю (pointerWithin), карточки — по пересечению
+// прямоугольников: для карточки важна площадь перекрытия, иначе вставка между
+// соседями ловилась бы пиксель в пиксель.
+//
+// **Свёрнутые колонки — исключение, и без него они почти недостижимы.**
+// `rectIntersection` сравнивает площадь пересечения с оверлеем карточки (288px
+// шириной), а полоса — 40px: стоящая между развёрнутыми колонками, она всегда
+// проигрывает соседям, которых тот же оверлей накрывает сильнее. Заметно это
+// было по краю доски — там соседа нет, и полоса «вдруг» начинала ловиться.
+// Поэтому цель-полосу решает указатель: он либо над ней, либо нет.
+function makeCollisionDetection(collapsedSet) {
+  return (args) => {
+    if (args.active?.data?.current?.type === 'columnHeader') return pointerWithin(args)
+    if (collapsedSet.size) {
+      const strip = pointerWithin(args).filter(
+        (c) => typeof c.id === 'string' && c.id.startsWith('col:')
+          && collapsedSet.has(c.id.slice(4)),
+      )
+      if (strip.length) return strip
+    }
+    return rectIntersection(args)
+  }
 }
 
 // Дроп-зона после последней колонки: перенос колонки в самый конец
@@ -98,6 +116,13 @@ export default function App() {
   // Ключ per-project: у каждого проекта свой порядок колонок
   const orderKey = (projectName) => `taskboard:columnOrder:${projectName || '_'}`
   const [columnOrder, setColumnOrder] = useState(null)
+  // Свёрнутые колонки — рядом с порядком и по тому же принципу: это вид доски
+  // у конкретного человека, а не свойство репозитория. Хранится **явное**
+  // решение по колонке ('collapsed' | 'expanded'), потому что настройка
+  // «скрывать пустые» задаёт лишь поведение по умолчанию: развернул пустую
+  // руками — она должна остаться развёрнутой, а не схлопнуться на перерисовке
+  const collapsedKey = (projectName) => `taskboard:collapsedColumns:${projectName || '_'}`
+  const [collapsedState, setCollapsedState] = useState({})
   // Цель вставки колонки: {status, side: 'before'|'after'|'end'}
   const [colDropTarget, setColDropTarget] = useState(null)
   const [error, setError] = useState(null)
@@ -157,6 +182,50 @@ export default function App() {
     },
   } : null
 
+  // В файл уезжает только «свёрнута»: это решение долгоживущее — колонку убрали
+  // с глаз, и она должна остаться убранной. «Развёрнута» живёт лишь до
+  // перезагрузки, потому что разворачивают обычно чтобы **посмотреть**, а не
+  // чтобы закрепить: сохранённое, оно потом молча спорит с настройкой
+  // «сворачивать пустые», и колонка стоит развёрнутой без видимой причины
+  const persistCollapsed = (state) => {
+    const kept = Object.fromEntries(
+      Object.entries(state).filter(([, v]) => v === 'collapsed'))
+    localStorage.setItem(collapsedKey(projects.active), JSON.stringify(kept))
+  }
+
+  const setColumnCollapsed = (status, collapsed) => {
+    const next = { ...collapsedState, [status]: collapsed ? 'collapsed' : 'expanded' }
+    setCollapsedState(next)
+    persistCollapsed(next)
+  }
+
+  // Снять решение по колонке, не заявляя обратного: дальше её судьбу снова
+  // решает настройка «скрывать пустые»
+  const forgetColumnCollapsed = (status) => {
+    if (!(status in collapsedState)) return
+    const next = { ...collapsedState }
+    delete next[status]
+    setCollapsedState(next)
+    persistCollapsed(next)
+  }
+
+  // Включение настройки — свежее указание человека, и оно сильнее прежних
+  // частных «развернул посмотреть». Иначе колонка, которую разворачивали час
+  // назад, остаётся стоять пустой среди свёрнутых, и понять почему нельзя
+  const hideEmpty = !!health?.config?.hide_empty_columns
+  const prevHideEmpty = useRef(hideEmpty)
+  useEffect(() => {
+    if (hideEmpty && !prevHideEmpty.current) {
+      setCollapsedState((state) => {
+        const kept = Object.fromEntries(
+          Object.entries(state).filter(([, v]) => v === 'collapsed'))
+        persistCollapsed(kept)
+        return kept
+      })
+    }
+    prevHideEmpty.current = hideEmpty
+  }, [hideEmpty])
+
   const saveColumnOrder = (order) => {
     setColumnOrder(order)
     const key = orderKey(projects.active)
@@ -184,6 +253,9 @@ export default function App() {
       localStorage.removeItem('taskboard:columnOrder')
     }
     setColumnOrder(saved || null)
+    let folded = null
+    try { folded = JSON.parse(localStorage.getItem(collapsedKey(active))) } catch { /* нет ключа */ }
+    setCollapsedState(folded && typeof folded === 'object' ? folded : {})
   }, [projects.active])
 
   const refresh = useCallback(async () => {
@@ -298,6 +370,39 @@ export default function App() {
         .filter((g) => g.tasks.length),
     }))
   }, [orderedColumns, found, stalledOnly])
+
+  // Какие колонки показывать полосой. Порядок разбора: явное решение человека
+  // сильнее всего, затем настройка «скрывать пустые», иначе колонка развёрнута.
+  //
+  // Под фильтром колонка с совпадениями разворачивается **всегда**: найденное,
+  // оставшееся внутри свёрнутой полосы, — это молчаливо потерянный результат
+  // поиска, и человек считает, что задачи нет
+  const collapsedSet = useMemo(() => {
+    // Пустоту считаем по **реальному** составу колонки, а не по отфильтрованному:
+    // настройка описывает постоянное свойство («задач нет»), и фильтр не должен
+    // на него влиять. Иначе поиск, будучи живым, схлопывал и разворачивал каркас
+    // на каждой набранной букве — в обе стороны
+    const total = new Map(orderedColumns.map(
+      (c) => [c.status, c.groups.reduce((n, g) => n + g.tasks.length, 0)]))
+
+    const out = new Set()
+    for (const col of visibleColumns) {
+      const decided = collapsedState[col.status]
+      const collapsed = decided === 'collapsed' || (!decided && hideEmpty && !total.get(col.status))
+      if (!collapsed) continue
+      // Единственное, ради чего фильтр вообще трогает каркас: найденное внутри
+      // свёрнутой полосы человек не увидит и решит, что задачи нет
+      const matches = col.groups.reduce((n, g) => n + g.tasks.length, 0)
+      if (filtered && matches) continue
+      out.add(col.status)
+    }
+    return out
+  }, [visibleColumns, orderedColumns, collapsedState, hideEmpty, filtered])
+
+  // Детектор пересобирается вместе с набором свёрнутых: он должен знать, какие
+  // цели узкие, — иначе полоса снова начнёт проигрывать соседям по площади
+  const collisionDetection = useMemo(
+    () => makeCollisionDetection(collapsedSet), [collapsedSet])
 
   const findColumn = (status) => board?.columns.find((c) => c.status === status)
 
@@ -428,7 +533,7 @@ export default function App() {
     }
 
     const sectionTitle = findColumn(to)?.title || to
-    const move = { taskId, sectionTitle, position, afterTaskId, group }
+    const move = { taskId, sectionTitle, toStatus: to, position, afterTaskId, group }
 
     // Заблокированную задачу берут в работу случайно — доска ведь не помнит,
     // чего она ждёт. Запрещать не за что (доска остаётся правдой пользователя),
@@ -491,7 +596,16 @@ export default function App() {
     try {
       if (clearStall) await api.updateTask(taskId, { blocked_by: [], paused: '' })
       await api.moveTask(taskId, sectionTitle, position, afterTaskId, group, confirm, reason)
-      refresh()
+      // Сначала доска, потом решение о сворачивании — и только в таком порядке.
+      // Снятое раньше, оно заставало колонку ещё пустой: настройка «сворачивать
+      // пустые» тут же схлопывала её в полосу, и та разворачивалась обратно,
+      // когда приезжала задача. Мигание на ровном месте.
+      await refresh()
+      // Задача уехала в свёрнутую колонку — разворачиваем: перенос без видимого
+      // результата человек всё равно проверяет, разворачивая полосу сам.
+      // Забываем решение, а не записываем «развёрнута»: колонка опустеет —
+      // и снова свернётся по настройке, вместо того чтобы висеть пустой
+      if (move.toStatus) forgetColumnCollapsed(move.toStatus)
     } catch (e) {
       // Доска могла не знать о простое (карточку изменили в другом окне) —
       // тогда сервер отказывает, и вопрос задаём по его причине
@@ -746,30 +860,51 @@ export default function App() {
             onDragCancel={() => { setActiveDrag(null); setColDropTarget(null) }}
           >
             <div className="flex gap-3 h-full items-stretch">
-              {visibleColumns.map((col) => (
-                <Column
-                  key={col.title}
-                  column={col}
-                  onOpenTask={setOpenTask}
-                  activeFrom={activeDrag?.fromStatus || null}
-                  dndFullBoard={dndFullBoard}
-                  pickStatus={pickStatus}
-                  createStatus={createStatus}
-                  query={query}
-                  matches={found}
-                  filtered={filtered}
-                  onDelete={deleteTask}
-                  onOpenEpic={(key) => pushView({ epic: key })}
-                  columnIndicator={
-                    activeDrag?.column && colDropTarget?.status === col.status
-                      ? (colDropTarget.side === 'after' ? 'right' : 'left')
-                      : null
-                  }
-                />
-              ))}
+              {visibleColumns.map((col) => {
+                const indicator = activeDrag?.column && colDropTarget?.status === col.status
+                  ? (colDropTarget.side === 'after' ? 'right' : 'left')
+                  : null
+                // Свёрнутая колонка рисуется другим компонентом, а не скрытой
+                // разметкой: её карточки не должны попадать в DOM вовсе
+                return collapsedSet.has(col.status) ? (
+                  <CollapsedColumn
+                    key={col.title}
+                    column={col}
+                    count={col.groups.reduce((n, g) => n + g.tasks.length, 0)}
+                    activeFrom={activeDrag?.fromStatus || null}
+                    dndFullBoard={dndFullBoard}
+                    pickStatus={pickStatus}
+                    createStatus={createStatus}
+                    columnIndicator={indicator}
+                    onExpand={() => setColumnCollapsed(col.status, false)}
+                  />
+                ) : (
+                  <Column
+                    key={col.title}
+                    column={col}
+                    onOpenTask={setOpenTask}
+                    activeFrom={activeDrag?.fromStatus || null}
+                    dndFullBoard={dndFullBoard}
+                    pickStatus={pickStatus}
+                    createStatus={createStatus}
+                    query={query}
+                    matches={found}
+                    filtered={filtered}
+                    onDelete={deleteTask}
+                    onOpenEpic={(key) => pushView({ epic: key })}
+                    onCollapse={() => setColumnCollapsed(col.status, true)}
+                    columnIndicator={indicator}
+                  />
+                )
+              })}
               <ColumnEndZone active={!!activeDrag?.column} />
             </div>
-            <DragOverlay dropAnimation={null}>
+            {/* Размер обёртки dnd-kit берёт у ручки, за которую тянут. У свёрнутой
+                колонки это полоса шириной 40px, и плашка с названием сжималась в
+                квадратик. Колонку тащат за разное, а выглядеть это должно
+                одинаково — поэтому для колонки размер задаёт содержимое */}
+            <DragOverlay dropAnimation={null}
+                         style={activeDrag?.column ? { width: 'auto', height: 'auto' } : undefined}>
               {activeDrag?.task && (
                 <div className="w-72 cursor-grabbing">
                   <div className="bg-zinc-800 border border-sky-500/70 rounded-lg px-3 py-2
@@ -784,7 +919,8 @@ export default function App() {
               {activeDrag?.column && (
                 <div className="cursor-grabbing">
                   <div className="bg-zinc-800 border border-sky-500/70 rounded-lg px-4 py-2
-                    shadow-2xl shadow-black/70 scale-105 -rotate-1 text-sm font-semibold text-zinc-300">
+                    shadow-2xl shadow-black/70 scale-105 -rotate-1 text-sm font-semibold
+                    text-zinc-300 whitespace-nowrap">
                     {activeDrag.column.title}
                   </div>
                 </div>

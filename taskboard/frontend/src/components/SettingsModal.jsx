@@ -127,6 +127,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
       .map((k) => [k, Number(config[k])])),
     // Переключатель, а не число: пустого значения у него не бывает
     card_show_type: config.card_show_type !== false,
+    hide_empty_columns: !!config.hide_empty_columns,
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
@@ -414,6 +415,25 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     <div className="text-[11px] text-zinc-500">
                       кружок с буквой в правом верхнем углу превью; в открытой
                       задаче тип виден всегда
+                    </div>
+                  </span>
+                </label>
+                {/* Пустая колонка занимает место, пока в ней ничего нет. Выключено
+                    по умолчанию: колонка, пропавшая сама, читается как поломка,
+                    поэтому прятать их — осознанный выбор человека */}
+                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">
+                  <input
+                    type="checkbox"
+                    checked={!!config.hide_empty_columns}
+                    onChange={(e) => set('hide_empty_columns', e.target.checked)}
+                    className="mt-0.5 accent-sky-500"
+                  />
+                  <span>
+                    Сворачивать пустые колонки
+                    <div className="text-[11px] text-zinc-500">
+                      колонка без задач становится узкой полосой и разворачивается
+                      сама, когда в ней появляется задача; любую другую сворачивает
+                      клик по её шапке
                     </div>
                   </span>
                 </label>
