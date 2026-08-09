@@ -119,7 +119,8 @@ export function splitSections(body, sections) {
 // query — активный поиск: совпадения подсвечиваются прямо в тексте задачи.
 // onOpenTask — переход к другой задаче (номер блокера кликабелен),
 // onChanged — простой поменялся: доске нужно перечитать карточки
-export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack, backTo, onClose }) {
+export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onChanged,
+                                    onBack, backTo, onClose }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
   // HTML-комментарии в файле задачи — служебные пометки для агентов; человеку
@@ -359,6 +360,22 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
               <CopyButton text={taskId} size="sm" className="-ml-1"
                           title="Скопировать номер задачи" />
             </div>
+            {/* Эпик — над названием, а не в мета-строке: там он стоял наравне
+                со статусом и датой, хотя это поле другого рода. Те описывают
+                саму задачу, а эпик говорит, частью чего она является, — контекст
+                по логике чтения идёт до заголовка. Без рамки и приглушённо:
+                бейдж добавил бы веса, а спорить с названием эпик не должен */}
+            {task?.meta?.epic && task.meta.epic !== '~' && (
+              <button
+                type="button"
+                onClick={() => onOpenEpic?.(task.meta.epic)}
+                className="mb-0.5 flex max-w-full items-baseline gap-1.5 text-xs text-zinc-500
+                  transition hover:text-zinc-300"
+                title={`Задачи эпика ${task.meta.epic}`}>
+                <span className="font-mono">{task.meta.epic}</span>
+                {task.epic_name && <span className="truncate">{task.epic_name}</span>}
+              </button>
+            )}
             {/* Кнопки лежат на нулевой ширине сразу за последним символом, а
                 место под них справа держит распорка — в поток они не попадают
                 ни в одном из режимов, поэтому текст переносится одинаково */}
@@ -470,11 +487,6 @@ export default function TaskModal({ taskId, query, onOpenTask, onChanged, onBack
                 </span>
                 <span>
                 статус: {task.meta.status || '—'} · создана: {task.meta.created || '—'}
-                {/* Во frontmatter лежит ключ, имя эпика приходит из реестра */}
-                {task.meta.epic && task.meta.epic !== '~' && (
-                  <> · эпик: <span className="text-zinc-400">{task.meta.epic}</span>
-                    {task.epic_name ? ` — ${task.epic_name}` : ''}</>
-                )}
                 </span>
               </div>
             )}

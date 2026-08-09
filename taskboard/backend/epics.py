@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.task_parser import parse_frontmatter
+
 EPICS_FILE = "epics.md"
 _LIST_HEADING = "## Список эпиков"
 _EMPTY = "_(нет)_"
@@ -56,6 +58,49 @@ def epic_name(tasks_dir: Path, key: str) -> str:
         if epic["key"] == key:
             return epic["name"]
     return ""
+
+
+def epic_tasks(tasks_dir: Path, key: str, pipeline) -> list[dict]:
+    """Задачи эпика в порядке маршрута: [{id, title, file, status, label, color}].
+
+    Порядок — пайплайна проекта, а не номера задачи: состав эпика читают как
+    маршрут, по которому он едет. Съезды (отмена) идут за терминальным статусом,
+    статус вне пайплайна — следом: молча прятать задачу, у которой статус
+    выключили из настроек, нельзя, но и места в маршруте у неё уже нет.
+
+    Пустой ключ не собирает задачи без эпика: `epic: ~` — это «эпика нет», а не
+    эпик с пустым именем.
+    """
+    key = (key or "").strip()
+    if not key or key == "~" or not Path(tasks_dir).is_dir():
+        return []
+
+    order = {status: i for i, status in enumerate(pipeline.keys())}
+    offramp = len(order) + 1        # съезды — за терминальным статусом
+    unknown = len(order) + 2        # статус вне пайплайна — следом за ними
+
+    out: list[dict] = []
+    for path in sorted(Path(tasks_dir).glob("TASK-*.md")):
+        match_id = re.match(r"^(TASK-\d+)", path.name)
+        if not match_id or _task_epic(path) != key:
+            continue
+        try:
+            meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+        except OSError:
+            continue
+        status = (meta.get("status") or "").strip()
+        info = pipeline.get(status) or {}
+        rank = (order.get(status, unknown) if info and not info.get("offramp")
+                else offramp if info else unknown)
+        out.append({"id": match_id.group(1), "title": meta.get("title", ""),
+                    "file": path.name, "status": status,
+                    "label": pipeline.label_of(status),
+                    "color": info.get("color", ""), "_rank": rank})
+
+    out.sort(key=lambda t: (t["_rank"], t["id"]))
+    for task in out:
+        task.pop("_rank")
+    return out
 
 
 def _task_epic(path: Path) -> str:

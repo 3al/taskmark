@@ -75,6 +75,8 @@ export const api = {
   pipeline: () => request('/api/pipeline'),
   pipelineSources: () => request('/api/pipeline/sources'),
   epics: () => request('/api/epics'),
+  // Состав эпика: задачи в порядке маршрута проекта + имя из реестра
+  epicTasks: (key) => request(`/api/epics/${encodeURIComponent(key)}/tasks`),
   // blockerFor — кем можно заблокировать эту задачу (список считает бэкенд)
   tasksList: (blockerFor = '') =>
     request(`/api/tasks/list${blockerFor ? `?blocker_for=${encodeURIComponent(blockerFor)}` : ''}`),

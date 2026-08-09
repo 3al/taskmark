@@ -22,7 +22,7 @@ function GroupTail({ status, groupIndex, afterTaskId, groupTitle, allowed }) {
 // Колонка статуса с группами (подразделы ###)
 export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, columnIndicator,
                                  pickStatus, createStatus, query, matches, filtered = false,
-                                 onDelete }) {
+                                 onDelete, onOpenEpic }) {
   const style = statusStyle(column.status)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${column.status}`,
@@ -84,6 +84,7 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
                 query={query}
                 match={matches?.get(task.id)}
                 onDelete={onDelete}
+                onOpenEpic={onOpenEpic}
               />
             ))}
             {/* Под любым фильтром хвостовая зона врала бы: «после последней»

@@ -5,6 +5,7 @@ import { isDropAllowed, defaultColumnOrder, setPipeline } from './statuses'
 import Header from './components/Header'
 import Column from './components/Column'
 import TaskModal from './components/TaskModal'
+import EpicModal from './components/EpicModal'
 import NewTaskModal from './components/NewTaskModal'
 import LogsPanel from './components/LogsPanel'
 import SettingsModal from './components/SettingsModal'
@@ -39,9 +40,28 @@ export default function App() {
   const [health, setHealth] = useState(null)
   const [projects, setProjects] = useState({ active: null, projects: [] })
   const [openTask, setOpenTask] = useState(null)
-  // Путь по задачам: из карточки уходят по номеру блокера, и вернуться нужно
-  // туда, откуда пришли, а не искать исходную задачу на доске заново
+  const [openEpic, setOpenEpic] = useState(null)
+  // Путь по окнам: из карточки уходят по номеру блокера, из окна эпика — в его
+  // задачу, и вернуться нужно туда, откуда пришли, а не искать исходное окно
+  // заново. Поэтому в следе лежит не номер задачи, а вид целиком: задача и эпик
+  // ходят по одному стеку, иначе «назад» из задачи в эпик потребовал бы второго
   const [taskTrail, setTaskTrail] = useState([])
+  // Текущий вид — то, куда вернётся «назад» из следующего окна
+  const currentView = () => (openTask ? { task: openTask } : { epic: openEpic })
+  const viewLabel = (view) => (view?.task || view?.epic || '')
+  const showView = (view) => {
+    setOpenTask(view?.task || null)
+    setOpenEpic(view?.epic || null)
+  }
+  const pushView = (view) => {
+    setTaskTrail([...taskTrail, currentView()])
+    showView(view)
+  }
+  const goBack = () => {
+    showView(taskTrail[taskTrail.length - 1])
+    setTaskTrail(taskTrail.slice(0, -1))
+  }
+  const closeViews = () => { setOpenTask(null); setOpenEpic(null); setTaskTrail([]) }
   const [showNewTask, setShowNewTask] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -739,6 +759,7 @@ export default function App() {
                   matches={found}
                   filtered={filtered}
                   onDelete={deleteTask}
+                  onOpenEpic={(key) => pushView({ epic: key })}
                   columnIndicator={
                     activeDrag?.column && colDropTarget?.status === col.status
                       ? (colDropTarget.side === 'after' ? 'right' : 'left')
@@ -956,14 +977,19 @@ export default function App() {
         <TaskModal
           taskId={openTask}
           query={query}
-          onOpenTask={(id) => { setTaskTrail([...taskTrail, openTask]); setOpenTask(id) }}
+          onOpenTask={(id) => pushView({ task: id })}
+          onOpenEpic={(key) => pushView({ epic: key })}
           onChanged={refresh}
-          backTo={taskTrail[taskTrail.length - 1]}
-          onBack={taskTrail.length ? () => {
-            setOpenTask(taskTrail[taskTrail.length - 1])
-            setTaskTrail(taskTrail.slice(0, -1))
-          } : null}
-          onClose={() => { setOpenTask(null); setTaskTrail([]) }}
+          backTo={viewLabel(taskTrail[taskTrail.length - 1])}
+          onBack={taskTrail.length ? goBack : null}
+          onClose={closeViews}
+        />
+      )}
+      {openEpic && (
+        <EpicModal
+          epicKey={openEpic}
+          onOpenTask={(id) => pushView({ task: id })}
+          onClose={closeViews}
         />
       )}
       {showNewTask && (

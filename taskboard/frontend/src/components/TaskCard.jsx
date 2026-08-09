@@ -48,7 +48,7 @@ function stripeKind(task) {
 }
 
 export default function TaskCard({ task, status, onOpen, indicatorAllowed = true,
-                                   query, match, onDelete }) {
+                                   query, match, onDelete, onOpenEpic }) {
   const style = statusStyle(status)
   const stripe = stripeKind(task)
   const type = taskType(task.type)
@@ -255,11 +255,19 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
                style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
             {task.meta && <span className="truncate">{task.meta}</span>}
             {task.epic && (
-              <span className="ml-auto min-w-0 shrink-0 truncate px-1.5 py-px rounded
-                border border-zinc-700 text-[10px] font-mono text-zinc-400"
-                    title={`Эпик ${task.epic}`}>
+              // Клик открывает состав эпика, но карточку задачи при этом не
+              // трогает: событие дальше не идёт, иначе поверх окна эпика тут же
+              // открылась бы сама задача
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onOpenEpic?.(task.epic) }}
+                onPointerDown={(e) => e.stopPropagation()}
+                className="ml-auto min-w-0 shrink-0 truncate px-1.5 py-px rounded
+                  border border-zinc-700 text-[10px] font-mono text-zinc-400
+                  transition hover:border-zinc-500 hover:text-zinc-200"
+                title={`Задачи эпика ${task.epic}`}>
                 {task.epic}
-              </span>
+              </button>
             )}
           </div>
         )}

@@ -24,7 +24,8 @@ from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
                             save_global_config, save_project_config,
                             validate_card_style)
 from backend.create_task_runner import create_task
-from backend.epics import annotate_epics, epic_name, list_epics, register_epic
+from backend.epics import (annotate_epics, epic_name, epic_tasks, list_epics,
+                           register_epic)
 from backend.migrations import (apply_config_migrations, migrate_global_config,
                                 pipeline_removals, rename_notes_section,
                                 retire_artifact_names)
@@ -58,7 +59,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
-                "board_repair": True, "stall": True, "update": True}
+                "board_repair": True, "stall": True, "update": True,
+                "epic_tasks": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -466,6 +468,20 @@ def api_epics() -> dict:
     """Реестр эпиков проекта — подсказки при создании задачи."""
     tasks_dir, _cfg = _ctx()
     return {"items": list_epics(tasks_dir)}
+
+
+@app.get("/api/epics/{key}/tasks")
+def api_epic_tasks(key: str) -> dict:
+    """Состав эпика: его задачи в порядке маршрута проекта.
+
+    Имя эпика отдаём тем же ответом: оно живёт только в реестре, и окну иначе
+    пришлось бы ходить за ним вторым запросом. Неизвестный ключ — не ошибка:
+    пустой состав и пустое имя, окно покажет это словами.
+    """
+    tasks_dir, cfg = _ctx()
+    pipeline = load_pipeline(cfg)
+    return {"key": key, "name": epic_name(tasks_dir, key),
+            "tasks": epic_tasks(tasks_dir, key, pipeline)}
 
 
 @app.get("/api/criteria-presets")
