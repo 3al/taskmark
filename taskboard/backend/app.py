@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from backend import (baseline, changelog, help_docs, lifecycle, registry,
                      updater, version)
-from backend.board_parser import parse_board
+from backend.board_parser import annotate_age, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
                             PROJECT_KEYS,
@@ -428,6 +428,9 @@ def api_board() -> dict:
     # Долг этапа тоже виден только из файла задачи — и только он объясняет,
     # почему агент упрётся при следующем движении вперёд
     annotate_debt(tasks_dir, board, cfg, pipeline)
+    # Возраст в статусе — единственное, что берётся из самой строки доски:
+    # порог залежалости считает бэкенд, превью получает уже готовый ответ
+    annotate_age(board, cfg, pipeline)
     board["report"] = report
     board["config"] = {
         # Фронт рисует колонки, порядок, цвета и правила DnD по пайплайну;

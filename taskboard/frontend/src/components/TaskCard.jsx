@@ -39,6 +39,15 @@ const GLYPH = { fontSize: '0.95em' }
 // (TASK-122), и флаг ради одного элемента незачем тащить пропсами
 const MARK = `${SLOT} rounded-full ring-1`
 
+// Возраст в статусе словами. Число дней приходит с бэкенда — там же решено,
+// показывать ли его вообще: порог залежалости один на доску
+function agePhrase(days) {
+  const last = days % 10
+  const teen = days % 100 >= 11 && days % 100 <= 14
+  const word = !teen && last === 1 ? 'день' : !teen && last >= 2 && last <= 4 ? 'дня' : 'дней'
+  return `${days} ${word} здесь`
+}
+
 function stripeKind(task) {
   if (task.stall_stale) return 'stale'
   const blocked = task.blocked_by?.length > 0
@@ -121,7 +130,13 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             не добавляет */}
         <div className="flex items-center gap-1.5 font-mono text-zinc-500"
              style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
-          <span className="shrink-0">{task.id}</span>
+          {/* Кто и когда последним двигал задачу — в подсказке номера: строку
+              она больше не занимает, но и не пропадает. Номер есть у каждой
+              карточки, а нижней строки у молодых задач нет вовсе */}
+          <span className="shrink-0"
+                title={[task.agent, task.moved].filter(Boolean).join(' · ') || undefined}>
+            {task.id}
+          </span>
           {task.struck && <span className="text-zinc-600 normal-case shrink-0">superseded</span>}
           {/* Значок — эмодзи: его цвет рисует шрифт, и text-* на него не
               действует. Чтобы приглушённая пометка выглядела приглушённой
@@ -252,13 +267,23 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             {highlight(match.excerpt, query)}
           </div>
         )}
-        {/* Низ карточки — справка: кто и когда трогал, к какому эпику относится.
-            Эпик здесь, а не наверху: он самый широкий элемент строки и при этом
-            самый редко нужный — наверху он вытеснял пометки простоя */}
-        {(task.meta || task.epic) && (
+        {/* Низ карточки — что залежалось и к какому эпику относится. Эпик
+            здесь, а не наверху: он самый широкий элемент строки и при этом
+            самый редко нужный — наверху он вытеснял пометки простоя.
+            Возраст вместо прежнего «агент · дата»: имя модели на доске почти
+            бесполезно (за контекстом идут в открытую карточку), а дата сама по
+            себе не отвечает на вопрос «что стоит» — его считали в уме. Кто и
+            когда двигал, остаётся в подсказке. Задача моложе порога поля
+            не получает вовсе, и строки у неё нет */}
+        {(task.stale_days || task.epic) && (
           <div className="flex items-center gap-2 mt-1 text-zinc-500"
                style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
-            {task.meta && <span className="truncate">{task.meta}</span>}
+            {task.stale_days > 0 && (
+              <span className="truncate"
+                    title={[task.agent, task.moved].filter(Boolean).join(' · ')}>
+                {agePhrase(task.stale_days)}
+              </span>
+            )}
             {task.epic && (
               // Клик открывает состав эпика, но карточку задачи при этом не
               // трогает: событие дальше не идёт, иначе поверх окна эпика тут же

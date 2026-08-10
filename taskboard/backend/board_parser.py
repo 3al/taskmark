@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
+from backend.config import DEFAULTS
+from backend.stall import is_terminal
 from backend.statuses import Pipeline
 
 # Строка задачи: - TASK-NNN · [Заголовок](файл.md) · агент · дата
@@ -20,6 +23,50 @@ _ENTRY_RE = re.compile(
 
 _HEADING_RE = re.compile(r"^(#{2,3})\s+(.*)$")
 
+# Дата перехода в хвосте записи. Ею меряется возраст задачи в статусе, поэтому
+# отличать её от имени исполнителя приходится по форме: порядок сегментов
+# хвоста никем не гарантирован, а даты в имени модели не бывает
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# Голова записи до хвоста: «- TASK-NNN · [Заголовок](файл)». Ленивый заголовок —
+# по той же причине, что и в _ENTRY_RE: скобки внутри него норма
+_HEAD_RE = re.compile(r"^(\s*-\s*(?:~~)?\s*TASK-\d+\s*·\s*\[.+?\]\([^)]*\))(.*)$")
+
+
+def _split_tail(tail: str) -> tuple[str, str]:
+    """Разложить хвост «Агент · дата» на исполнителя и дату перехода.
+
+    Обе части необязательны: у задачи, которую ни разу не двигали, хвоста нет
+    вовсе, а у строки, написанной руками, может не быть даты.
+    """
+    parts = [p.strip() for p in tail.split("·") if p.strip()]
+    moved = next((p for p in parts if _DATE_RE.match(p)), "")
+    agent = next((p for p in parts if not _DATE_RE.match(p)), "")
+    return agent, moved
+
+
+def retail_entry(entry: str, moved: str) -> str:
+    """Переписать хвост записи на «· прежний агент · дата».
+
+    Перенос мышью — такая же смена статуса, как вызов скрипта, и дату он
+    обязан обновлять: иначе она показывает предыдущий переход, а возраст в
+    статусе врёт. Исполнителя при этом сохраняем прежнего — как делает
+    `set_status.py` без `--agent`: кто двигал строку мышью, доска не знает.
+
+    Хвоста не было — не выдумываем его: строка без исполнителя остаётся
+    строкой без исполнителя.
+    """
+    m = _HEAD_RE.match(entry)
+    if not m:
+        return entry
+    head, tail = m.group(1), m.group(2)
+    struck = tail.rstrip().endswith("~~")
+    agent, old_date = _split_tail(tail.strip().rstrip("~"))
+    if not agent and not old_date:
+        return entry
+    out = f"{head} · {agent} · {moved}" if agent else f"{head} · {moved}"
+    return f"{out}~~" if struck else out
+
 
 def _parse_entry(line: str) -> dict | None:
     """Распарсить строку задачи, вернуть dict или None."""
@@ -29,13 +76,56 @@ def _parse_entry(line: str) -> dict | None:
     tail = m.group("tail").strip()
     # tail: " · Агент · дата" — убираем ведущий разделитель
     tail = re.sub(r"^·\s*", "", tail).strip()
+    agent, moved = _split_tail(tail)
     return {
         "id": m.group("id"),
         "title": m.group("title"),
         "file": m.group("file"),
+        # meta — хвост целиком: его читают старые сборки фронта, и он же
+        # остаётся исходником, если разбор на части когда-нибудь разойдётся
         "meta": tail,
+        "agent": agent,
+        "moved": moved,
         "struck": bool(m.group("struck")),
     }
+
+
+def annotate_age(board: dict, cfg: dict, pipeline=None,
+                 today: date | None = None) -> dict:
+    """Проставить карточкам возраст в статусе — только залежавшимся.
+
+    Порог считает бэкенд, а не превью: правило «что залежалось» одно на доску,
+    и держать его в двух местах незачем. Задача моложе порога поля не получает
+    вовсе — нижней строки у неё не будет, карточка останется короткой.
+
+    Молчим и там, где возраст неизвестен: задачу ни разу не двигали (даты в
+    строке нет), дату испортили руками или она из будущего — залежалостью это
+    не является.
+
+    Молчим и в конце маршрута: в терминальном статусе и в съезде задача стоит
+    по определению — работа окончена. Возраст там был бы шумом того же класса,
+    что долг у закрытой задачи.
+    """
+    threshold = cfg.get("card_stale_days", DEFAULTS["card_stale_days"])
+    try:
+        threshold = int(threshold)
+    except (TypeError, ValueError):
+        threshold = DEFAULTS["card_stale_days"]
+    today = today or date.today()
+
+    for column in board.get("columns", []):
+        if is_terminal(pipeline, column.get("status", "")):
+            continue
+        for group in column.get("groups", []):
+            for task in group.get("tasks", []):
+                moved = task.get("moved") or ""
+                try:
+                    days = (today - date.fromisoformat(moved)).days
+                except ValueError:
+                    continue
+                if days >= threshold and days >= 0:
+                    task["stale_days"] = days
+    return board
 
 
 def parse_board(board_path: Path, pipeline: Pipeline) -> dict:

@@ -122,7 +122,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     delete_tasks: !!config.delete_tasks,
     release_script: (config.release_script || '').trim(),
     // Размеры превью: пустое поле — «не меняли», иначе бэкенд получит ноль
-    ...Object.fromEntries(['card_title_size', 'card_title_lines', 'card_meta_size']
+    ...Object.fromEntries(['card_title_size', 'card_title_lines', 'card_meta_size',
+      'card_stale_days']
       .filter((k) => config[k] !== '' && config[k] != null)
       .map((k) => [k, Number(config[k])])),
     // Переключатель, а не число: пустого значения у него не бывает
@@ -401,6 +402,33 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     )
                   })}
                 </div>
+                {/* Порог залежалости — тоже число с границами, но своё поле:
+                    в ряду размеров оно читалось бы как ещё один «px».
+                    Настройка проектная, в отличие от размеров: неделя без
+                    движения в одном репозитории норма, в другом — беда */}
+                {(() => {
+                  const [low, high] = config.card_limits?.card_stale_days || []
+                  const value = config.card_stale_days
+                  const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                  return (
+                    <div className="mt-3">
+                      <span className={label}>
+                        Показывать возраст задачи после стольки дней в статусе
+                      </span>
+                      <input
+                        className={`${field} ${bad ? 'border-rose-500' : ''}`}
+                        type="number"
+                        min={low}
+                        max={high}
+                        value={value ?? ''}
+                        onChange={(e) => set('card_stale_days', e.target.value)}
+                      />
+                      <span className="block text-[11px] text-zinc-500 mt-1">
+                        возраст показывается нижней строкой превью; от {low} до {high}
+                      </span>
+                    </div>
+                  )
+                })()}
                 {/* Метка типа — не размер, но живёт там же: это про то, что
                     видно на превью. По умолчанию включена */}
                 <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">

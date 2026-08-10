@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
+from backend.board_parser import retail_entry
 from backend.notes import append_note, append_transition
 from backend.requirements import requirement_names, reset_confirmations
 from backend.stall import clear_stall, is_terminal
@@ -217,7 +219,13 @@ def move_task(
         if bounds is None:
             return {"ok": False, "error": f"Раздел {to_section} не найден"}
 
+    # Дата в строке — момент перехода, и перенос мышью обязан её обновлять:
+    # иначе она показывает предыдущий переход, а возраст задачи в статусе врёт.
+    # Починка доски (touch_status=False) переводом не является — там дата
+    # остаётся прежней. Исполнителя сохраняем: кто тащил карточку, доска не знает
     entry_line = lines.pop(src_idx)
+    if touch_status:
+        entry_line = retail_entry(entry_line, date.today().isoformat())
     start, end = _section_bounds(lines, to_section) or (0, 0)
 
     # Собрать индексы строк задач целевого раздела

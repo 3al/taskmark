@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 import unittest
@@ -128,8 +129,10 @@ class CardMarkerTest(unittest.TestCase):
         self.assertNotIn("⏸ пауза", self.src,
                          "слово «пауза» рядом со значком ничего не добавляет, но занимает место")
         self.assertIn("gap-1.5", self.src, "отступы в строке номера прежние")
-        self.assertIn('<span className="shrink-0">{task.id}</span>', self.src,
-                      "номер задачи может перенестись по слогам")
+        # Номер несёт ещё и подсказку «кто и когда двигал» (TASK-080), поэтому
+        # проверяем не написание строки, а сам запрет переноса
+        number = re.search(r"<span className=\"shrink-0\"[^>]*>\s*\{task\.id\}", self.src)
+        self.assertIsNotNone(number, "номер задачи может перенестись по слогам")
 
     def test_stripe_is_not_a_border(self) -> None:
         """Полоска простоя — отдельный элемент, а не левая рамка.
