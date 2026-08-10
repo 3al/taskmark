@@ -240,8 +240,13 @@ class TaskRenderingTest(unittest.TestCase):
         Старые задачи полны пометок `<!-- ... -->` для агентов; на доске они
         читаются как обычные блоки текста и мешают.
         """
+        # Чистка живёт в общем модуле: то же тело копирует контекстное меню
+        # карточки, и второй формулой комментарии уехали бы в буфер
+        helper = (FRONTEND / "taskText.js").read_text(encoding="utf-8")
+        self.assertIn("<!--", helper, "комментарии не вычищаются перед рендером")
+
         src = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
-        self.assertIn("<!--", src, "комментарии не вычищаются перед рендером")
+        self.assertIn("taskBody(task)", src, "окно задачи чистит тело по своей формуле")
         self.assertNotIn("{task.body}", src,
                          "в рендер уходит сырое тело задачи, а не очищенное")
 

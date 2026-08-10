@@ -7,6 +7,7 @@ import { TASK_TYPES, taskType } from '../taskTypes'
 import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents, rehypeNoteMeta, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
+import { taskBody, taskCopyText } from '../taskText'
 import CopyButton from './CopyButton'
 import MarkdownEditor from './MarkdownEditor'
 import ReasonPrompt from './ReasonPrompt'
@@ -123,13 +124,9 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                                     onBack, backTo, onClose }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
-  // HTML-комментарии в файле задачи — служебные пометки для агентов; человеку
-  // на доске они видны как блоки текста и только мешают читать задачу.
-  // Файл не трогаем: чистим то, что показываем и копируем
-  const body = useMemo(
-    () => (task?.body || '').replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim(),
-    [task],
-  )
+  // Чистку тела и сборку копируемого текста держит общий модуль: то же самое
+  // копирует контекстное меню карточки, и две формулы разошлись бы молча
+  const body = useMemo(() => taskBody(task), [task])
   // Плагин пересобираем только при смене запроса: иначе react-markdown
   // перерисовывает всё дерево на каждый рендер модалки
   const rehypePlugins = useMemo(
@@ -677,7 +674,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
           {task && (
             <CopyButton
               className="ml-auto"
-              text={`${task.meta?.title || taskId}\n\n${body}`}
+              text={taskCopyText(task, taskId)}
               title="Копировать содержимое задачи"
             />
           )}

@@ -48,7 +48,7 @@ function stripeKind(task) {
 }
 
 export default function TaskCard({ task, status, onOpen, indicatorAllowed = true,
-                                   query, match, onDelete, onOpenEpic }) {
+                                   query, match, onDelete, onOpenEpic, onContextMenu }) {
   const style = statusStyle(status)
   const stripe = stripeKind(task)
   const type = taskType(task.type)
@@ -82,6 +82,11 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         {...listeners}
         {...attributes}
         onClick={() => onOpen(task.id)}
+        // Карточка только зовёт меню и гасит браузерное: что в меню — знает
+        // доска (правила переноса, состав колонок), а не превью задачи
+        onContextMenu={onContextMenu
+          ? (e) => { e.preventDefault(); onContextMenu(task, status, e) }
+          : undefined}
         className={`${style.card} group/card relative overflow-hidden border rounded-lg px-3.5 py-2.5
           cursor-grab ${style.cardHover} transition select-none touch-none
           outline-none ${style.cardFocus}

@@ -101,7 +101,7 @@ export function CollapsedColumn({ column, count, activeFrom, dndFullBoard,
 // Колонка статуса с группами (подразделы ###)
 export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, columnIndicator,
                                  pickStatus, createStatus, query, matches, filtered = false,
-                                 onDelete, onOpenEpic, onCollapse }) {
+                                 onDelete, onOpenEpic, onCollapse, onTaskContextMenu }) {
   const style = statusStyle(column.status)
   const { setNodeRef, isOver } = useDroppable({
     id: `col:${column.status}`,
@@ -171,6 +171,7 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
                 match={matches?.get(task.id)}
                 onDelete={onDelete}
                 onOpenEpic={onOpenEpic}
+                onContextMenu={onTaskContextMenu}
               />
             ))}
             {/* Под любым фильтром хвостовая зона врала бы: «после последней»

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DndContext, DragOverlay, PointerSensor, pointerWithin, rectIntersection, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { api, subscribeChanges } from './api'
-import { isDropAllowed, defaultColumnOrder, setPipeline } from './statuses'
+import { isDropAllowed, defaultColumnOrder, setPipeline, statusStyle } from './statuses'
+import { taskCopyText } from './taskText'
 import Header from './components/Header'
 import Column, { CollapsedColumn } from './components/Column'
 import TaskModal from './components/TaskModal'
@@ -15,6 +16,7 @@ import BoardRepairModal from './components/BoardRepairModal'
 import ReasonPrompt from './components/ReasonPrompt'
 import HelpModal from './components/HelpModal'
 import UpdateModal from './components/UpdateModal'
+import ContextMenu from './components/ContextMenu'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению
 // прямоугольников: для карточки важна площадь перекрытия, иначе вставка между
@@ -110,6 +112,8 @@ export default function App() {
   // но не запрещаем — гейт стоит только на пути агента
   const [pendingDebt, setPendingDebt] = useState(null)
   const [dndFullBoard, setDndFullBoard] = useState(false)
+  // Открытое контекстное меню карточки: задача, её колонка и точка вызова
+  const [menuFor, setMenuFor] = useState(null)
   const configLoaded = useRef(false)
   const [activeDrag, setActiveDrag] = useState(null)
   // Порядок колонок живёт только на фронте (localStorage), с файлом доски не синкается.
@@ -454,6 +458,7 @@ export default function App() {
   const isAllowed = (from, to) => isDropAllowed(from, to, dndFullBoard, pickStatus, createStatus)
 
   const onDragStart = (event) => {
+    setMenuFor(null)
     const data = event.active.data.current || {}
     if (data.type === 'columnHeader') {
       setActiveDrag({ column: { status: data.status, title: data.title } })
@@ -536,8 +541,67 @@ export default function App() {
       position = (findColumn(to)?.groups || []).reduce((n, g) => n + g.tasks.length, 0)
     }
 
+    startMove(taskId, from, to, { position, afterTaskId, group })
+  }
+
+  // Контекстное меню карточки: открывается правым кликом, состав собирается
+  // здесь — доска знает и правила переноса, и колонки, а превью задачи не знает
+  // ни того, ни другого
+  const openTaskMenu = (task, status, e) => setMenuFor({ task, status, x: e.clientX, y: e.clientY })
+
+  const copyToClipboard = async (text) => {
+    try { await navigator.clipboard.writeText(text) } catch { /* буфер недоступен */ }
+  }
+
+  // Содержимое задачи на доске не лежит — тело файла приходит отдельным запросом.
+  // Формула текста общая с окном задачи (`taskCopyText`): «скопировать
+  // содержимое» обязано давать одно и то же, откуда бы его ни нажали
+  const copyTaskText = async (taskId) => {
+    try {
+      await copyToClipboard(taskCopyText(await api.task(taskId), taskId))
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  const menuItems = useMemo(() => {
+    if (!menuFor) return []
+    const { task, status } = menuFor
+    // Правило переноса одно на все способы: настройка «перетаскивание по всей
+    // доске» ограничивает и меню — иначе она обходилась бы правым кликом
+    const targets = visibleColumns.filter(
+      (col) => col.status !== status && isAllowed(status, col.status))
+    const items = []
+    if (targets.length) {
+      items.push({ key: 'move', group: 'Перенести в' })
+      for (const col of targets) {
+        items.push({
+          key: `move:${col.status}`,
+          label: col.title,
+          dot: statusStyle(col.status).dot,
+          // В начало колонки: перенос из меню — про смену этапа, а не про место
+          // в очереди; точное место по-прежнему выбирают мышью
+          onSelect: () => startMove(task.id, status, col.status, { position: 0 }),
+        })
+      }
+    }
+    items.push({ key: 'copy', group: 'Копировать' })
+    items.push({ key: 'copy-id', label: 'Номер задачи', hint: task.id,
+                 onSelect: () => copyToClipboard(task.id) })
+    items.push({ key: 'copy-body', label: 'Содержимое задачи',
+                 onSelect: () => copyTaskText(task.id) })
+    return items
+  }, [menuFor, visibleColumns, dndFullBoard, board])
+
+  // Перенос задачи — общий путь для мыши и контекстного меню. Вопросы по дороге
+  // (простой, долг этапа, причина отмены) одни и те же: способ переноса на них
+  // не влияет, а два пути с разными вопросами разъехались бы молча
+  const startMove = (taskId, from, to, where = {}) => {
     const sectionTitle = findColumn(to)?.title || to
-    const move = { taskId, sectionTitle, toStatus: to, position, afterTaskId, group }
+    const move = {
+      taskId, sectionTitle, toStatus: to,
+      position: null, afterTaskId: null, group: null, ...where,
+    }
 
     // Заблокированную задачу берут в работу случайно — доска ведь не помнит,
     // чего она ждёт. Запрещать не за что (доска остаётся правдой пользователя),
@@ -906,6 +970,7 @@ export default function App() {
                     onDelete={deleteTask}
                     onOpenEpic={(key) => pushView({ epic: key })}
                     onCollapse={() => setColumnCollapsed(col.status, true)}
+                    onTaskContextMenu={openTaskMenu}
                     columnIndicator={indicator}
                   />
                 )
@@ -1038,6 +1103,10 @@ export default function App() {
       {/* Перенос остановленной задачи в работу: вопрос вместо запрета.
           Свой диалог, а не нативный confirm — он рисуется системой и выпадает
           из темы доски */}
+      {menuFor && (
+        <ContextMenu x={menuFor.x} y={menuFor.y} items={menuItems}
+                     onClose={() => setMenuFor(null)} />
+      )}
       {pendingMove && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
              onClick={() => setPendingMove(null)}>
