@@ -83,7 +83,7 @@ def _utf8_console() -> None:
 # объявлена, скрипт про неё не знает, а человек уверен, что она работает.
 # Имена, а не номер версии, — как CAPABILITIES в backend/app.py: набор
 # расширяется, не заводя таблицы соответствия версий возможностям.
-SCRIPT_CAPABILITIES = {"stall", "task_types", "requires", "comments"}
+SCRIPT_CAPABILITIES = {"stall", "task_types", "requires", "comments", "epics"}
 
 # Дефолты дублируют backend/config.py: скрипт автономен и работает
 # без запущенного сервера, в том числе в проектах без установленного taskboard
@@ -863,6 +863,83 @@ def current_status(tasks_dir: Path, task_id: str) -> str | None:
         return None
     m = re.search(r"^status:\s*(.+?)\s*$", path.read_text(encoding="utf-8"), flags=re.MULTILINE)
     return m.group(1) if m else None
+
+
+# --- Эпики ------------------------------------------------------------------
+# Зеркало backend/epics.py: имя эпика живёт только в реестре `epics.md`, состав
+# собирается по полю `epic:` задач. Два источника одного среза — скрипт и окно
+# эпика — обязаны показывать одно и то же.
+
+EPICS_FILE = "epics.md"
+
+# Запись эпика: «## E056-18500 — Инвентаризация» (имя может отсутствовать).
+# Суффикс ключа не обязан быть числовым: кроме Jira-ключей заводят мнемонические
+# («E001-STALL»). Заголовки разделов самого реестра («## Список эпиков») под
+# шаблон ключа не подходят и эпиками не считаются
+_EPIC_RE = re.compile(
+    r"^##\s+(?P<key>[A-Za-z][\w.]*-[A-Za-z0-9][\w.-]*)\s*(?:—|-|–)?\s*(?P<name>.*)$")
+
+
+def epics(tasks_dir: Path) -> list[dict]:
+    """Эпики реестра: [{key, name}]. Нет файла — пустой список, не ошибка."""
+    try:
+        content = (Path(tasks_dir) / EPICS_FILE).read_text(encoding="utf-8-sig")
+    except OSError:
+        return []
+    out = []
+    for line in content.splitlines():
+        m = _EPIC_RE.match(line.strip())
+        if m:
+            out.append({"key": m.group("key"), "name": m.group("name").strip()})
+    return out
+
+
+def epic_slice(tasks_dir: Path, key: str) -> dict:
+    """Состав эпика: {epic, name, total, tasks: [{id, status, label, title, file}]}.
+
+    Порядок — **пайплайна проекта**, а не номера задачи: состав читают как
+    маршрут, по которому эпик едет. Съезды (отмена) идут за терминальным
+    статусом, статус вне пайплайна — следом: молча прятать задачу, у которой
+    статус выключили из настроек, нельзя, но места в маршруте у неё уже нет.
+
+    Пустой ключ задач без эпика не собирает: `epic: ~` — это «эпика нет».
+    """
+    tasks_dir = Path(tasks_dir)
+    key = (key or "").strip()
+    pipeline = pipeline_of(load_config(tasks_dir))
+    name = next((e["name"] for e in epics(tasks_dir) if e["key"] == key), "")
+    out: dict = {"epic": key, "name": name, "total": 0, "tasks": []}
+    if not key or key == EMPTY or not tasks_dir.is_dir():
+        return out
+
+    order = {s["key"]: i for i, s in enumerate(pipeline)}
+    offramp = len(order) + 1        # съезды — за терминальным статусом
+    unknown = len(order) + 2        # статус вне пайплайна — следом за ними
+    meta_of = {s["key"]: s for s in pipeline}
+
+    tasks = []
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        m = re.match(r"^(TASK-\d+)", path.name)
+        if not m:
+            continue
+        meta = _read_meta(path)
+        if str(meta.get("epic", "")).strip() != key:
+            continue
+        status = str(meta.get("status", "")).strip()
+        info = meta_of.get(status)
+        rank = (order[status] if info and not info.get("offramp")
+                else offramp if info else unknown)
+        tasks.append({"id": m.group(1), "status": status,
+                      "label": info["label"] if info else status,
+                      "title": str(meta.get("title", "")).strip(),
+                      "file": path.name, "_rank": rank})
+
+    tasks.sort(key=lambda t: (t["_rank"], t["id"]))
+    for task in tasks:
+        task.pop("_rank")
+    out["total"] = len(tasks)
+    out["tasks"] = tasks
+    return out
 
 
 def queue(tasks_dir: Path, limit: int = 5) -> dict:
@@ -1977,6 +2054,8 @@ def main() -> None:
                         help="Живая очередь доски прямо сейчас (JSON)")
     parser.add_argument("--limit", type=int, default=5,
                         help="Сколько задач очереди показать, 0 — все (default: 5)")
+    parser.add_argument("--epic", metavar="КЛЮЧ", default=None,
+                        help="Состав эпика: задачи в порядке маршрута (JSON)")
     parser.add_argument("--block", metavar="TASK-NNN", default=None,
                         help="Задача ждёт другую: правит blocked_by и blocks у обеих")
     parser.add_argument("--unblock", metavar="TASK-NNN", nargs="?", const="", default=None,
@@ -2021,6 +2100,20 @@ def main() -> None:
 
     if args.queue:
         print(json.dumps(queue(tasks_dir, args.limit), ensure_ascii=False, indent=2))
+        return
+
+    if args.epic is not None:
+        report = epic_slice(tasks_dir, args.epic)
+        known = [e["key"] for e in epics(tasks_dir)]
+        # Пустой вывод на опечатку в ключе неотличим от эпика без задач, поэтому
+        # неизвестный ключ — ошибка с перечнем верных. Ключа нет в реестре, но
+        # задачи с ним есть — показываем: реестр мог отстать от файлов
+        if args.epic not in known and not report["total"]:
+            print(f"[ERROR] Эпик не найден: {args.epic or '(пусто)'}"
+                  + (f" (в реестре: {', '.join(known)})" if known
+                     else f" (реестр {EPICS_FILE} пуст)"), file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return
 
     if args.types:

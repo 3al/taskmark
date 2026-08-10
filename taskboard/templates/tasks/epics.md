@@ -11,7 +11,13 @@ _Реестр эпиков — единый источник имён. Зада�
 
 ## Как найти задачи эпика
 
-Ищи `epic: <ключ>` в `tasks/TASK-*.md` (поле frontmatter).
+```
+py tasks/set_status.py --epic <ключ>       # Windows
+python tasks/set_status.py --epic <ключ>   # Windows без лаунчера py
+python3 tasks/set_status.py --epic <ключ>  # macOS/Linux
+```
+
+Команда печатает задачи эпика в порядке маршрута: номер, статус и заголовок.
 
 ## Список эпиков
 
