@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from backend.config import TASK_TYPES
+from backend.notes import BOARD_AUTHOR, TITLE_TEXT, TYPE_TEXT, append_note
 
 _TASK_FILE_RE = re.compile(r"^TASK-\d+.*\.md$")
 
@@ -279,12 +280,17 @@ def set_task_status(tasks_dir: Path, task_id: str, status: str) -> bool:
     return set_meta_fields(path, {"status": status})
 
 
-def set_task_type(tasks_dir: Path, task_id: str, value: str) -> dict:
+def set_task_type(tasks_dir: Path, task_id: str, value: str,
+                  author: str = BOARD_AUTHOR) -> dict:
     """Сменить тип задачи — то же, что `set_status.py --type`, но из окна доски.
 
     Список закрыт: чужое значение молча превратилось бы в задачу без метки.
     Поля может не быть вовсе (задача заведена до его появления) — тогда оно
     дописывается, а не требует правки файла руками.
+
+    Тип задаёт исключения в требованиях этапа, поэтому его смена идёт в
+    хронологию: ею объясняется, почему переход прошёл или не прошёл. Повтор
+    того же значения событием не считается.
     """
     value = (value or "").strip().lower()
     if value not in TASK_TYPES:
@@ -294,8 +300,12 @@ def set_task_type(tasks_dir: Path, task_id: str, value: str) -> dict:
     path = find_task_file(tasks_dir, task_id)
     if path is None:
         return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    was = str(meta.get("type", "") or "").strip().lower()
     if not set_meta_fields(path, {"type": value}):
         return {"ok": False, "error": f"Не удалось записать тип в {path.name}"}
+    if value != was:
+        append_note(path, TYPE_TEXT.format(now=value, was=was or "не указан"), author)
     return {"ok": True, "type": value, "label": TASK_TYPES[value]["label"]}
 
 
@@ -316,11 +326,15 @@ def normalize_title(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
 
-def set_task_title(tasks_dir: Path, task_id: str, new_title: str) -> dict:
+def set_task_title(tasks_dir: Path, task_id: str, new_title: str,
+                   author: str = BOARD_AUTHOR) -> dict:
     """Обновить title во frontmatter и переименовать файл задачи.
 
     Возвращает {"ok": True, "title": "...", "file": "TASK-NNN-новый-slug.md"}
     или {"ok": False, "error": "..."}.
+
+    Прежнее название остаётся только в хронологии: файл переименован, строка
+    доски переписана, и без записи от старого имени не остаётся следа.
     """
     new_title = normalize_title(new_title)
     if not new_title:
@@ -356,9 +370,13 @@ def set_task_title(tasks_dir: Path, task_id: str, new_title: str) -> dict:
     if path != new_path and new_path.exists():
         return {"ok": False, "error": f"Файл уже существует: {new_name}"}
 
+    was = str(parse_frontmatter(content)[0].get("title", "") or "").strip()
     path.write_text(header + content[end:], encoding="utf-8")
 
     if path != new_path:
         path.rename(new_path)
 
+    if new_title != was:
+        append_note(new_path, TITLE_TEXT.format(now=new_title, was=was or "не указано"),
+                    author)
     return {"ok": True, "title": new_title, "file": new_name}

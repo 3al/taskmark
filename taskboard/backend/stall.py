@@ -20,6 +20,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.notes import (BLOCK_TEXT, BLOCKS_TEXT, BOARD_AUTHOR, PAUSE_TEXT,
+                           RESUME_TEXT, UNBLOCK_TEXT, UNBLOCKS_TEXT, append_note)
 from backend.task_parser import find_task_file, parse_frontmatter, set_meta_fields
 
 BLOCKED_BY = "blocked_by"
@@ -199,11 +201,15 @@ def _edit_field(path: Path, field: str, task_id: str, add: bool) -> None:
     set_meta_fields(path, {field: format_ids(ids)})
 
 
-def set_blocked_by(tasks_dir: Path, task_id: str, ids) -> dict:
+def set_blocked_by(tasks_dir: Path, task_id: str, ids, author: str = BOARD_AUTHOR) -> dict:
     """Задать список блокеров задачи, синхронно правя их `blocks`.
 
     Повторный вызов с тем же списком чинит односторонние записи: у каждого
     блокера проверяется наличие обратной ссылки, а не только у новых.
+
+    В хронологию идёт **разница**, а не поданный список: починка односторонней
+    ссылки — не событие жизненного цикла, и строка о ней сказала бы неправду.
+    Пишется обоим концам: файл блокера иначе молчит о том, что на него встали.
     """
     tasks_dir = Path(tasks_dir)
     task_id = task_id.strip().upper()
@@ -235,38 +241,67 @@ def set_blocked_by(tasks_dir: Path, task_id: str, ids) -> dict:
         if blocker_path is not None:
             _edit_field(blocker_path, BLOCKS, task_id, add=False)
 
+    _note_blockers(tasks_dir, path, task_id,
+                   added=[i for i in ids if i not in old],
+                   removed=[i for i in old if i not in ids], author=author)
     return {"ok": True, "task": task_id, "blocked_by": ids, "missing": missing}
 
 
-def block(tasks_dir: Path, task_id: str, blocker: str) -> dict:
+def _note_blockers(tasks_dir: Path, path: Path, task_id: str,
+                   added: list[str], removed: list[str], author: str) -> None:
+    """Записать появление и снятие блокировок обоим концам зависимости."""
+    if added:
+        append_note(path, BLOCK_TEXT.format(ids=", ".join(added)), author)
+    if removed:
+        append_note(path, UNBLOCK_TEXT.format(ids=", ".join(removed)), author)
+    for blocker, text in ([(b, BLOCKS_TEXT) for b in added]
+                          + [(b, UNBLOCKS_TEXT) for b in removed]):
+        blocker_path = find_task_file(tasks_dir, blocker)
+        if blocker_path is not None:
+            append_note(blocker_path, text.format(id=task_id), author)
+
+
+def block(tasks_dir: Path, task_id: str, blocker: str, author: str = BOARD_AUTHOR) -> dict:
     """Добавить блокера к задаче."""
     current = task_stall(tasks_dir, task_id)
     if current is None:
         return {"ok": False, "error": f"Задача не найдена: {task_id}"}
-    return set_blocked_by(tasks_dir, task_id, current["blocked_by"] + parse_ids(blocker))
+    return set_blocked_by(tasks_dir, task_id,
+                          current["blocked_by"] + parse_ids(blocker), author)
 
 
-def unblock(tasks_dir: Path, task_id: str, blocker: str = "") -> dict:
+def unblock(tasks_dir: Path, task_id: str, blocker: str = "",
+            author: str = BOARD_AUTHOR) -> dict:
     """Снять блокера (без аргумента — всех)."""
     current = task_stall(tasks_dir, task_id)
     if current is None:
         return {"ok": False, "error": f"Задача не найдена: {task_id}"}
     drop = parse_ids(blocker)
     keep = [i for i in current["blocked_by"] if i not in drop] if drop else []
-    return set_blocked_by(tasks_dir, task_id, keep)
+    return set_blocked_by(tasks_dir, task_id, keep, author)
 
 
-def set_paused(tasks_dir: Path, task_id: str, reason: str) -> dict:
-    """Поставить задачу на паузу с причиной (пустая причина — снять)."""
+def set_paused(tasks_dir: Path, task_id: str, reason: str,
+               author: str = BOARD_AUTHOR) -> dict:
+    """Поставить задачу на паузу с причиной (пустая причина — снять).
+
+    Строка в хронологию идёт только при смене состояния: «снял паузу», когда её
+    не было, — не событие, а повторный вызов инструмента.
+    """
     path = find_task_file(Path(tasks_dir), task_id)
     if path is None:
         return {"ok": False, "error": f"Задача не найдена: {task_id}"}
     reason = _one_line(reason)
+    was = _one_line(_meta_of(path).get(PAUSED, "")).strip(EMPTY)
     set_meta_fields(path, {PAUSED: reason or EMPTY})
+    if reason and reason != was:
+        append_note(path, PAUSE_TEXT.format(reason=reason), author)
+    elif not reason and was:
+        append_note(path, RESUME_TEXT, author)
     return {"ok": True, "task": task_id.upper(), "paused": reason}
 
 
-def clear_stall(tasks_dir: Path, task_id: str) -> dict:
+def clear_stall(tasks_dir: Path, task_id: str, author: str = BOARD_AUTHOR) -> dict:
     """Снять с задачи и блокировки, и паузу. Возвращает, что было снято.
 
     Зовётся при переезде в терминальный статус: задача закрыта, и «ждёт» про
@@ -276,9 +311,9 @@ def clear_stall(tasks_dir: Path, task_id: str) -> dict:
     if state is None or not state["stalled"]:
         return {"ok": True, "cleared": False, "blocked_by": [], "paused": ""}
     if state["blocked_by"]:
-        set_blocked_by(tasks_dir, task_id, [])
+        set_blocked_by(tasks_dir, task_id, [], author)
     if state["paused"]:
-        set_paused(tasks_dir, task_id, "")
+        set_paused(tasks_dir, task_id, "", author)
     return {"ok": True, "cleared": True,
             "blocked_by": state["blocked_by"], "paused": state["paused"]}
 

@@ -548,7 +548,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
         _set_fields(task_file, {"cancel_reason": reason})
 
     # Доехали до конца маршрута — «ждёт» про закрытую задачу больше не правда
-    cleared = clear_stall(tasks_dir, task_id) if is_terminal(pipeline, status) else None
+    cleared = clear_stall(tasks_dir, task_id, agent) if is_terminal(pipeline, status) else None
 
     # След перевода — первым: дальше в ту же секцию может лечь строка о снятом
     # подтверждении, и она объясняет уже случившийся переход. Подпись строки —
@@ -650,6 +650,23 @@ NOTE_RE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\*\* · [^·]+ · .
 # расходиться форматам нельзя — историю читают разбором и рисуют одинаково.
 TRANSITION_TEXT = "{was} → {now}"
 SCRIPT_SOURCE = "скрипт"
+
+# Остальные действия жизненного цикла: простой, тип, название. Строку пишет тот
+# же вызов, что правит поля, — иначе событие остаётся только во frontmatter, где
+# видно нынешнее состояние, но не видно, когда и что с задачей сделали.
+#
+# Стрелки здесь нет намеренно: она — признак перевода статуса, и «было → стало»
+# в другом событии читалось бы разбором как переход. По той же причине название
+# берётся в кавычки: в нём стрелка может быть своя.
+# Формулы зеркалят `backend/notes.py` — расходиться текстам нельзя
+BLOCK_TEXT = "блокировка: ждёт {ids}"
+UNBLOCK_TEXT = "блокировка снята: {ids}"
+BLOCKS_TEXT = "блокирует {id}"
+UNBLOCKS_TEXT = "больше не блокирует {id}"
+PAUSE_TEXT = "пауза: {reason}"
+RESUME_TEXT = "пауза снята"
+TYPE_TEXT = "тип: {now} (было {was})"
+TITLE_TEXT = "название: «{now}» (было «{was}»)"
 
 
 def _headings(lines: list[str]) -> list[str]:
@@ -1013,11 +1030,26 @@ def _edit_list_field(path: Path, field: str, task_id: str, add: bool) -> None:
     _set_fields(path, {field: format_ids(ids)})
 
 
-def set_blocked_by(tasks_dir: Path, task_id: str, ids) -> dict:
+def note_event(tasks_dir: Path, task_id: str, text: str, agent: str | None = None) -> None:
+    """Записать действие жизненного цикла строкой в «Комментарии».
+
+    Подпись — источник, а не модель: модель уточняет его в скобках. Файл задачи,
+    прочитанный сверху вниз, обязан давать полную картину произошедшего, а
+    frontmatter показывает только нынешнее состояние.
+    """
+    source = f"{SCRIPT_SOURCE} ({agent})" if _one_line(agent) else SCRIPT_SOURCE
+    add_note(tasks_dir, task_id, text, agent=source)
+
+
+def set_blocked_by(tasks_dir: Path, task_id: str, ids, agent: str | None = None) -> dict:
     """Задать блокеров задачи, синхронно правя `blocks` у них.
 
     Два конца зависимости — та же ловушка, что статус в файле и на доске:
     правка одного руками разъезжается молча. Поэтому правим оба сразу.
+
+    В хронологию идёт **разница**, а не поданный список: повторный вызов чинит
+    односторонние ссылки, и событием это не является. Пишется обоим концам —
+    файл блокера иначе молчит о том, что на него встали.
     """
     tasks_dir = Path(tasks_dir)
     task_id = task_id.strip().upper()
@@ -1047,6 +1079,17 @@ def set_blocked_by(tasks_dir: Path, task_id: str, ids) -> dict:
         if blocker_path is not None:
             _edit_list_field(blocker_path, "blocks", task_id, add=False)
 
+    added = [i for i in ids if i not in old]
+    removed = [i for i in old if i not in ids]
+    if added:
+        note_event(tasks_dir, task_id, BLOCK_TEXT.format(ids=", ".join(added)), agent)
+    if removed:
+        note_event(tasks_dir, task_id, UNBLOCK_TEXT.format(ids=", ".join(removed)), agent)
+    for blocker, text in ([(b, BLOCKS_TEXT) for b in added]
+                          + [(b, UNBLOCKS_TEXT) for b in removed]):
+        if find_task_file(tasks_dir, blocker) is not None:
+            note_event(tasks_dir, blocker, text.format(id=task_id), agent)
+
     return {"ok": True, "task": task_id, "blocked_by": ids, "missing": missing}
 
 
@@ -1056,7 +1099,7 @@ def _stall_allowed(tasks_dir: Path, path: Path) -> dict:
     return can_stall(pipeline_of(cfg), _read_meta(path).get("status", ""))
 
 
-def block(tasks_dir: Path, task_id: str, blocker: str) -> dict:
+def block(tasks_dir: Path, task_id: str, blocker: str, agent: str | None = None) -> dict:
     """Добавить блокера к задаче."""
     path = find_task_file(Path(tasks_dir), task_id)
     if path is None:
@@ -1065,10 +1108,11 @@ def block(tasks_dir: Path, task_id: str, blocker: str) -> dict:
     if not verdict["ok"]:
         return {"ok": False, "error": verdict["reason"]}
     current = parse_ids(_read_meta(path).get("blocked_by"))
-    return set_blocked_by(tasks_dir, task_id, current + parse_ids(blocker))
+    return set_blocked_by(tasks_dir, task_id, current + parse_ids(blocker), agent)
 
 
-def unblock(tasks_dir: Path, task_id: str, blocker: str = "") -> dict:
+def unblock(tasks_dir: Path, task_id: str, blocker: str = "",
+            agent: str | None = None) -> dict:
     """Снять блокера (без аргумента — всех)."""
     path = find_task_file(Path(tasks_dir), task_id)
     if path is None:
@@ -1076,13 +1120,17 @@ def unblock(tasks_dir: Path, task_id: str, blocker: str = "") -> dict:
     drop = parse_ids(blocker)
     current = parse_ids(_read_meta(path).get("blocked_by"))
     keep = [i for i in current if i not in drop] if drop else []
-    return set_blocked_by(tasks_dir, task_id, keep)
+    return set_blocked_by(tasks_dir, task_id, keep, agent)
 
 
-def set_paused(tasks_dir: Path, task_id: str, reason: str) -> dict:
+def set_paused(tasks_dir: Path, task_id: str, reason: str,
+               agent: str | None = None) -> dict:
     """Поставить задачу на паузу с причиной (пустая причина — снять).
 
     Пауза — метка, а не статус: `status` и раздел доски остаются как были.
+
+    Строка в хронологию идёт только при смене состояния: «снял паузу», когда её
+    не было, — не событие, а повторный вызов скрипта.
     """
     path = find_task_file(Path(tasks_dir), task_id)
     if path is None:
@@ -1093,15 +1141,24 @@ def set_paused(tasks_dir: Path, task_id: str, reason: str) -> dict:
         verdict = _stall_allowed(tasks_dir, path)
         if not verdict["ok"]:
             return {"ok": False, "error": verdict["reason"]}
+    was = _one_line(_read_meta(path).get("paused", "")).strip(EMPTY)
     _set_fields(path, {"paused": reason or EMPTY})
+    if reason and reason != was:
+        note_event(tasks_dir, task_id, PAUSE_TEXT.format(reason=reason), agent)
+    elif not reason and was:
+        note_event(tasks_dir, task_id, RESUME_TEXT, agent)
     return {"ok": True, "task": task_id.strip().upper(), "paused": reason}
 
 
-def set_type(tasks_dir: Path, task_id: str, value: str) -> dict:
+def set_type(tasks_dir: Path, task_id: str, value: str,
+             agent: str | None = None) -> dict:
     """Сменить тип задачи. Тип — метка работы, статус и доску он не трогает.
 
     Правится скриптом, а не руками: значение закрытое, и опечатка в нём
     означает молча пропавшую метку на доске.
+
+    Тип задаёт исключения в требованиях этапа, поэтому его смена идёт в
+    хронологию: ею объясняется, почему переход прошёл или не прошёл.
     """
     path = find_task_file(Path(tasks_dir), task_id)
     if path is None:
@@ -1111,7 +1168,11 @@ def set_type(tasks_dir: Path, task_id: str, value: str) -> dict:
         return {"ok": False,
                 "error": f"Неизвестный тип задачи: {value or '(пусто)'} "
                          f"(допустимо: {', '.join(TASK_TYPES)})"}
+    was = str(_read_meta(path).get("type", "") or "").strip().lower()
     _set_fields(path, {"type": value})
+    if value != was:
+        note_event(tasks_dir, task_id,
+                   TYPE_TEXT.format(now=value, was=was or "не указан"), agent)
     return {"ok": True, "task": task_id.strip().upper(), "type": value,
             "label": TASK_TYPES[value]["label"]}
 
@@ -1121,7 +1182,7 @@ def types() -> dict:
     return {"types": [{"key": key, **meta} for key, meta in TASK_TYPES.items()]}
 
 
-def clear_stall(tasks_dir: Path, task_id: str) -> dict:
+def clear_stall(tasks_dir: Path, task_id: str, agent: str | None = None) -> dict:
     """Снять с задачи и блокировки, и паузу (при переезде в конец маршрута)."""
     path = find_task_file(Path(tasks_dir), task_id)
     if path is None:
@@ -1130,9 +1191,9 @@ def clear_stall(tasks_dir: Path, task_id: str) -> dict:
     if not state["stalled"]:
         return {"ok": True, "cleared": False}
     if state["blocked_by"]:
-        set_blocked_by(tasks_dir, task_id, [])
+        set_blocked_by(tasks_dir, task_id, [], agent)
     if state["paused"]:
-        set_paused(tasks_dir, task_id, "")
+        set_paused(tasks_dir, task_id, "", agent)
     return {"ok": True, "cleared": True,
             "blocked_by": state["blocked_by"], "paused": state["paused"]}
 
@@ -2034,7 +2095,7 @@ def main() -> None:
     if args.task_type is not None:
         if not args.task_id:
             parser.error("нужен TASK-NNN для --type")
-        result = set_type(tasks_dir, args.task_id, args.task_type)
+        result = set_type(tasks_dir, args.task_id, args.task_type, args.agent)
         if not result.get("ok"):
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
@@ -2059,16 +2120,16 @@ def main() -> None:
                 print(f"[i] задачи не найдены в проекте: {', '.join(result['missing'])}")
 
         if args.block:
-            apply(block(tasks_dir, args.task_id, args.block),
+            apply(block(tasks_dir, args.task_id, args.block, args.agent),
                   lambda r: f"[OK] {r['task']} ждёт {format_ids(r['blocked_by'])}")
         if args.unblock is not None:
-            apply(unblock(tasks_dir, args.task_id, args.unblock),
+            apply(unblock(tasks_dir, args.task_id, args.unblock, args.agent),
                   lambda r: f"[OK] {r['task']}: блокировки — {format_ids(r['blocked_by'])}")
         if args.pause:
-            apply(set_paused(tasks_dir, args.task_id, args.pause),
+            apply(set_paused(tasks_dir, args.task_id, args.pause, args.agent),
                   lambda r: f"[OK] {r['task']} на паузе: {r['paused']}")
         if args.resume:
-            apply(set_paused(tasks_dir, args.task_id, ""),
+            apply(set_paused(tasks_dir, args.task_id, "", args.agent),
                   lambda r: f"[OK] {r['task']}: пауза снята")
 
         if not args.status and args.note is None:

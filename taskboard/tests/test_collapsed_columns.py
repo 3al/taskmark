@@ -126,7 +126,7 @@ class BoardStateTest(unittest.TestCase):
         """Найденное не должно молча оставаться в свёрнутой колонке."""
         src = source("App.jsx")
         self.assertIn("filtered", src)
-        start = src.index("const collapsedSet")
+        start = src.index("const collapsed = useMemo")
         collapsed = src[start:src.index("const findColumn", start)]
         self.assertIn("filtered", collapsed,
                       "под фильтром колонка с совпадениями должна разворачиваться")
