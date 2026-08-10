@@ -49,6 +49,7 @@ export function CollapsedColumn({ column, count, activeFrom, dndFullBoard,
     id: `col-drag:${column.status}`,
     data: { type: 'columnHeader', status: column.status, title: column.title },
   })
+  const isPick = column.status === pickStatus
   const canDrop = isDropAllowed(activeFrom, column.status, dndFullBoard, pickStatus, createStatus)
   const highlight = isOver && canDrop
   // Свёрнутая вручную и свёрнутая настройкой полосы неотличимы на глаз, поэтому
@@ -80,7 +81,7 @@ export function CollapsedColumn({ column, count, activeFrom, dndFullBoard,
         {...attributes}
         type="button"
         onClick={onExpand}
-        title={`${column.title} — ${why} · развернуть · перетащить, чтобы переставить`}
+        title={`${column.title}${isPick ? ' (живая очередь)' : ''} — ${why} · развернуть · перетащить, чтобы переставить`}
         className="flex w-full flex-col items-center gap-2 py-2.5 rounded-xl
           cursor-grab touch-none select-none hover:bg-zinc-800/50 transition">
         <span className={`w-2 h-2 shrink-0 rounded-full ${highlight ? 'bg-sky-400' : style.dot}`} />
@@ -116,6 +117,7 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
   })
 
   const count = column.groups.reduce((n, g) => n + g.tasks.length, 0)
+  const isPick = column.status === pickStatus
   const canDrop = isDropAllowed(activeFrom, column.status, dndFullBoard, pickStatus, createStatus)
   // Подсветка тела колонки только когда дроп разрешён и курсор не над карточкой
   const highlight = isOver && canDrop
@@ -145,6 +147,16 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
       >
         <span className={`w-2 h-2 rounded-full ${style.dot}`} />
         <span className={`text-base font-semibold ${style.header}`}>{column.title}</span>
+        {/* Очередь ничем не отличается от соседних колонок на вид, а роль у неё
+            особая: из неё берут следующую задачу и порядок в ней — приоритет.
+            Подпись цветом статуса, а не серым: она часть заголовка колонки,
+            а не примечание к нему */}
+        {isPick && (
+          <span className={`shrink-0 self-start -ml-1 mt-[3px] text-[8px] leading-none uppercase
+            tracking-wide ${style.header} opacity-70`}>
+            живая очередь
+          </span>
+        )}
         <span className="ml-auto text-sm text-zinc-500">{count}</span>
       </div>
 
