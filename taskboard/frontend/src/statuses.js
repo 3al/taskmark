@@ -5,7 +5,11 @@
 // палитры: Tailwind собирает классы статически, поэтому имена вроде `bg-${color}-400`
 // не сработали бы и каждый цвет описан целиком.
 //
-// card/cardHover — превью-карточки: бледные оттенки в цвет колонки, с прозрачностью
+// card/cardHover — превью-карточки: бледные оттенки в цвет колонки, с прозрачностью.
+// У ховера **собственные hex**, а не тот же цвет под меньшей прозрачностью: подложки
+// близки к фону колонки, и рост непрозрачности почти ничего не добавляет — наведение
+// читалось бы по-разному в разных колонках. Осветление считается в CIE L*a*b* при
+// сохранении оттенка, эталон силы отклика — `zinc`
 // cardFocus — кольцо фокуса карточки. Карточка фокусируема (dnd-kit кладёт в неё
 // tabIndex ради перетаскивания с клавиатуры), поэтому браузер рисует на ней свой
 // дефолтный outline — толстый и белый. Своё кольцо тоньше и в цвет статуса
@@ -20,61 +24,61 @@ export const COLOR_STYLE = {
   },
   amber: {
     dot: 'bg-amber-400', border: 'border-amber-700/60', header: 'text-amber-300',
-    card: 'bg-[#211d0f]/60 border-[#6e5a1f]/40', cardHover: 'hover:bg-[#211d0f]/80 hover:border-[#6e5a1f]/70',
+    card: 'bg-[#211d0f]/60 border-[#6e5a1f]/40', cardHover: 'hover:bg-[#272416]/80 hover:border-[#947c40]/70',
     modalHeader: 'bg-[#211d0f] border-[#6e5a1f]', mdTint: 'md-tint-amber',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-amber-400/60',
   },
   sky: {
     dot: 'bg-sky-400', border: 'border-sky-700/60', header: 'text-sky-300',
-    card: 'bg-[#131a1f]/60 border-[#23465c]/40', cardHover: 'hover:bg-[#131a1f]/80 hover:border-[#23465c]/70',
+    card: 'bg-[#131a1f]/60 border-[#23465c]/40', cardHover: 'hover:bg-[#1a2227]/80 hover:border-[#4f7188]/70',
     modalHeader: 'bg-[#131a1f] border-[#23465c]', mdTint: 'md-tint-sky',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-sky-400/60',
   },
   violet: {
     dot: 'bg-violet-400', border: 'border-violet-700/60', header: 'text-violet-300',
-    card: 'bg-[#171420]/60 border-[#3d2f5c]/40', cardHover: 'hover:bg-[#171420]/80 hover:border-[#3d2f5c]/70',
+    card: 'bg-[#171420]/60 border-[#3d2f5c]/40', cardHover: 'hover:bg-[#1f1c29]/80 hover:border-[#6d5c8d]/70',
     modalHeader: 'bg-[#171420] border-[#3d2f5c]', mdTint: 'md-tint-violet',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-violet-400/60',
   },
   orange: {
     dot: 'bg-orange-400', border: 'border-orange-700/60', header: 'text-orange-300',
-    card: 'bg-[#1d150e]/60 border-[#57351d]/40', cardHover: 'hover:bg-[#1d150e]/80 hover:border-[#57351d]/70',
+    card: 'bg-[#1d150e]/60 border-[#57351d]/40', cardHover: 'hover:bg-[#251d18]/80 hover:border-[#876046]/70',
     modalHeader: 'bg-[#1d150e] border-[#57351d]', mdTint: 'md-tint-orange',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-orange-400/60',
   },
   emerald: {
     dot: 'bg-emerald-400', border: 'border-emerald-700/60', header: 'text-emerald-300',
-    card: 'bg-[#111a14]/60 border-[#1f4d33]/40', cardHover: 'hover:bg-[#111a14]/80 hover:border-[#1f4d33]/70',
+    card: 'bg-[#111a14]/60 border-[#1f4d33]/40', cardHover: 'hover:bg-[#19221c]/80 hover:border-[#49775b]/70',
     modalHeader: 'bg-[#111a14] border-[#1f4d33]', mdTint: 'md-tint-emerald',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-emerald-400/60',
   },
   yellow: {
     dot: 'bg-yellow-400', border: 'border-yellow-700/60', header: 'text-yellow-300',
-    card: 'bg-[#1f1d0f]/60 border-[#5c541f]/40', cardHover: 'hover:bg-[#1f1d0f]/80 hover:border-[#5c541f]/70',
+    card: 'bg-[#1f1d0f]/60 border-[#5c541f]/40', cardHover: 'hover:bg-[#252416]/80 hover:border-[#847943]/70',
     modalHeader: 'bg-[#1f1d0f] border-[#5c541f]', mdTint: 'md-tint-yellow',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-yellow-400/60',
   },
   cyan: {
     dot: 'bg-cyan-400', border: 'border-cyan-700/60', header: 'text-cyan-300',
-    card: 'bg-[#0f1c1f]/60 border-[#1f4d57]/40', cardHover: 'hover:bg-[#0f1c1f]/80 hover:border-[#1f4d57]/70',
+    card: 'bg-[#0f1c1f]/60 border-[#1f4d57]/40', cardHover: 'hover:bg-[#162326]/80 hover:border-[#4a7681]/70',
     modalHeader: 'bg-[#0f1c1f] border-[#1f4d57]', mdTint: 'md-tint-cyan',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-cyan-400/60',
   },
   teal: {
     dot: 'bg-teal-400', border: 'border-teal-700/60', header: 'text-teal-300',
-    card: 'bg-[#0f1c19]/60 border-[#1f4d43]/40', cardHover: 'hover:bg-[#0f1c19]/80 hover:border-[#1f4d43]/70',
+    card: 'bg-[#0f1c19]/60 border-[#1f4d43]/40', cardHover: 'hover:bg-[#162420]/80 hover:border-[#49776c]/70',
     modalHeader: 'bg-[#0f1c19] border-[#1f4d43]', mdTint: 'md-tint-teal',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-teal-400/60',
   },
   rose: {
     dot: 'bg-rose-400', border: 'border-rose-700/60', header: 'text-rose-300',
-    card: 'bg-[#1f1216]/60 border-[#5c2333]/40', cardHover: 'hover:bg-[#1f1216]/80 hover:border-[#5c2333]/70',
+    card: 'bg-[#1f1216]/60 border-[#5c2333]/40', cardHover: 'hover:bg-[#281b1e]/80 hover:border-[#8f5160]/70',
     modalHeader: 'bg-[#1f1216] border-[#5c2333]', mdTint: 'md-tint-rose',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-rose-400/60',
   },
   stone: {
     dot: 'bg-stone-500', border: 'border-stone-700/60', header: 'text-stone-400',
-    card: 'bg-[#1c1917]/60 border-[#44403c]/40', cardHover: 'hover:bg-[#1c1917]/80 hover:border-[#44403c]/70',
+    card: 'bg-[#1c1917]/60 border-[#44403c]/40', cardHover: 'hover:bg-[#23201e]/80 hover:border-[#706b67]/70',
     modalHeader: 'bg-[#1c1917] border-[#44403c]', mdTint: 'md-tint-stone',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-stone-400/60',
   },
