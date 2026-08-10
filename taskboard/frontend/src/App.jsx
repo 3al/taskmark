@@ -217,18 +217,24 @@ export default function App() {
   // частных «развернул посмотреть». Иначе колонка, которую разворачивали час
   // назад, остаётся стоять пустой среди свёрнутых, и понять почему нельзя
   const hideEmpty = !!health?.config?.hide_empty_columns
-  const prevHideEmpty = useRef(hideEmpty)
+  // `null` — «настройка ещё не известна»: конфиг приезжает с health уже после
+  // первого рендера, и без этого различия каждая загрузка страницы читалась бы
+  // как включение настройки человеком со всеми последствиями (TASK-173)
+  const prevHideEmpty = useRef(null)
   useEffect(() => {
-    if (hideEmpty && !prevHideEmpty.current) {
-      setCollapsedState((state) => {
-        const kept = Object.fromEntries(
-          Object.entries(state).filter(([, v]) => v === 'collapsed'))
-        persistCollapsed(kept)
-        return kept
-      })
-    }
+    if (!health) return
+    const prev = prevHideEmpty.current
     prevHideEmpty.current = hideEmpty
-  }, [hideEmpty])
+    if (prev !== false || !hideEmpty) return
+    // Запись в хранилище идёт здесь, а не из updater'а состояния: updater React
+    // выполняет во время следующего рендера — то есть уже после того, как эффект
+    // смены проекта прочитал localStorage. Свёрнутые колонки при этом оставались
+    // на экране, но в хранилище уезжал пустой набор
+    const kept = Object.fromEntries(
+      Object.entries(collapsedState).filter(([, v]) => v === 'collapsed'))
+    setCollapsedState(kept)
+    persistCollapsed(kept)
+  }, [hideEmpty, health])
 
   const saveColumnOrder = (order) => {
     setColumnOrder(order)

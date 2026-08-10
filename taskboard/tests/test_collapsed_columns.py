@@ -132,5 +132,38 @@ class BoardStateTest(unittest.TestCase):
                       "под фильтром колонка с совпадениями должна разворачиваться")
 
 
+class CollapsedPersistenceTest(unittest.TestCase):
+    """Свёрнутая колонка переживает перезагрузку — сколько бы их ни было (TASK-173).
+
+    Нормализацию решений запускает **включение** настройки «сворачивать пустые».
+    Отличить включение от «настройка только что приехала с сервера» эффект обязан
+    сам: конфиг приходит с `health` уже после первого рендера, и без этой проверки
+    каждая загрузка страницы читается как свежее указание человека.
+    """
+
+    def setUp(self) -> None:
+        self.src = source("App.jsx")
+        start = self.src.index("const hideEmpty =")
+        self.effect = self.src[start:self.src.index("const saveColumnOrder", start)]
+
+    def test_load_is_not_mistaken_for_enabling_the_setting(self) -> None:
+        self.assertNotIn("useRef(hideEmpty)", self.effect,
+                         "прежнее значение настройки берётся до загрузки конфига — "
+                         "загрузка страницы выглядит как её включение")
+        self.assertIn("health", self.effect,
+                      "эффект не отличает «настройка ещё не известна» от «выключена»")
+
+    def test_storage_write_is_not_deferred_into_updater(self) -> None:
+        """Запись в хранилище — сразу, а не внутри updater'а состояния.
+
+        Updater React выполняет во время следующего рендера, то есть уже после
+        того, как эффект смены проекта прочитал localStorage: на экране колонки
+        свёрнуты, а в хранилище лежит пустой набор — и следующая перезагрузка
+        показывает их развёрнутыми.
+        """
+        self.assertNotIn("setCollapsedState((", self.effect,
+                         "persistCollapsed вызывается из updater — сохранённое затрётся пустым")
+
+
 if __name__ == "__main__":
     unittest.main()
