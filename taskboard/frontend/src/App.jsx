@@ -26,13 +26,13 @@ import UpdateModal from './components/UpdateModal'
 // проигрывает соседям, которых тот же оверлей накрывает сильнее. Заметно это
 // было по краю доски — там соседа нет, и полоса «вдруг» начинала ловиться.
 // Поэтому цель-полосу решает указатель: он либо над ней, либо нет.
-function makeCollisionDetection(collapsedSet) {
+function makeCollisionDetection(collapsed) {
   return (args) => {
     if (args.active?.data?.current?.type === 'columnHeader') return pointerWithin(args)
-    if (collapsedSet.size) {
+    if (collapsed.size) {
       const strip = pointerWithin(args).filter(
         (c) => typeof c.id === 'string' && c.id.startsWith('col:')
-          && collapsedSet.has(c.id.slice(4)),
+          && collapsed.has(c.id.slice(4)),
       )
       if (strip.length) return strip
     }
@@ -377,7 +377,11 @@ export default function App() {
   // Под фильтром колонка с совпадениями разворачивается **всегда**: найденное,
   // оставшееся внутри свёрнутой полосы, — это молчаливо потерянный результат
   // поиска, и человек считает, что задачи нет
-  const collapsedSet = useMemo(() => {
+  //
+  // Хранится не набор статусов, а причина по каждому: свёрнутая вручную и
+  // свёрнутая настройкой полосы выглядят одинаково, и различить их можно
+  // только словами в подсказке
+  const collapsed = useMemo(() => {
     // Пустоту считаем по **реальному** составу колонки, а не по отфильтрованному:
     // настройка описывает постоянное свойство («задач нет»), и фильтр не должен
     // на него влиять. Иначе поиск, будучи живым, схлопывал и разворачивал каркас
@@ -385,16 +389,16 @@ export default function App() {
     const total = new Map(orderedColumns.map(
       (c) => [c.status, c.groups.reduce((n, g) => n + g.tasks.length, 0)]))
 
-    const out = new Set()
+    const out = new Map()
     for (const col of visibleColumns) {
       const decided = collapsedState[col.status]
-      const collapsed = decided === 'collapsed' || (!decided && hideEmpty && !total.get(col.status))
-      if (!collapsed) continue
+      const byHand = decided === 'collapsed'
+      if (!byHand && !(!decided && hideEmpty && !total.get(col.status))) continue
       // Единственное, ради чего фильтр вообще трогает каркас: найденное внутри
       // свёрнутой полосы человек не увидит и решит, что задачи нет
       const matches = col.groups.reduce((n, g) => n + g.tasks.length, 0)
       if (filtered && matches) continue
-      out.add(col.status)
+      out.set(col.status, byHand ? 'manual' : 'empty')
     }
     return out
   }, [visibleColumns, orderedColumns, collapsedState, hideEmpty, filtered])
@@ -402,7 +406,7 @@ export default function App() {
   // Детектор пересобирается вместе с набором свёрнутых: он должен знать, какие
   // цели узкие, — иначе полоса снова начнёт проигрывать соседям по площади
   const collisionDetection = useMemo(
-    () => makeCollisionDetection(collapsedSet), [collapsedSet])
+    () => makeCollisionDetection(collapsed), [collapsed])
 
   const findColumn = (status) => board?.columns.find((c) => c.status === status)
 
@@ -874,11 +878,12 @@ export default function App() {
                   : null
                 // Свёрнутая колонка рисуется другим компонентом, а не скрытой
                 // разметкой: её карточки не должны попадать в DOM вовсе
-                return collapsedSet.has(col.status) ? (
+                return collapsed.has(col.status) ? (
                   <CollapsedColumn
                     key={col.title}
                     column={col}
                     count={col.groups.reduce((n, g) => n + g.tasks.length, 0)}
+                    reason={collapsed.get(col.status)}
                     activeFrom={activeDrag?.fromStatus || null}
                     dndFullBoard={dndFullBoard}
                     pickStatus={pickStatus}
