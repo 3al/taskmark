@@ -540,7 +540,15 @@ def requirement_met(req: dict, task_path) -> bool:
     except OSError:
         return True
     meta, _body = parse_frontmatter(content)
+    return _requirement_met(req, content, meta)
 
+
+# Функции на уже прочитанном файле. Публичные обёртки над ними читают файл сами
+# и остаются прежними по контракту; отрисовка доски читает его один раз за
+# задачу и считает по тексту, который уже на руках (TASK-164): предикат,
+# читающий сам, множил чтения не на задачу, а на задачу × требование.
+def _requirement_met(req: dict, content: str, meta: dict) -> bool:
+    """Выполнено ли требование по разобранному файлу задачи."""
     check = _one_line(req.get("check"))
     name = _one_line(req.get("name"))
     if check == "section_present":
@@ -577,12 +585,17 @@ def unmet(reqs: list[dict], task_path) -> list[dict]:
     except OSError:
         return []
     meta, _body = parse_frontmatter(content)
+    return _unmet(reqs, content, meta)
+
+
+def _unmet(reqs: list[dict], content: str, meta: dict) -> list[dict]:
+    """То же по разобранному файлу задачи."""
     waived = [i.lower() for i in parse_req_ids(meta.get(WAIVED_FIELD))]
     task_type = meta.get("type") or ""
     return [r for r in reqs
             if _one_line(r.get("id")).lower() not in waived
             and _applies_to_type(r, task_type)
-            and not requirement_met(r, task_path)]
+            and not _requirement_met(r, content, meta)]
 
 
 def is_terminal(pipeline, status: str) -> bool:
@@ -638,12 +651,18 @@ def task_debt(tasks_dir, task_id: str, cfg: dict, pipeline=None) -> dict:
     if path is None:
         return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
     rows = _rows(load_pipeline(cfg) if pipeline is None else pipeline)
-    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    content = path.read_text(encoding="utf-8-sig")
+    meta, _body = parse_frontmatter(content)
+    return {"ok": True, "task": task_id, **_debt(content, meta, cfg, rows)}
+
+
+def _debt(content: str, meta: dict, cfg: dict, rows: list[dict]) -> dict:
+    """Долг по разобранному файлу задачи: {status, debt, recommended}."""
     status = _one_line(meta.get("status"))
     reqs = [r for key in crossed(rows, status)
             for r in stage_requirements(cfg, rows, key)]
-    pending = unmet(reqs, path)
-    return {"ok": True, "task": task_id, "status": status,
+    pending = _unmet(reqs, content, meta)
+    return {"status": status,
             "debt": [r for r in pending if r.get("mandatory")],
             "recommended": [r for r in pending if not r.get("mandatory")]}
 
@@ -660,10 +679,11 @@ def move_debt(tasks_dir, task_id: str, cfg: dict, target: str,
     if path is None:
         return []
     rows = _rows(load_pipeline(cfg) if pipeline is None else pipeline)
-    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    content = path.read_text(encoding="utf-8-sig")
+    meta, _body = parse_frontmatter(content)
     current = _one_line(meta.get("status"))
     reqs = move_requirements(cfg, rows, current, target)
-    return [r for r in unmet(reqs, path) if r.get("mandatory")]
+    return [r for r in _unmet(reqs, content, meta) if r.get("mandatory")]
 
 
 def reset_confirmations(task_path, cfg: dict, pipeline, target: str) -> list[str]:
@@ -790,6 +810,11 @@ def task_waivers(tasks_dir, task_id: str, cfg: dict, pipeline=None) -> list[dict
         meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
     except OSError:
         return []
+    return _waivers(meta, cfg, rows)
+
+
+def _waivers(meta: dict, cfg: dict, rows: list[dict]) -> list[dict]:
+    """То же по разобранному frontmatter задачи."""
     ids = parse_req_ids(meta.get(WAIVED_FIELD))
     return [{"id": i, "text": t}
             for i, t in zip(ids, requirement_names(cfg, rows, ids))]
@@ -827,15 +852,22 @@ def annotate_debt(tasks_dir, board: dict, cfg: dict, pipeline) -> dict:
                 path = tasks_dir / task.get("file", "")
                 if not path.is_file():
                     continue
+                # Файл читается **один раз за задачу**: долг считается на каждую
+                # отрисовку, а отрисовку дёргает SSE на любую правку в tasks/ —
+                # лишнее чтение внутри прохода умножается на всю доску
+                try:
+                    content = path.read_text(encoding="utf-8-sig")
+                except OSError:
+                    continue
+                meta, _body = parse_frontmatter(content)
                 # У закрытой задачи ни долга, ни списаний не показываем:
                 # исторические решения не стоят визуального шума на доске
-                meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
                 if is_terminal(rows, _one_line(meta.get("status"))):
                     continue
-                waived = task_waivers(tasks_dir, task["id"], cfg, rows)
+                waived = _waivers(meta, cfg, rows)
                 if waived:
                     task["waived"] = waived
-                result = task_debt(tasks_dir, task["id"], cfg, rows)
+                result = _debt(content, meta, cfg, rows)
                 debt = result.get("debt") or []
                 if debt:
                     task["debt"] = [{"id": r.get("id"), "text": requirement_text(r),

@@ -18,6 +18,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -425,6 +426,74 @@ class DebtUiTest(unittest.TestCase):
         src = (SRC / "api.js").read_text(encoding="utf-8")
 
         self.assertIn("move-debt", src, "в клиенте API нет запроса долга")
+
+
+class BoardReadBudgetTest(unittest.TestCase):
+    """Отрисовка доски читает файл задачи один раз.
+
+    Долг считается на каждую отрисовку, а отрисовку дёргает SSE при любой правке
+    в `tasks/`: правка одной задачи агентом перечитывает всю доску. При сотне
+    задач лишнее чтение внутри прохода — это лишняя сотня чтений и столько же
+    `glob` на каждое нажатие.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tasks = Path(self._tmp.name) / "tasks"
+        self.tasks.mkdir(parents=True)
+        self.cfg = {
+            "pipeline": PIPELINE,
+            "actions": {"create": "backlog", "start": "development",
+                        "release_draft": "release_notes"},
+            # Несколько требований на этапе: предикат, читающий файл сам, множит
+            # чтения не на задачу, а на задачу × требование
+            "requires": {"testing": [
+                {"id": "verified", "check": "confirm",
+                 "ask": "проверку подтвердил человек"},
+                {"id": "commits", "check": "section_filled",
+                 "name": "История коммитов"},
+            ]},
+        }
+
+    def _board(self, count: int) -> dict:
+        tasks = []
+        for i in range(1, count + 1):
+            task_id = f"TASK-{i:03d}"
+            (self.tasks / f"{task_id}-t.md").write_text(
+                TASK_FILE.format(task_id=task_id, title="Задача",
+                                 status="ready_for_release", confirmed="~"),
+                encoding="utf-8")
+            tasks.append({"id": task_id, "file": f"{task_id}-t.md"})
+        return {"columns": [{"title": "Доска", "groups": [{"tasks": tasks}]}]}
+
+    def test_task_file_is_read_once_per_pass(self) -> None:
+        board = self._board(3)
+        reads: dict[str, int] = {}
+        original = Path.read_text
+
+        def counting(self, *args, **kwargs):  # noqa: ANN001 — подмена метода
+            if self.suffix == ".md":
+                reads[self.name] = reads.get(self.name, 0) + 1
+            return original(self, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", counting):
+            annotate_debt(self.tasks, board, self.cfg, load_pipeline(self.cfg))
+
+        # Долг посчитан — иначе тест мерил бы бюджет пустого прохода
+        cards = board["columns"][0]["groups"][0]["tasks"]
+        self.assertTrue(all("debt" in t for t in cards), "долг не посчитан")
+        self.assertEqual({name: 1 for name in reads}, reads,
+                         f"файл задачи читается больше одного раза: {reads}")
+
+    def test_known_file_is_not_searched_again(self) -> None:
+        """Путь задачи известен из строки доски — искать его `glob` незачем."""
+        board = self._board(3)
+        with mock.patch("backend.requirements.find_task_file") as search:
+            annotate_debt(self.tasks, board, self.cfg, load_pipeline(self.cfg))
+
+        self.assertEqual(0, search.call_count,
+                         "файл задачи ищется заново, хотя путь уже известен")
 
 
 if __name__ == "__main__":

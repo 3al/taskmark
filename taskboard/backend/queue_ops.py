@@ -282,14 +282,13 @@ def move_task(
         # снятом подтверждении, и она объясняет уже случившийся переход.
         # Починка доски сюда не попадает (touch_status=False): она двигает
         # строку под файл задачи, статуса не меняя, — переводом это не является
-        moved_path = find_task_file(tasks_dir, task_id)
-        if moved_path is not None:
-            append_transition(moved_path, pipeline.label_of(was_status),
+        # Путь у нас уже есть: смена статуса файл не переименовывает, и искать
+        # его заново на каждую запись незачем
+        if was_path is not None:
+            append_transition(was_path, pipeline.label_of(was_status),
                               pipeline.label_of(status))
-        if reason and pipeline.is_offramp(status):
-            path = find_task_file(tasks_dir, task_id)
-            if path is not None:
-                set_meta_fields(path, {"cancel_reason": reason})
+        if reason and pipeline.is_offramp(status) and was_path is not None:
+            set_meta_fields(was_path, {"cancel_reason": reason})
         # Задача доехала до конца маршрута — «ждёт» про неё больше не правда.
         # Снимаем простой вместе с обратными ссылками у блокеров: иначе в
         # файлах осталось бы ровно то, что API отказался бы создать
@@ -306,7 +305,7 @@ def move_task(
         keys = pipeline.keys()
         if (was_status in keys and status in keys
                 and keys.index(status) < keys.index(was_status)):
-            path = find_task_file(tasks_dir, task_id)
+            path = was_path
             dropped = reset_confirmations(path, cfg, pipeline, status) if path else []
             if dropped:
                 # Формулировки, а не идентификаторы: правило для всех строк,
