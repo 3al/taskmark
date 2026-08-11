@@ -19,6 +19,10 @@ const MARKUP_BUTTON =
 
 const TOGGLE = 'hover:text-zinc-300 transition'
 
+// Строка забора блока кода. Отступ перед ним допустим (блок внутри пункта
+// списка), длина забора — от трёх знаков
+const FENCE = /^\s*```/
+
 export default function MarkdownEditor({
   value,
   onChange,
@@ -98,6 +102,40 @@ export default function MarkdownEditor({
   const applyList = () => applyLinePrefix('- ', /^(\s*)[-*] /)
   const applyHeading = () => applyLinePrefix('### ', /^(\s*)#{1,6} /)
 
+  // Блок кода — не обёртка вокруг куска строки, а свои строки вокруг куска
+  // текста: забор ``` markdown видит только с начала строки. Поэтому выделение
+  // сначала расширяется до целых строк, как у списка, а знаки встают отдельными
+  // строками — иначе кнопка молча ставила бы забор посреди абзаца
+  const applyCodeBlock = () => {
+    const el = ref.current
+    if (!el) return
+    const { selectionStart: from, selectionEnd: to, value: text } = el
+    const lineStart = text.lastIndexOf('\n', from - 1) + 1
+    const lineEnd = text.indexOf('\n', to) < 0 ? text.length : text.indexOf('\n', to)
+    const lines = text.slice(lineStart, lineEnd).split('\n')
+
+    // Забор внутри выделения: захватили блок целиком, вместе со знаками
+    if (lines.length >= 2 && FENCE.test(lines[0]) && FENCE.test(lines[lines.length - 1])) {
+      const bare = lines.slice(1, -1).join('\n')
+      return put(text, lineStart, lineEnd, bare, lineStart, lineStart + bare.length)
+    }
+
+    // Забор вокруг выделения: курсор стоит внутри уже готового блока
+    const prevEnd = lineStart - 1
+    const prevStart = prevEnd > 0 ? text.lastIndexOf('\n', prevEnd - 1) + 1 : 0
+    const nextStart = lineEnd + 1
+    const nextEnd = text.indexOf('\n', nextStart) < 0 ? text.length : text.indexOf('\n', nextStart)
+    if (lineStart > 0 && nextStart <= text.length &&
+        FENCE.test(text.slice(prevStart, prevEnd)) && FENCE.test(text.slice(nextStart, nextEnd))) {
+      const body = text.slice(lineStart, lineEnd)
+      return put(text, prevStart, nextEnd, body, prevStart, prevStart + body.length)
+    }
+
+    const body = text.slice(lineStart, lineEnd)
+    const block = `\`\`\`\n${body}\n\`\`\``
+    put(text, lineStart, lineEnd, block, lineStart + 4, lineStart + 4 + body.length)
+  }
+
   const onKeyDown = (e) => {
     // Поле многострочное: Enter — перенос, сохраняет Ctrl+Enter
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -132,6 +170,8 @@ export default function MarkdownEditor({
                     className={`${MARKUP_BUTTON} italic font-serif`}>I</button>
             <button onClick={() => applyWrap('`')} title="Код"
                     className={`${MARKUP_BUTTON} font-mono`}>`</button>
+            <button onClick={applyCodeBlock} title="Блок кода"
+                    className={`${MARKUP_BUTTON} w-auto px-1.5 font-mono text-[10px]`}>```</button>
             <button onClick={applyList} title="Список"
                     className={MARKUP_BUTTON}>≡</button>
             <button onClick={applyHeading} title="Подзаголовок"

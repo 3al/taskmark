@@ -360,6 +360,25 @@ class MarkdownEditorTest(unittest.TestCase):
             self.assertIn(f"applyWrap({markup}", self.src, f"нет кнопки {markup}")
         self.assertIn("applyList", self.src, "нет кнопки списка")
 
+    def test_markup_panel_has_code_block(self) -> None:
+        """Инлайн-кода мало: кусок текста заворачивают в блок — забор даёт <pre><code>."""
+        self.assertIn("applyCodeBlock", self.src, "нет кнопки блока кода")
+        self.assertIn("```", self.src, "блок кода ставится не забором ```")
+
+    def test_code_block_works_by_lines(self) -> None:
+        """Забор живёт своей строкой: посреди строки markdown его не увидит."""
+        block = self.src[self.src.index("const applyCodeBlock"):self.src.index("const onKeyDown")]
+        self.assertIn("lastIndexOf('\\n'", block,
+                      "выделение не расширяется до границ строк — забор встанет посреди текста")
+
+    def test_code_block_toggles_off(self) -> None:
+        """Повторное нажатие снимает забор — и захваченный выделением, и стоящий вокруг."""
+        block = self.src[self.src.index("const applyCodeBlock"):self.src.index("const onKeyDown")]
+        self.assertIn("lines.slice(1, -1)", block,
+                      "забор, попавший в выделение, не снимается")
+        self.assertIn("prevStart", block,
+                      "курсор внутри блока: забор вокруг выделения не снимается")
+
     def test_markup_toggles_off(self) -> None:
         """Повторное нажатие на размеченном куске снимает разметку.
 
