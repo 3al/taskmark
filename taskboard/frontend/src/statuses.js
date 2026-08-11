@@ -40,6 +40,15 @@ export const COLOR_STYLE = {
     modalHeader: 'bg-[#171420] border-[#3d2f5c]', mdTint: 'md-tint-violet',
     cardFocus: 'focus-visible:ring-1 focus-visible:ring-violet-400/60',
   },
+  // Предрелизная заморозка состава: розово-сиреневый рядом с violet у заметок
+  // релиза, но заметно теплее — и, главное, не зелёный. Зелёный на шаге перед
+  // выпуском читается как «уже готово», хотя задача ещё не выпущена
+  fuchsia: {
+    dot: 'bg-fuchsia-400', border: 'border-fuchsia-700/60', header: 'text-fuchsia-300',
+    card: 'bg-[#1d1220]/60 border-[#5c2f57]/40', cardHover: 'hover:bg-[#251a28]/80 hover:border-[#8f5c87]/70',
+    modalHeader: 'bg-[#1d1220] border-[#5c2f57]', mdTint: 'md-tint-fuchsia',
+    cardFocus: 'focus-visible:ring-1 focus-visible:ring-fuchsia-400/60',
+  },
   orange: {
     dot: 'bg-orange-400', border: 'border-orange-700/60', header: 'text-orange-300',
     card: 'bg-[#1d150e]/60 border-[#57351d]/40', cardHover: 'hover:bg-[#251d18]/80 hover:border-[#876046]/70',

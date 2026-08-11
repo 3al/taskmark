@@ -175,6 +175,50 @@ class PresentationTest(unittest.TestCase):
         self.assertEqual("hotfix_wait", p.status_for_section("Hotfix Wait"))
 
 
+class CatalogColorsTest(unittest.TestCase):
+    """Цвет статуса — способ узнать колонку не читая её заголовок.
+
+    Соседи по палитре на это не годятся: две колонки рядом сливаются в одно
+    пятно, а зелёный вдобавок читается как «уже готово» — на предрелизном шаге
+    это прямая ложь о состоянии задачи.
+    """
+
+    # Пары, различимые только рядом друг с другом (тот же список, что у меток
+    # типов задач в test_task_type.py)
+    NEAR = (("sky", "cyan"), ("cyan", "teal"), ("emerald", "teal"),
+            ("amber", "yellow"), ("violet", "purple"), ("rose", "pink"),
+            ("emerald", "green"), ("green", "lime"))
+
+    def test_last_step_before_the_end_is_not_a_shade_of_done(self) -> None:
+        """Последний шаг перед терминальным статусом стоит с ним вплотную.
+
+        Таких шагов два — «В ближайший релиз» (выпуск версии) и «К деплою»
+        (выкатка); в одном маршруте они не встречаются, поэтому цвет у них
+        общий, а вот с терминальным совпадать не должен ни у одного.
+        """
+        near = {tuple(sorted(pair)) for pair in self.NEAR}
+        for last in ("to_release", "ready_to_deploy"):
+            color = CATALOG[last]["color"]
+            for terminal in ("done", "completed"):
+                end = CATALOG[terminal]["color"]
+                self.assertNotEqual(color, end, f"{last} и {terminal} одного цвета")
+                self.assertNotIn(tuple(sorted((color, end))), near,
+                                 f"{last} и {terminal} — соседи по палитре")
+
+    def test_every_catalog_color_is_described_on_the_front(self) -> None:
+        """Цвет, которого нет в реестре фронта, молча превращается в серый."""
+        src = (Path(__file__).resolve().parent.parent
+               / "frontend" / "src" / "statuses.js").read_text(encoding="utf-8")
+        css = (Path(__file__).resolve().parent.parent
+               / "frontend" / "src" / "index.css").read_text(encoding="utf-8")
+        for key, meta in CATALOG.items():
+            color = meta["color"]
+            self.assertIn(f"  {color}: {{", src,
+                          f"цвет {color} (статус {key}) не описан в COLOR_STYLE")
+            self.assertIn(f".md-tint-{color} ", css,
+                          f"для цвета {color} нет оттенка заголовков md-tint")
+
+
 class ProjectConfigLocationTest(unittest.TestCase):
     """Конфиг проекта не должен попадать в его git-дерево."""
 

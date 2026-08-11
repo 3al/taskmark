@@ -65,10 +65,12 @@ CATALOG: dict[str, dict] = {
                                      {"id": "release_ok", "check": "confirm",
                                       "ask": "тексты релиза утверждены человеком",
                                       "except_types": ["discussion", "review"]}]},
-    "to_release": {"label": "В ближайший релиз", "section": "To Release", "color": "teal"},
+    "to_release": {"label": "В ближайший релиз", "section": "To Release",
+                   "color": "fuchsia"},
     # Выкатка — не то же, что выпуск версии: у процессов со стендом и продом
     # «готово к деплою» наступает там, где версии может не быть вовсе
-    "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy", "color": "teal"},
+    "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy",
+                        "color": "fuchsia"},
     # completed и done — взаимозаменяемые терминалы; ключ пишется во frontmatter
     # (status: done), поэтому это не только подпись. Включают один из двух
     "completed": {"label": "Completed", "section": "Completed", "color": "emerald"},
