@@ -7,17 +7,31 @@ import MarkdownEditor from './MarkdownEditor'
 
 // Модалка создания задачи (вызов create_task.py через API).
 // Рубрику бэклога выбирать не нужно: её задаёт тип задачи (TASK-124)
-export default function NewTaskModal({ onClose, onCreated }) {
+//
+// `source` — копируемая задача: форма открывается предзаполненной её данными
+// (TASK-128). Копия — это **новая работа с тем же содержанием**, поэтому берёт
+// она только то, что писал человек: название, описание, критерии, тип, эпик и
+// простой. Комментарии, история коммитов и подтверждения этапов принадлежат
+// оригиналу, а не замыслу, и в копию не едут — как и его место на доске:
+// копия начинает с бэклога, где начинают все
+export default function NewTaskModal({ onClose, onCreated, source = null }) {
   const [form, setForm] = useState({
-    title: '',
-    description: '',
-    criteria: '',
+    title: source?.title || '',
+    description: source?.description || '',
+    criteria: source?.criteria || '',
     blocked_by: '',
-    epic: '',
+    epic: source?.epic || '',
     epic_name: '',
-    task_type: 'feature',
+    task_type: source?.task_type || 'feature',
     target: 'backlog',
     queue_position: 'end',
+  })
+  // Простой оригинала едет с копией, но остаётся видимым и снимаемым до
+  // создания: он говорит, чего ждёт работа, а копию нередко заводят как раз
+  // затем, чтобы не ждать
+  const [inherited, setInherited] = useState({
+    blocked_by: source?.blocked_by || [],
+    paused: source?.paused || '',
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -43,8 +57,10 @@ export default function NewTaskModal({ onClose, onCreated }) {
         const items = d.presets || []
         setPresets(items)
         setCustomPresets(d.custom || [])
-        // Не затираем уже введённый текст
-        setForm((f) => (f.criteria ? f : { ...f, criteria: items[0] || '' }))
+        // Не затираем уже введённый текст. У копии критерии — оригинала:
+        // пустые там означают «их не писали», и дефолт подставил бы копии то,
+        // чего в источнике нет
+        setForm((f) => (f.criteria || source ? f : { ...f, criteria: items[0] || '' }))
       })
       .catch(() => { /* старый сервер без пресетов */ })
   }, [])
@@ -92,7 +108,16 @@ export default function NewTaskModal({ onClose, onCreated }) {
     setBusy(true)
     setError(null)
     try {
-      const payload = { ...form, title: form.title.trim() }
+      // Унаследованные блокеры и выбранный в поле — один список: у задачи
+      // блокировка одна на всех, а не «своя» и «копированная»
+      const blockers = [...new Set(
+        [...inherited.blocked_by, form.blocked_by.trim()].filter(Boolean))]
+      const payload = {
+        ...form,
+        title: form.title.trim(),
+        blocked_by: blockers.join(', '),
+        paused: inherited.paused,
+      }
       // В поле может лежать «ключ · название» — на бэкенд уходит только ключ
       if (knownEpic) payload.epic = knownEpic.key
       const result = await api.createTask(payload)
@@ -113,13 +138,22 @@ export default function NewTaskModal({ onClose, onCreated }) {
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
     >
+      {/* Высота ограничена экраном, а поля прокручиваются внутри: описание
+          растёт под текст (у копии — под текст оригинала), и без предела окно
+          уезжало шапкой и кнопками за края экрана. Ширины взамен дано больше:
+          длинные строки лучше уложить, чем удлинять окно */}
       <div
-        className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-lg shadow-2xl"
+        className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-2xl max-h-[90vh]
+          flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-5 py-4 border-b border-zinc-800 text-lg font-semibold">Новая задача</div>
+        <div className="shrink-0 px-5 py-4 border-b border-zinc-800 text-lg font-semibold">
+          {/* Копия — тоже новая задача, но человек должен видеть, с чего она
+              списана: поля предзаполнены, и без номера непонятно, откуда */}
+          {source ? <>Копия задачи <span className="font-mono text-base text-zinc-400">{source.id}</span></> : 'Новая задача'}
+        </div>
 
-        <div className="px-5 py-4 space-y-3">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
           <input className={field} placeholder="Название (обязательно)" value={form.title} onChange={set('title')} autoFocus />
           {/* Тот же редактор, что и в открытой задаче: разметку негде было
               подсмотреть, а результат — увидеть до создания задачи. Кнопки поля
@@ -215,6 +249,45 @@ export default function NewTaskModal({ onClose, onCreated }) {
             placeholder="Заблокировано задачей (TASK-NNN, опционально)"
           />
 
+          {/* Простой, доставшийся от оригинала. Показываем до создания и даём
+              снять: иначе копия молча рождается стоящей, а узнаётся это уже на
+              доске — по маркеру, который никто не ставил */}
+          {source && (inherited.blocked_by.length > 0 || inherited.paused) && (
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="text-zinc-500">От {source.id}:</span>
+              {inherited.blocked_by.map((id) => (
+                <span key={id}
+                      className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-0.5 text-zinc-300">
+                  ждёт <span className="font-mono">{id}</span>
+                  <button
+                    type="button"
+                    title="Не наследовать блокировку"
+                    className="text-zinc-500 hover:text-rose-400"
+                    onClick={() => setInherited({
+                      ...inherited,
+                      blocked_by: inherited.blocked_by.filter((b) => b !== id),
+                    })}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {inherited.paused && (
+                <span className="flex items-center gap-1 max-w-full rounded-md border border-zinc-700 px-2 py-0.5 text-zinc-300">
+                  <span className="truncate" title={inherited.paused}>пауза: {inherited.paused}</span>
+                  <button
+                    type="button"
+                    title="Не наследовать паузу"
+                    className="text-zinc-500 hover:text-rose-400"
+                    onClick={() => setInherited({ ...inherited, paused: '' })}
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
           {/* min-w-0 у обоих полей: у инпута есть интринсическая ширина, и без
               неё появление второго поля схлопывает первое до полусантиметра */}
           <div className="flex gap-3">
@@ -308,7 +381,7 @@ export default function NewTaskModal({ onClose, onCreated }) {
           {error && <div className="text-sm text-rose-400">{error}</div>}
         </div>
 
-        <div className="px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
+        <div className="shrink-0 px-5 py-4 border-t border-zinc-800 flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200">
             Отмена
           </button>
@@ -317,7 +390,7 @@ export default function NewTaskModal({ onClose, onCreated }) {
             disabled={busy}
             className="px-4 py-2 text-sm font-medium bg-sky-600 hover:bg-sky-500 disabled:opacity-50 rounded-lg"
           >
-            {busy ? 'Создаю…' : 'Создать'}
+            {busy ? 'Создаю…' : (source ? 'Создать копию' : 'Создать')}
           </button>
         </div>
       </div>

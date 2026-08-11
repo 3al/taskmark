@@ -62,7 +62,7 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
                 "board_repair": True, "stall": True, "update": True,
-                "epic_tasks": True, "agentic_merge": True}
+                "epic_tasks": True, "agentic_merge": True, "task_copy": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -106,6 +106,9 @@ class TaskIn(BaseModel):
     # Тип задачи. Рубрику бэклога он же и задаёт — отдельного поля «раздел»
     # у формы нет: два способа сказать одно и то же расходились (TASK-124)
     task_type: str = DEFAULT_TASK_TYPE
+    # Пауза новой задачи: у копии она наследуется от оригинала (у обычной
+    # задачи её нет — форма создания паузу не спрашивает)
+    paused: str = ""
     # Куда добавить: в раздел приёма или сразу в живую очередь
     target: str = "backlog"
     # Позиция в очереди при target=queue: start | end
@@ -652,6 +655,12 @@ def api_create_task(body: TaskIn) -> dict:
     result = create_task(tasks_dir, cfg, body.model_dump())
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Ошибка создания задачи"))
+
+    # Пауза скрипту создания неизвестна: он знает только блокировки. Ставим её
+    # отдельным шагом — копия задачи наследует простой оригинала целиком, а
+    # половина простоя врала бы о том, чего задача ждёт
+    if body.paused.strip() and result.get("id"):
+        set_paused(tasks_dir, result["id"], body.paused)
 
     # Сразу в живую очередь: задача создаётся в бэклог и переносится
     if body.target == "queue" and result.get("id"):

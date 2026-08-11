@@ -72,5 +72,26 @@ class TestDescriptionEditor(unittest.TestCase):
                       'редактор не принимает placeholder — форма потеряет подсказку')
 
 
+class TestFormFitsTheScreen(unittest.TestCase):
+    """Окно формы не должно вырастать за края экрана.
+
+    Описание растёт под текст (у копии задачи — под текст оригинала), и без
+    предела высоты шапка с полями и кнопки «Создать»/«Отмена» уезжали за края:
+    форма оставалась без единственного способа её отправить.
+    """
+
+    def setUp(self) -> None:
+        self.src = MODAL.read_text(encoding='utf-8')
+
+    def test_height_is_capped_by_viewport(self) -> None:
+        self.assertIn('max-h-[90vh]', self.src, 'высота окна ничем не ограничена')
+        self.assertIn('flex flex-col', self.src,
+                      'без колонки шапка и кнопки не удержатся по краям окна')
+
+    def test_fields_scroll_inside_the_form(self) -> None:
+        self.assertIn('overflow-y-auto', self.src,
+                      'поля не прокручиваются — при пределе высоты они просто обрежутся')
+
+
 if __name__ == '__main__':
     unittest.main()

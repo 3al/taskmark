@@ -121,7 +121,7 @@ export function splitSections(body, sections) {
 // onOpenTask — переход к другой задаче (номер блокера кликабелен),
 // onChanged — простой поменялся: доске нужно перечитать карточки
 export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onChanged,
-                                    onBack, backTo, onClose }) {
+                                    onCopy, onBack, backTo, onClose }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
   // Чистку тела и сборку копируемого текста держит общий модуль: то же самое
@@ -671,9 +671,26 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
               </div>
             )}
           </div>
+          {/* Копия задачи — рядом с копированием содержимого: оба про «взять
+              это ещё раз», и оба нужны из открытой задачи, где текст перед
+              глазами. Соседняя кнопка кладёт текст в буфер, эта заводит работу */}
+          {task && onCopy && (
+            <button
+              onClick={() => onCopy(taskId)}
+              className="ml-auto inline-flex items-center justify-center w-5 h-5 shrink-0 rounded transition
+                text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/60"
+              title="Создать копию задачи"
+            >
+              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none"
+                   stroke="currentColor" strokeWidth="1.5">
+                <rect x="2.5" y="2.5" width="8" height="9" rx="1.5" />
+                <path d="M12.5 8v6M9.5 11h6" />
+              </svg>
+            </button>
+          )}
           {task && (
             <CopyButton
-              className="ml-auto"
+              className={onCopy ? '' : 'ml-auto'}
               text={taskCopyText(task, taskId)}
               title="Копировать содержимое задачи"
             />

@@ -83,6 +83,11 @@ export default function App() {
   }
   const closeViews = () => { setOpenTask(null); setOpenEpic(null); setTaskTrail([]) }
   const [showNewTask, setShowNewTask] = useState(false)
+  // Копируемая задача: форма создания открывается предзаполненной её данными.
+  // Копия начинает с бэклога, как любая новая задача, — место оригинала на
+  // доске принадлежит его работе, а не замыслу
+  const [copySource, setCopySource] = useState(null)
+  const closeNewTask = () => { setShowNewTask(false); setCopySource(null) }
   const [showLogs, setShowLogs] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   // Вкладка, ради которой настройки открыли: из шестерёнки — никакая (запомнится
@@ -570,6 +575,31 @@ export default function App() {
     }
   }
 
+  // Копия задачи: содержимое лежит в файле, а не на доске, — сначала грузим
+  // задачу, потом открываем форму с её полями. Наследуется только написанное
+  // человеком: название, описание, критерии, тип, эпик и простой
+  const openCopy = async (taskId) => {
+    try {
+      const task = await api.task(taskId)
+      const section = (key) => (task.sections || []).find((s) => s.key === key)?.text || ''
+      const meta = task.meta || {}
+      const value = (v) => (v && v !== '~' ? v : '')
+      setCopySource({
+        id: taskId,
+        title: value(meta.title),
+        description: section('description'),
+        criteria: section('criteria'),
+        task_type: value(meta.type),
+        epic: value(meta.epic),
+        blocked_by: task.stall?.blocked_by || [],
+        paused: task.stall?.paused || '',
+      })
+      setShowNewTask(true)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   const menuItems = useMemo(() => {
     if (!menuFor) return []
     const { task, status } = menuFor
@@ -596,6 +626,11 @@ export default function App() {
                  onSelect: () => copyToClipboard(task.id) })
     items.push({ key: 'copy-body', label: 'Содержимое задачи',
                  onSelect: () => copyTaskText(task.id) })
+    // Копия задачи — в той же группе: для человека это «скопировать» той же
+    // рукой, что номер и текст, только результат кладётся не в буфер, а на
+    // доску — потому и «целиком»
+    items.push({ key: 'copy-task', label: 'Задачу целиком',
+                 onSelect: () => openCopy(task.id) })
     return items
   }, [menuFor, visibleColumns, dndFullBoard, board])
 
@@ -1210,6 +1245,9 @@ export default function App() {
           onOpenTask={(id) => pushView({ task: id })}
           onOpenEpic={(key) => pushView({ epic: key })}
           onChanged={refresh}
+          // Форма копии перекрыла бы окно задачи — уступаем ей место: копию
+          // правят по своим полям, а не сверяют с оригиналом на просвет
+          onCopy={(id) => { closeViews(); openCopy(id) }}
           backTo={viewLabel(taskTrail[taskTrail.length - 1])}
           onBack={taskTrail.length ? goBack : null}
           onClose={closeViews}
@@ -1224,7 +1262,8 @@ export default function App() {
       )}
       {showNewTask && (
         <NewTaskModal
-          onClose={() => setShowNewTask(false)}
+          source={copySource}
+          onClose={closeNewTask}
           onCreated={refresh}
         />
       )}

@@ -54,12 +54,14 @@ export default function ContextMenu({ x, y, items, onClose }) {
       style={{ left: pos.left, top: pos.top }}
       // Правый клик по самому меню не должен открывать меню браузера поверх него
       onContextMenu={(e) => e.preventDefault()}
-      className="fixed z-50 min-w-[13rem] max-h-[70vh] overflow-y-auto py-1
-        rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl shadow-black/40 text-sm"
+      // Меню плотное и мелкое: список колонок переноса длинный, а читают его
+      // одним взглядом у курсора — воздух здесь только удлиняет дорогу мыши
+      className="fixed z-50 min-w-[11rem] max-h-[70vh] overflow-y-auto py-0.5
+        rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl shadow-black/40 text-xs"
     >
       {items.map((item) => (item.group ? (
         <div key={item.key}
-             className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+             className="px-2.5 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-zinc-500">
           {item.group}
         </div>
       ) : (
@@ -69,12 +71,12 @@ export default function ContextMenu({ x, y, items, onClose }) {
           role="menuitem"
           disabled={item.disabled}
           onClick={() => { onClose(); item.onSelect?.() }}
-          className="w-full flex items-center gap-2 px-3 py-1.5 text-left transition
+          className="w-full flex items-center gap-1.5 px-2.5 py-1 text-left transition
             text-zinc-200 hover:bg-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent"
         >
-          {item.dot && <span className={`w-2 h-2 shrink-0 rounded-full ${item.dot}`} />}
+          {item.dot && <span className={`w-1.5 h-1.5 shrink-0 rounded-full ${item.dot}`} />}
           <span className="truncate">{item.label}</span>
-          {item.hint && <span className="ml-auto text-xs text-zinc-500">{item.hint}</span>}
+          {item.hint && <span className="ml-auto pl-2 text-[10px] text-zinc-500">{item.hint}</span>}
         </button>
       )))}
     </div>
