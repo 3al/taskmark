@@ -116,5 +116,47 @@ class RememberedTabTest(unittest.TestCase):
                       "сохранённый ключ принимается без проверки")
 
 
+HELP = Path(__file__).resolve().parent.parent.parent / "docs" / "help"
+
+# «Настройки (⚙) → Вкладка → …»: берём то, что идёт сразу за первой стрелкой.
+# Второй уровень — поля внутри вкладки, их реестр не знает. Имя набирается из
+# кириллических слов, поэтому кавычки, звёздочки и знаки препинания обрывают
+# его сами; ищем по всему тексту, а не построчно — ссылка бывает с переносом
+TAB_REFERENCE = re.compile(
+    r"Настройк\w*\s*(?:\([^)]*\)|⚙)?\s*→\s*(?:\*\*)?«?\s*"
+    r"([А-ЯЁ][а-яё]*(?:\s+[А-Яа-яЁё]+)*)")
+
+
+def tab_titles() -> set[str]:
+    """Названия вкладок из реестра — то, что человек читает в окне."""
+    src = source()
+    tabs = src[src.index("const TABS"):src.index("export default")]
+    return set(re.findall(r"title:\s*'([^']+)'", tabs))
+
+
+class HelpNamesRealTabsTest(unittest.TestCase):
+    """Справка зовёт вкладки их названиями, а не ключами реестра.
+
+    Справку раздаёт сам инструмент: неверное название — это ложь прямо в
+    интерфейсе, и человек ищет несуществующий пункт вместо перезапуска сервера.
+    """
+
+    def test_help_points_to_existing_tabs(self) -> None:
+        titles = tab_titles()
+        self.assertTrue(titles, "не удалось прочитать названия вкладок")
+
+        for path in sorted(HELP.glob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            for match in TAB_REFERENCE.finditer(text):
+                # Справка переносит строки по ширине — имя вкладки бывает
+                # разорвано переносом, а окно показывает его одной строкой
+                name = re.sub(r"\s+", " ", match.group(1)).strip()
+                line_no = text.count("\n", 0, match.start()) + 1
+                with self.subTest(file=path.name, line=line_no):
+                    self.assertIn(name, titles,
+                                  f"{path.name}:{line_no} — вкладки «{name}» нет "
+                                  f"в окне настроек")
+
+
 if __name__ == "__main__":
     unittest.main()

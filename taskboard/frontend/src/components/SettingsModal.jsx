@@ -15,8 +15,10 @@ const TABS = [
   { key: 'release', title: 'Выпуск', scope: 'project' },
 ]
 
-// Выбранная вкладка живёт в localStorage, как порядок колонок: это привычка
-// пользователя, а не свойство проекта, и гонять её через конфиг незачем
+// Выбранная вкладка живёт в localStorage: это привычка человека, а не свойство
+// проекта, и гонять её через конфиг незачем. Ключ поэтому **один на все
+// проекты** — в отличие от порядка колонок, который лежит в том же хранилище,
+// но своим ключом на каждый проект: там вид зависит от того, что за доска
 const TAB_KEY = 'taskboard:settingsTab'
 
 const SCOPE_NOTE = {
@@ -371,287 +373,293 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
               </div>
 
               {tab === 'board' && (
-              <>
-              {/* Превью задачи. Границы приходят с бэкенда (card_limits) — он же
-                  их и проверяет: числа, вписанные сюда руками, разъехались бы
-                  с проверкой при первой правке диапазона */}
-              <div>
-                <span className={label}>Превью задачи на доске</span>
-                <div className="grid grid-cols-3 gap-3">
-                  {[['card_title_size', 'Заголовок, px'],
-                    ['card_title_lines', 'Строк заголовка'],
-                    ['card_meta_size', 'Метаданные, px']].map(([key, title]) => {
-                    const [low, high] = config.card_limits?.[key] || []
-                    const value = config[key]
-                    const bad = value !== '' && (Number(value) < low || Number(value) > high)
-                    return (
-                      <div key={key}>
-                        <span className={label}>{title}</span>
-                        <input
-                          className={`${field} ${bad ? 'border-rose-500' : ''}`}
-                          type="number"
-                          min={low}
-                          max={high}
-                          value={value ?? ''}
-                          onChange={(e) => set(key, e.target.value)}
-                        />
-                        <span className="block text-[11px] text-zinc-600 mt-1">
-                          от {low} до {high}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-                {/* Порог залежалости — тоже число с границами, но своё поле:
-                    в ряду размеров оно читалось бы как ещё один «px».
-                    Настройка проектная, в отличие от размеров: неделя без
-                    движения в одном репозитории норма, в другом — беда */}
-                {(() => {
-                  const [low, high] = config.card_limits?.card_stale_days || []
-                  const value = config.card_stale_days
-                  const bad = value !== '' && (Number(value) < low || Number(value) > high)
-                  return (
-                    <div className="mt-3">
-                      <span className={label}>
-                        Показывать возраст задачи после стольки дней в статусе
-                      </span>
+                <>
+                  {/* Превью задачи. Границы приходят с бэкенда (card_limits) — он же
+                      их и проверяет: числа, вписанные сюда руками, разъехались бы
+                      с проверкой при первой правке диапазона */}
+                  <div>
+                    <span className={label}>Превью задачи на доске</span>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[['card_title_size', 'Заголовок, px'],
+                        ['card_title_lines', 'Строк заголовка'],
+                        ['card_meta_size', 'Метаданные, px']].map(([key, title]) => {
+                        const [low, high] = config.card_limits?.[key] || []
+                        const value = config[key]
+                        const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                        return (
+                          <div key={key}>
+                            <span className={label}>{title}</span>
+                            <input
+                              className={`${field} ${bad ? 'border-rose-500' : ''}`}
+                              type="number"
+                              min={low}
+                              max={high}
+                              value={value ?? ''}
+                              onChange={(e) => set(key, e.target.value)}
+                            />
+                            <span className="block text-[11px] text-zinc-600 mt-1">
+                              от {low} до {high}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {/* Порог залежалости — тоже число с границами, но своё поле:
+                        в ряду размеров оно читалось бы как ещё один «px».
+                        Настройка проектная, в отличие от размеров: неделя без
+                        движения в одном репозитории норма, в другом — беда */}
+                    {(() => {
+                      const [low, high] = config.card_limits?.card_stale_days || []
+                      const value = config.card_stale_days
+                      const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                      return (
+                        <div className="mt-3">
+                          <span className={label}>
+                            Показывать возраст задачи после стольки дней в статусе
+                          </span>
+                          <input
+                            className={`${field} ${bad ? 'border-rose-500' : ''}`}
+                            type="number"
+                            min={low}
+                            max={high}
+                            value={value ?? ''}
+                            onChange={(e) => set('card_stale_days', e.target.value)}
+                          />
+                          <span className="block text-[11px] text-zinc-500 mt-1">
+                            возраст показывается нижней строкой превью; от {low} до {high}
+                          </span>
+                        </div>
+                      )
+                    })()}
+                    {/* Метка типа — не размер, но живёт там же: это про то, что
+                        видно на превью. По умолчанию включена */}
+                    <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">
                       <input
-                        className={`${field} ${bad ? 'border-rose-500' : ''}`}
-                        type="number"
-                        min={low}
-                        max={high}
-                        value={value ?? ''}
-                        onChange={(e) => set('card_stale_days', e.target.value)}
+                        type="checkbox"
+                        checked={config.card_show_type !== false}
+                        onChange={(e) => set('card_show_type', e.target.checked)}
+                        className="mt-0.5 accent-sky-500"
                       />
-                      <span className="block text-[11px] text-zinc-500 mt-1">
-                        возраст показывается нижней строкой превью; от {low} до {high}
+                      <span>
+                        Метка типа задачи
+                        <div className="text-[11px] text-zinc-500">
+                          кружок с буквой в правом верхнем углу превью; в открытой
+                          задаче тип виден всегда
+                        </div>
                       </span>
-                    </div>
-                  )
-                })()}
-                {/* Метка типа — не размер, но живёт там же: это про то, что
-                    видно на превью. По умолчанию включена */}
-                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">
-                  <input
-                    type="checkbox"
-                    checked={config.card_show_type !== false}
-                    onChange={(e) => set('card_show_type', e.target.checked)}
-                    className="mt-0.5 accent-sky-500"
-                  />
-                  <span>
-                    Метка типа задачи
-                    <div className="text-[11px] text-zinc-500">
-                      кружок с буквой в правом верхнем углу превью; в открытой
-                      задаче тип виден всегда
-                    </div>
-                  </span>
-                </label>
-                {/* Пустая колонка занимает место, пока в ней ничего нет. Выключено
-                    по умолчанию: колонка, пропавшая сама, читается как поломка,
-                    поэтому прятать их — осознанный выбор человека */}
-                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">
-                  <input
-                    type="checkbox"
-                    checked={!!config.hide_empty_columns}
-                    onChange={(e) => set('hide_empty_columns', e.target.checked)}
-                    className="mt-0.5 accent-sky-500"
-                  />
-                  <span>
-                    Сворачивать пустые колонки
-                    <div className="text-[11px] text-zinc-500">
-                      колонка без задач становится узкой полосой и разворачивается
-                      сама, когда в ней появляется задача; любую другую сворачивает
-                      клик по её шапке
-                    </div>
-                  </span>
-                </label>
-              </div>
-              </>
+                    </label>
+                    {/* Пустая колонка занимает место, пока в ней ничего нет. Выключено
+                        по умолчанию: колонка, пропавшая сама, читается как поломка,
+                        поэтому прятать их — осознанный выбор человека */}
+                    <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">
+                      <input
+                        type="checkbox"
+                        checked={!!config.hide_empty_columns}
+                        onChange={(e) => set('hide_empty_columns', e.target.checked)}
+                        className="mt-0.5 accent-sky-500"
+                      />
+                      <span>
+                        Сворачивать пустые колонки
+                        <div className="text-[11px] text-zinc-500">
+                          колонка без задач становится узкой полосой и разворачивается
+                          сама, когда в ней появляется задача; любую другую сворачивает
+                          клик по её шапке
+                        </div>
+                      </span>
+                    </label>
+                  </div>
+                </>
               )}
 
               {/* Состав агентского окружения проверяется по выбранным средам:
                   выключенная среда молчит, включённая — требует полного набора */}
               {tab === 'agentic' && (
-              <div>
-                <span className={label}>Среды агентов</span>
-                <div className="space-y-2">
-                  {[['claude', 'Claude Code', '.claude/skills · CLAUDE.md'],
-                    ['opencode', 'opencode', '.opencode/commands · AGENTS.md']].map(
-                    ([key, title, where]) => (
-                      <label key={key} className="flex items-start gap-2 text-sm cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={!!config.harnesses?.[key]}
-                          onChange={(e) => set('harnesses', {
-                            ...(config.harnesses || {}), [key]: e.target.checked,
-                          })}
-                          className="mt-0.5 accent-sky-500"
-                        />
-                        <span>
-                          {title}
-                          <div className="text-[11px] text-zinc-500">{where}</div>
-                        </span>
-                      </label>
-                    ))}
+                <div>
+                  <span className={label}>Среды агентов</span>
+                  <div className="space-y-2">
+                    {[['claude', 'Claude Code', '.claude/skills · CLAUDE.md'],
+                      ['opencode', 'opencode', '.opencode/commands · AGENTS.md']].map(
+                      ([key, title, where]) => (
+                        <label key={key} className="flex items-start gap-2 text-sm cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={!!config.harnesses?.[key]}
+                            onChange={(e) => set('harnesses', {
+                              ...(config.harnesses || {}), [key]: e.target.checked,
+                            })}
+                            className="mt-0.5 accent-sky-500"
+                          />
+                          <span>
+                            {title}
+                            <div className="text-[11px] text-zinc-500">{where}</div>
+                          </span>
+                        </label>
+                      ))}
+                  </div>
+                  {/* Волт — часть окружения, а не среда: спрашивается тем же
+                      диалогом, но передумать можно только здесь */}
+                  <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2">
+                    <input
+                      type="checkbox"
+                      checked={!!config.vault}
+                      onChange={(e) => set('vault', e.target.checked)}
+                      className="mt-0.5 accent-sky-500"
+                    />
+                    <span>
+                      Knowledge Vault
+                      <div className="text-[11px] text-zinc-500">
+                        vault/ — внешняя память проекта: скилл write-vault, шаблоны заметок,
+                        блоки про волт в скиллах и правилах
+                      </div>
+                    </span>
+                  </label>
+                  {/* Ходить ли агенту в чужой форж — решение человека: наличие
+                      MCP-инструмента об этом не говорит */}
+                  <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2">
+                    <input
+                      type="checkbox"
+                      checked={!!config.review_sources}
+                      onChange={(e) => set('review_sources', e.target.checked)}
+                      className="mt-0.5 accent-sky-500"
+                    />
+                    <span>
+                      Внешние источники ревью
+                      <div className="text-[11px] text-zinc-500">
+                        скилл review-task берёт предмет из merge request через
+                        MCP-инструменты окружения; выключено — этих шагов в скилле нет
+                      </div>
+                    </span>
+                  </label>
+                  <div className="text-[11px] text-zinc-600 mt-1">
+                    Недостающее развернётся кнопками на баннере. Скиллы лежат в одном
+                    месте: opencode читает и .claude/skills
+                    {onOpenHelp && (
+                      <button className="ml-1 underline hover:text-zinc-400"
+                              onClick={() => onOpenHelp('agentic')}>подробнее</button>
+                    )}
+                  </div>
                 </div>
-                {/* Волт — часть окружения, а не среда: спрашивается тем же
-                    диалогом, но передумать можно только здесь */}
-                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2">
-                  <input
-                    type="checkbox"
-                    checked={!!config.vault}
-                    onChange={(e) => set('vault', e.target.checked)}
-                    className="mt-0.5 accent-sky-500"
-                  />
-                  <span>
-                    Knowledge Vault
-                    <div className="text-[11px] text-zinc-500">
-                      vault/ — внешняя память проекта: скилл write-vault, шаблоны заметок,
-                      блоки про волт в скиллах и правилах
-                    </div>
-                  </span>
-                </label>
-                {/* Ходить ли агенту в чужой форж — решение человека: наличие
-                    MCP-инструмента об этом не говорит */}
-                <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2">
-                  <input
-                    type="checkbox"
-                    checked={!!config.review_sources}
-                    onChange={(e) => set('review_sources', e.target.checked)}
-                    className="mt-0.5 accent-sky-500"
-                  />
-                  <span>
-                    Внешние источники ревью
-                    <div className="text-[11px] text-zinc-500">
-                      скилл review-task берёт предмет из merge request через
-                      MCP-инструменты окружения; выключено — этих шагов в скилле нет
-                    </div>
-                  </span>
-                </label>
-                <div className="text-[11px] text-zinc-600 mt-1">
-                  Недостающее развернётся кнопками на баннере. Скиллы лежат в одном
-                  месте: opencode читает и .claude/skills
-                  {onOpenHelp && (
-                    <button className="ml-1 underline hover:text-zinc-400"
-                            onClick={() => onOpenHelp('agentic')}>подробнее</button>
-                  )}
-                </div>
-              </div>
               )}
 
               {tab === 'lifecycle' && (
-              <>
-              {/* Перетаскивание — правило движения задач, поэтому живёт рядом
-                  с маршрутом, а не среди свойств внешнего вида */}
-              <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={!!config.dnd_full_board}
-                  onChange={(e) => set('dnd_full_board', e.target.checked)}
-                  className="accent-sky-500"
-                />
-                DnD по всей доске (иначе мышью — только приём задач ↔ очередь)
-              </label>
+                <>
+                  {/* Перетаскивание — правило движения задач, поэтому живёт рядом
+                      с маршрутом, а не среди свойств внешнего вида */}
+                  <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={!!config.dnd_full_board}
+                      onChange={(e) => set('dnd_full_board', e.target.checked)}
+                      className="accent-sky-500"
+                    />
+                    DnD по всей доске (иначе мышью — только приём задач ↔ очередь)
+                  </label>
 
-              {/* Удаление необратимо и трогает файлы пользователя, поэтому
-                  выключено по умолчанию: крестика на карточках просто нет */}
-              <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={!!config.delete_tasks}
-                  onChange={(e) => set('delete_tasks', e.target.checked)}
-                  className="mt-0.5 accent-sky-500"
-                />
-                <span>
-                  Удаление задач крестиком
-                  <div className="text-[11px] text-zinc-500">
-                    крестик в углу превью убирает задачу с доски и удаляет её файл;
-                    спрашивает подтверждение
-                  </div>
-                </span>
-              </label>
+                  {/* Удаление необратимо и трогает файлы пользователя, поэтому
+                      выключено по умолчанию: крестика на карточках просто нет */}
+                  <label className="flex items-start gap-2 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={!!config.delete_tasks}
+                      onChange={(e) => set('delete_tasks', e.target.checked)}
+                      className="mt-0.5 accent-sky-500"
+                    />
+                    <span>
+                      Удаление задач крестиком
+                      <div className="text-[11px] text-zinc-500">
+                        крестик в углу превью убирает задачу с доски и удаляет её файл;
+                        спрашивает подтверждение
+                      </div>
+                    </span>
+                  </label>
 
-              {pipeline && (
-                <div className="border-t border-zinc-800 pt-4">
-                  <div className="text-sm font-medium mb-2">Жизненный цикл задачи</div>
-                  <PipelineEditor
-                    pipeline={pipeline.pipeline}
-                    actions={pipeline.actions}
-                    catalog={catalog}
-                    sources={sources}
-                    requires={requiresOverride ?? config.requires ?? {}}
-                    predicates={config.predicates}
-                    onOpenHelp={onOpenHelp}
-                    onChange={({ pipeline: next, actions: nextActions, statuses, requires }) => {
-                      setPipelineState({ pipeline: next, actions: nextActions })
-                      if (statuses !== undefined) setStatusesOverride(statuses)
-                      if (requires !== undefined) setRequiresOverride(requires)
-                    }}
-                  />
-                </div>
-              )}
-              </>
+                  {pipeline && (
+                    <div className="border-t border-zinc-800 pt-4">
+                      <div className="text-sm font-medium mb-2">Жизненный цикл задачи</div>
+                      <PipelineEditor
+                        pipeline={pipeline.pipeline}
+                        actions={pipeline.actions}
+                        catalog={catalog}
+                        sources={sources}
+                        requires={requiresOverride ?? config.requires ?? {}}
+                        predicates={config.predicates}
+                        onOpenHelp={onOpenHelp}
+                        onChange={({ pipeline: next, actions: nextActions, statuses, requires }) => {
+                          setPipelineState({ pipeline: next, actions: nextActions })
+                          if (statuses !== undefined) setStatusesOverride(statuses)
+                          if (requires !== undefined) setRequiresOverride(requires)
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Скрипт выпуска пишет пользователь, и его может не быть вовсе —
                   поэтому отдельная вкладка, а не поле среди свойств проекта */}
               {tab === 'release' && (
-              <div>
-                <span className={label}>Скрипт выпуска версии</span>
-                <input
-                  className={field}
-                  placeholder="не настроен"
-                  value={config.release_script || ''}
-                  onChange={(e) => set('release_script', e.target.value)}
-                />
-                <div className="text-[11px] text-zinc-600 mt-1">
-                  Путь к вашему скрипту в проекте, например <code>tools/release.py</code>.
-                  Пусто — подготовка выпуска доводится до changelog, а выпускаете вы сами.
-                  {onOpenHelp && (
-                    <button
-                      className="ml-1 underline hover:text-zinc-400"
-                      onClick={() => onOpenHelp('release')}
-                    >
-                      подробнее
-                    </button>
-                  )}
+                <div>
+                  <span className={label}>Скрипт выпуска версии</span>
+                  <input
+                    className={field}
+                    placeholder="не настроен"
+                    value={config.release_script || ''}
+                    onChange={(e) => set('release_script', e.target.value)}
+                  />
+                  <div className="text-[11px] text-zinc-600 mt-1">
+                    Путь к вашему скрипту в проекте, например <code>tools/release.py</code>.
+                    Пусто — подготовка выпуска доводится до changelog, а выпускаете вы сами.
+                    {onOpenHelp && (
+                      <button
+                        className="ml-1 underline hover:text-zinc-400"
+                        onClick={() => onOpenHelp('release')}
+                      >
+                        подробнее
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
               )}
 
               {tab === 'tool' && (
-              <>
-              <div>
-                <span className={label}>Порт (применится после перезапуска сервера)</span>
-                <input
-                  className={field}
-                  type="number"
-                  value={config.port}
-                  onChange={(e) => set('port', e.target.value)}
-                />
-              </div>
+                <>
+                  {/* Полей с именами системных артефактов здесь нет и не должно
+                      быть: `board.md`, `create_task.py`, `set_status.py`, `logs/` —
+                      константы поставки, а не настройка. Переименование доезжало до
+                      данных, но не до текстов скиллов и правил, где эти имена
+                      зашиты, — и человек получал агента, зовущего несуществующий
+                      файл. Значения живут в `DEFAULTS` (backend/config.py) */}
+                  <div>
+                    <span className={label}>Порт (применится после перезапуска сервера)</span>
+                    <input
+                      className={field}
+                      type="number"
+                      value={config.port}
+                      onChange={(e) => set('port', e.target.value)}
+                    />
+                  </div>
 
-              <div className="border-t border-zinc-800 pt-4">
-                <span className={label}>Сервер</span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={restartServer}
-                    className="px-3 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg"
-                  >
-                    Перезапустить
-                  </button>
-                  <button
-                    onClick={stopServer}
-                    className="px-3 py-2 text-sm bg-zinc-800 hover:bg-rose-900/40 border border-zinc-700 hover:border-rose-800 rounded-lg"
-                  >
-                    Остановить
-                  </button>
-                </div>
-                <div className="text-[11px] text-zinc-600 mt-1">
-                  Перезапуск применяет смену порта и перечитывает конфиги
-                </div>
-              </div>
-              </>
+                  <div className="border-t border-zinc-800 pt-4">
+                    <span className={label}>Сервер</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={restartServer}
+                        className="px-3 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg"
+                      >
+                        Перезапустить
+                      </button>
+                      <button
+                        onClick={stopServer}
+                        className="px-3 py-2 text-sm bg-zinc-800 hover:bg-rose-900/40 border border-zinc-700 hover:border-rose-800 rounded-lg"
+                      >
+                        Остановить
+                      </button>
+                    </div>
+                    <div className="text-[11px] text-zinc-600 mt-1">
+                      Перезапуск применяет смену порта и перечитывает конфиги
+                    </div>
+                  </div>
+                </>
               )}
             </>
           )}
