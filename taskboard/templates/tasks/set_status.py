@@ -100,13 +100,13 @@ DEFAULTS = {
 CATALOG = {
     "backlog": {"label": "Backlog", "section": "Backlog"},
     "todo": {"label": "To Do", "section": "To Do"},
-    "queued": {"label": "Очередь", "section": "Queue"},
+    "queued": {"label": "Queue", "section": "Queue"},
     # reentry: сюда возвращают с проверки, но новую работу берут не отсюда
-    "to_fix": {"label": "На исправление", "section": "To Fix", "reentry": True},
+    "to_fix": {"label": "To Fix", "section": "To Fix", "reentry": True},
     "development": {"label": "Development", "section": "Development"},
-    "local_testing": {"label": "Локальная проверка", "section": "Local Testing"},
+    "local_testing": {"label": "Local Testing", "section": "Local Testing"},
     "review": {"label": "Review", "section": "Review"},
-    "to_testing": {"label": "К тестированию", "section": "To Testing"},
+    "to_testing": {"label": "To Testing", "section": "To Testing"},
     # recommends — что этап просит на выходе, пока проект не объявил этого
     # требованием: печатается напоминанием, ничего не запрещая. В рекомендации
     # попадает только то, что уже стреляло на практике (TASK-101), а не всё,
@@ -114,8 +114,8 @@ CATALOG = {
     "testing": {"label": "Testing", "section": "Testing",
                 "recommends": [{"id": "verified", "check": "confirm",
                                 "ask": "проверку подтвердил человек"}]},
-    "ready_for_release": {"label": "Готово к выпуску", "section": "Ready for Release"},
-    "release_notes": {"label": "Заметки о релизе", "section": "Release Notes",
+    "ready_for_release": {"label": "Ready for Release", "section": "Ready for Release"},
+    "release_notes": {"label": "Release Notes", "section": "Release Notes",
                       # section_present, а не filled: пустая секция — принятое
                       # решение «пользователю сказать нечего», и требовать текст
                       # значило бы ломать это решение
@@ -129,11 +129,11 @@ CATALOG = {
                                      {"id": "release_ok", "check": "confirm",
                                       "ask": "тексты релиза утверждены человеком",
                                       "except_types": ["discussion", "review"]}]},
-    "to_release": {"label": "В ближайший релиз", "section": "To Release"},
-    "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy"},
+    "to_release": {"label": "To Release", "section": "To Release"},
+    "ready_to_deploy": {"label": "Ready to Deploy", "section": "Ready to Deploy"},
     "completed": {"label": "Completed", "section": "Completed"},
     "done": {"label": "Done", "section": "Done"},
-    "cancelled": {"label": "Отменена", "section": "Cancelled", "offramp": True},
+    "cancelled": {"label": "Cancelled", "section": "Cancelled", "offramp": True},
 }
 
 

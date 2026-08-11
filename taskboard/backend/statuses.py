@@ -27,19 +27,19 @@ CATALOG: dict[str, dict] = {
     # todo и queued — равноправные имена одного смысла (приоритизированный
     # список, откуда берут работу); включают то, чьё имя привычнее
     "todo": {"label": "To Do", "section": "To Do", "color": "amber"},
-    "queued": {"label": "Очередь", "section": "Queue", "color": "amber"},
+    "queued": {"label": "Queue", "section": "Queue", "color": "amber"},
     # Возвратные статусы ставятся ЛЕВЕЕ development: тогда возврат из проверки —
     # движение назад, а «вперёд» из тестирования ведёт к релизу, а не к багам.
     # reentry отличает их от очереди: новую работу берут не отсюда, и «минуя
     # to_fix» — не пропуск шага, а нормальный ход по маршруту
-    "to_fix": {"label": "На исправление", "section": "To Fix", "color": "rose",
+    "to_fix": {"label": "To Fix", "section": "To Fix", "color": "rose",
                "reentry": True},
     "development": {"label": "Development", "section": "Development", "color": "sky"},
     # Проверка автором на локальной сборке — не работа тестировщика на стенде
-    "local_testing": {"label": "Локальная проверка", "section": "Local Testing",
+    "local_testing": {"label": "Local Testing", "section": "Local Testing",
                       "color": "yellow"},
     "review": {"label": "Review", "section": "Review", "color": "violet"},
-    "to_testing": {"label": "К тестированию", "section": "To Testing", "color": "cyan"},
+    "to_testing": {"label": "To Testing", "section": "To Testing", "color": "cyan"},
     # recommends — что этап просит на выходе, пока проект не объявил этого
     # требованием: печатается напоминанием, ничего не запрещая, и материализуется
     # в `requires` проекта, когда человек добавляет статус. Состав сверяется со
@@ -51,12 +51,12 @@ CATALOG: dict[str, dict] = {
                                 "ask": "проверку подтвердил человек"}]},
     # Выпуск версии тремя шагами: проверенных задач копятся десятки, состав
     # релиза выбирается из них, и только выбранное получает тексты для changelog
-    "ready_for_release": {"label": "Готово к выпуску", "section": "Ready for Release",
+    "ready_for_release": {"label": "Ready for Release", "section": "Ready for Release",
                           "color": "cyan"},
     # section_present, а не filled: пустая секция — принятое решение
     # «пользователю сказать нечего», и требовать текст значило бы его ломать.
     # except_types: у обсуждения и ревью релизного хвоста нет вовсе
-    "release_notes": {"label": "Заметки о релизе", "section": "Release Notes",
+    "release_notes": {"label": "Release Notes", "section": "Release Notes",
                       "color": "violet",
                       "recommends": [{"id": "release_text", "check": "section_present",
                                       "name": "Изменение для пользователя",
@@ -65,18 +65,18 @@ CATALOG: dict[str, dict] = {
                                      {"id": "release_ok", "check": "confirm",
                                       "ask": "тексты релиза утверждены человеком",
                                       "except_types": ["discussion", "review"]}]},
-    "to_release": {"label": "В ближайший релиз", "section": "To Release",
+    "to_release": {"label": "To Release", "section": "To Release",
                    "color": "fuchsia"},
     # Выкатка — не то же, что выпуск версии: у процессов со стендом и продом
     # «готово к деплою» наступает там, где версии может не быть вовсе
-    "ready_to_deploy": {"label": "К деплою", "section": "Ready to Deploy",
+    "ready_to_deploy": {"label": "Ready to Deploy", "section": "Ready to Deploy",
                         "color": "fuchsia"},
     # completed и done — взаимозаменяемые терминалы; ключ пишется во frontmatter
     # (status: done), поэтому это не только подпись. Включают один из двух
     "completed": {"label": "Completed", "section": "Completed", "color": "emerald"},
     "done": {"label": "Done", "section": "Done", "color": "emerald"},
     # Съезд с маршрута: достижим отовсюду, но никогда не ожидаемый следующий шаг
-    "cancelled": {"label": "Отменена", "section": "Cancelled", "color": "stone",
+    "cancelled": {"label": "Cancelled", "section": "Cancelled", "color": "stone",
                   "offramp": True},
 }
 

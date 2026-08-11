@@ -24,6 +24,19 @@ class CatalogTest(unittest.TestCase):
             for field in ("label", "section", "color"):
                 self.assertTrue(meta.get(field), f"{key}: пустое поле {field}")
 
+    def test_label_repeats_the_board_section(self) -> None:
+        """Подпись статуса — то же имя, что у его раздела на доске.
+
+        Правило уже действует для статуса, которого нет в каталоге: там и
+        подпись, и раздел собираются из ключа (`_titleize`). Каталог обязан
+        подчиняться ему же — иначе в настройках половина статусов подписана
+        не тем, что человек читает в заголовке колонки.
+        """
+        for key, meta in CATALOG.items():
+            with self.subTest(status=key):
+                self.assertEqual(meta["section"], meta["label"],
+                                 f"{key}: подпись разошлась с разделом доски")
+
     def test_catalog_covers_agreed_bricks(self) -> None:
         """Состав каталога согласован с пользователем — сузиться он не должен."""
         expected = {"backlog", "todo", "queued", "to_fix", "development", "local_testing",

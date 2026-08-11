@@ -75,7 +75,7 @@ python3 tasks/set_status.py --list
 
 | Что | Статус |
 |---|---|
-| пул готового | статус **перед** `actions.release_draft` (обычно «Готово к выпуску») |
+| пул готового | статус **перед** `actions.release_draft` (обычно «Ready for Release») |
 | подготовка текстов | `actions.release_draft` |
 | утверждённое | `actions.release_lock` |
 

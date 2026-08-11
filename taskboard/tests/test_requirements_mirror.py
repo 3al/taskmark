@@ -163,6 +163,23 @@ class MirrorTest(unittest.TestCase):
                                  f"рекомендации статуса «{key}» разошлись между "
                                  f"скриптом и бэкендом")
 
+    def test_catalog_names_match_in_both_mirrors(self) -> None:
+        """Подпись и раздел статуса у зеркал одни.
+
+        Скрипт печатает подпись в `--list`, в строке перевода и в отказах, а
+        доска показывает её же в настройках: разойдясь, они назовут один статус
+        двумя именами — человеку в одном окне и агенту в соседнем.
+        """
+        from backend.statuses import CATALOG as backend_catalog
+
+        for key, meta in self.script.CATALOG.items():
+            with self.subTest(status=key):
+                theirs = backend_catalog.get(key, {})
+                self.assertEqual((theirs.get("label"), theirs.get("section")),
+                                 (meta.get("label"), meta.get("section")),
+                                 f"имена статуса «{key}» разошлись между "
+                                 f"скриптом и бэкендом")
+
     def test_release_tail_recommendations_skip_discussions(self) -> None:
         """У задачи-обсуждения релизного хвоста нет вовсе.
 
