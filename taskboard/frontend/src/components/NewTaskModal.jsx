@@ -3,6 +3,7 @@ import { api } from '../api'
 import { FORM_FIELD } from '../fields'
 import { TASK_TYPES } from '../taskTypes'
 import TaskPicker from './TaskPicker'
+import MarkdownEditor from './MarkdownEditor'
 
 // Модалка создания задачи (вызов create_task.py через API).
 // Рубрику бэклога выбирать не нужно: её задаёт тип задачи (TASK-124)
@@ -32,6 +33,8 @@ export default function NewTaskModal({ onClose, onCreated }) {
   // Пользовательские пресеты: только их можно удалять (встроенные — поставка)
   const [customPresets, setCustomPresets] = useState([])
   const [presetsOpen, setPresetsOpen] = useState(false)
+  // Предпросмотр описания: режим поля, а не всей формы
+  const [descPreview, setDescPreview] = useState(false)
 
   useEffect(() => {
     api.epics().then((d) => setEpics(d.items || [])).catch(() => { /* нет реестра */ })
@@ -118,13 +121,25 @@ export default function NewTaskModal({ onClose, onCreated }) {
 
         <div className="px-5 py-4 space-y-3">
           <input className={field} placeholder="Название (обязательно)" value={form.title} onChange={set('title')} autoFocus />
-          {/* Переносы сохраняются и видны в задаче: markdown сам по себе склеил
-              бы строки в абзац, поэтому в окне задачи включён мягкий перенос */}
-          <textarea
-            className={`${field} h-32 resize-none`}
-            placeholder="Описание — что сделать и зачем. Абзацы через пустую строку, перечисления списком"
+          {/* Тот же редактор, что и в открытой задаче: разметку негде было
+              подсмотреть, а результат — увидеть до создания задачи. Кнопки поля
+              скрыты (создаёт и отменяет форма), Ctrl+Enter создаёт задачу.
+              Одиночные переносы станут абзацами в файле (`as_paragraphs` в
+              create_task.py) — об этом говорит подсказка под полем */}
+          <MarkdownEditor
             value={form.description}
-            onChange={set('description')}
+            onChange={(v) => setForm({ ...form, description: v })}
+            onSave={submit}
+            onCancel={onClose}
+            saving={busy}
+            preview={descPreview}
+            onPreviewChange={setDescPreview}
+            autoFocus={false}
+            actions={false}
+            minRows={5}
+            maxRows={16}
+            placeholder="Описание — что сделать и зачем. Абзацы через пустую строку, перечисления списком"
+            hint="Ctrl+Enter — создать; одиночные переносы станут абзацами"
           />
           <div>
             <input className={field} placeholder="Критерии приёмки (опционально)" value={form.criteria} onChange={set('criteria')} />

@@ -425,6 +425,20 @@ class MarkdownEditorTest(unittest.TestCase):
         self.assertNotIn("replace(/\\n(?!\\n)/g", self.src,
                          "редактор переписывает переводы строк за автором")
 
+    def test_preview_carries_the_reading_styles(self) -> None:
+        """Предпросмотр несёт стили чтения сам, а не наследует их от окна.
+
+        `code`, `pre` и заголовки оформлены правилами `.md-body` в `index.css`.
+        Пока класс приходил от родителя, редактор внутри окна задачи выглядел
+        правильно, а тот же редактор в форме создания рисовал код без подложки
+        и распирал форму широким блоком: `overflow-x` у `pre` тоже из `.md-body`.
+        """
+        preview = self.src[self.src.index("{preview ? ("):self.src.index("<textarea")]
+        # Класс именно на контейнере, а не упоминание `.md-body` в комментарии рядом
+        box = preview[preview.index("<div className="):]
+        self.assertIn("md-body", box[:box.index(">")],
+                      "предпросмотр вне .md-body — код и блок кода останутся без стилей")
+
     def test_editor_is_reusable(self) -> None:
         """Компонент не знает, что правит: только текст и что делать по сохранению."""
         self.assertNotIn("api.", self.src, "редактор сам ходит в API — переиспользовать не выйдет")

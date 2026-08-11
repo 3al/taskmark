@@ -26,5 +26,51 @@ class TestNewTaskModalBackdrop(unittest.TestCase):
         )
 
 
+EDITOR = (
+    Path(__file__).resolve().parent.parent
+    / 'frontend' / 'src' / 'components' / 'MarkdownEditor.jsx'
+)
+
+
+class TestDescriptionEditor(unittest.TestCase):
+    """Описание в форме создания правится тем же редактором, что и в задаче.
+
+    Голая textarea оставляла человека наедине с синтаксисом: разметку негде
+    подсмотреть, результат не увидеть до создания задачи.
+    """
+
+    def setUp(self) -> None:
+        self.src = MODAL.read_text(encoding='utf-8')
+        self.editor = EDITOR.read_text(encoding='utf-8')
+
+    def test_form_uses_shared_editor(self) -> None:
+        self.assertIn('MarkdownEditor', self.src,
+                      'описание в форме создания — голая textarea')
+
+    def test_criteria_stay_a_single_line_field(self) -> None:
+        """Критерии приёмки — строка из пресета: панель и предпросмотр над
+        однострочником занимают больше места, чем дают пользы."""
+        criteria = self.src[self.src.index('form.criteria'):]
+        self.assertIn('<input', self.src[:self.src.index('form.criteria')] + criteria[:400],
+                      'поле критериев перестало быть однострочным')
+
+    def test_editor_actions_are_optional(self) -> None:
+        """Сохраняет и отменяет сама форма — вторая пара кнопок в поле лишняя."""
+        self.assertIn('actions', self.editor,
+                      'у редактора нет режима без собственных кнопок')
+        self.assertIn('actions={false}', self.src,
+                      'в форме показаны кнопки поля вдобавок к кнопкам формы')
+
+    def test_ctrl_enter_submits_the_form(self) -> None:
+        """В форме сохранять нечего: Ctrl+Enter создаёт задачу целиком."""
+        self.assertIn('onSave={submit}', self.src,
+                      'Ctrl+Enter в описании не создаёт задачу')
+
+    def test_placeholder_survives(self) -> None:
+        """Подсказка в пустом поле объясняет, что писать, — она не должна пропасть."""
+        self.assertIn('placeholder', self.editor,
+                      'редактор не принимает placeholder — форма потеряет подсказку')
+
+
 if __name__ == '__main__':
     unittest.main()

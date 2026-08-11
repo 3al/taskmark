@@ -36,6 +36,10 @@ export default function MarkdownEditor({
   minRows = 6,
   maxRows = 24,
   hint = 'Ctrl+Enter — сохранить, Esc — отменить',
+  placeholder = '',
+  // Кнопки поля не нужны там, где сохраняет и отменяет сама форма: вторая пара
+  // ✓/✕ рядом с «Создать» читалась бы как отдельное действие над полем
+  actions = true,
 }) {
   const ref = useRef(null)
 
@@ -194,8 +198,13 @@ export default function MarkdownEditor({
       {preview ? (
         // Рамка и отступы — как у поля, чтобы режимы не прыгали, но **без
         // подложки**: текст показывается стилями `.md-body` на фоне окна, то
-        // есть ровно так, как задача выглядит в чтении
-        <div className="rounded-lg border border-zinc-700 px-3 py-2">
+        // есть ровно так, как задача выглядит в чтении.
+        //
+        // Класс `md-body` редактор ставит сам, а не наследует от родителя: в
+        // окне задачи он там оказывался, а в форме создания — нет, и тот же
+        // предпросмотр рисовал `код` без подложки, а блок кода распирал форму
+        // (горизонтальная прокрутка `pre` — тоже правило `.md-body`)
+        <div className="md-body text-sm rounded-lg border border-zinc-700 px-3 py-2">
           <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeNoteMeta]}
                          components={mdComponents}>
             {(value || '').trim() || '_(пусто)_'}
@@ -209,6 +218,7 @@ export default function MarkdownEditor({
           // не требует, а рядом с рендером он читался мельче и жёстче
           className={`${FORM_FIELD} leading-relaxed resize-y`}
           value={value}
+          placeholder={placeholder}
           rows={rows}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
@@ -222,18 +232,22 @@ export default function MarkdownEditor({
         {error
           ? <span className="text-xs text-rose-400">{error}</span>
           : <span className="text-[11px] text-zinc-600">{hint}</span>}
-        <button
-          onClick={onSave}
-          disabled={saving}
-          className="ml-auto w-6 h-6 flex items-center justify-center text-base text-zinc-500
-            hover:text-emerald-400 disabled:opacity-40"
-          title="Сохранить (Ctrl+Enter)"
-        >✓</button>
-        <button
-          onClick={onCancel}
-          className="w-6 h-6 flex items-center justify-center text-base text-zinc-500 hover:text-rose-400"
-          title="Отменить (Esc)"
-        >✕</button>
+        {actions && (
+          <>
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="ml-auto w-6 h-6 flex items-center justify-center text-base text-zinc-500
+                hover:text-emerald-400 disabled:opacity-40"
+              title="Сохранить (Ctrl+Enter)"
+            >✓</button>
+            <button
+              onClick={onCancel}
+              className="w-6 h-6 flex items-center justify-center text-base text-zinc-500 hover:text-rose-400"
+              title="Отменить (Esc)"
+            >✕</button>
+          </>
+        )}
       </div>
     </>
   )
