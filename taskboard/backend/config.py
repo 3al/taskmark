@@ -100,6 +100,14 @@ CARD_LIMITS: dict[str, tuple[int, int]] = {
 # commits: False — у работы этого типа коммитов не бывает, и напоминание о
 # пустой «Истории коммитов» к ней не относится. Хранится **исключение**, а не
 # белый список: новый тип поставки коммиты даёт и молча выпасть не может.
+# skip_statuses — статусы библиотеки, которые этому виду работы не нужны:
+# у обсуждения и код-ревью нет релизного хвоста, выпускать по ним нечего.
+# Список меняет только **рекомендацию** следующего шага (`set_status.py
+# --targets`), а не состав достижимых статусов: маршрут остаётся маршрутом,
+# а не забором. Своих статусов проекта здесь быть не может — тип константа
+# поставки и про них не знает; такой статус просто не пропускается.
+RELEASE_TAIL = ("ready_for_release", "release_notes", "to_release", "ready_to_deploy")
+
 TASK_TYPES: dict[str, dict] = {
     "feature":    {"label": "Новый функционал", "section": "Новый функционал",
                    "letter": "Н", "color": "sky"},
@@ -110,11 +118,13 @@ TASK_TYPES: dict[str, dict] = {
     "cleanup":    {"label": "Уборка",           "section": "Уборка",
                    "letter": "У", "color": "emerald"},
     "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
-                   "letter": "О", "color": "amber", "commits": False},
+                   "letter": "О", "color": "amber", "commits": False,
+                   "skip_statuses": RELEASE_TAIL},
     "design":     {"label": "Дизайн",           "section": "Дизайн",
                    "letter": "Д", "color": "fuchsia"},
     "review":     {"label": "Код-ревью",        "section": "Код-ревью",
-                   "letter": "К", "color": "lime", "commits": False},
+                   "letter": "К", "color": "lime", "commits": False,
+                   "skip_statuses": RELEASE_TAIL},
 }
 
 DEFAULT_TASK_TYPE = "feature"

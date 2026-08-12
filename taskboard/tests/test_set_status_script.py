@@ -551,5 +551,84 @@ class ScriptContractTest(unittest.TestCase):
         self.assertEqual(self._requires_issue(), [])
 
 
+class TypeAwareNextStepTest(unittest.TestCase):
+    """Ожидаемый шаг учитывает тип задачи (TASK-151).
+
+    Пропуск объявлен у типа в каталоге поставки и меняет **только**
+    рекомендацию: `forward` остаётся полным, потому что прыжок вперёд законен
+    и без него, а запрет тут был бы забором вместо маршрута.
+    """
+
+    PIPELINE = ["backlog", "todo", "development", "testing", "ready_for_release",
+                "release_notes", "to_release", "done", "cancelled"]
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tasks = Path(self._tmp.name) / "tasks"
+        self.tasks.mkdir()
+        self.mod = load_script()
+        self._use_pipeline(self.PIPELINE)
+
+    def _use_pipeline(self, keys: list[str]) -> None:
+        cfg = {"pipeline": keys,
+               "actions": {"create": "backlog", "pick": "todo",
+                           "start": "development", "return": "development"}}
+        (self.tasks / "board.md").write_text(render_board(cfg), encoding="utf-8")
+        (self.tasks / ".taskboard.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    def _task(self, task_type: str, status: str) -> None:
+        """Файл задачи с типом: на доске запись не нужна, статус берут из него."""
+        text = TASK_FILE.format(task_id="TASK-001", title="Тестовая", status=status)
+        text = text.replace("status:", f"type: {task_type}\nstatus:", 1)
+        (self.tasks / "TASK-001-test.md").write_text(text, encoding="utf-8")
+
+    def _describe(self) -> dict:
+        return self.mod.describe(self.tasks, "TASK-001")
+
+    def test_next_skips_release_tail_of_discussion(self) -> None:
+        """У обсуждения релизного хвоста нет: после проверки — сразу закрытие."""
+        self._task("discussion", "testing")
+        self.assertEqual("done", self._describe()["next"])
+
+    def test_skipped_statuses_stay_reachable(self) -> None:
+        """Пропуск — рекомендация, а не запрет: двинуть туда рукой можно."""
+        self._task("discussion", "testing")
+        forward = self._describe()["forward"]
+        for key in ("ready_for_release", "release_notes", "to_release"):
+            self.assertIn(key, forward, f"{key} стал недостижим")
+
+    def test_check_stage_is_not_skipped(self) -> None:
+        """Проверять у обсуждения есть что: решение утверждает человек."""
+        self._task("discussion", "development")
+        self.assertEqual("testing", self._describe()["next"])
+
+    def test_other_types_go_the_whole_route(self) -> None:
+        self._task("feature", "testing")
+        self.assertEqual("ready_for_release", self._describe()["next"])
+
+    def test_task_without_type_goes_the_whole_route(self) -> None:
+        """Задача, заведённая до появления поля, рекомендаций не теряет."""
+        text = TASK_FILE.format(task_id="TASK-001", title="Тестовая", status="testing")
+        (self.tasks / "TASK-001-test.md").write_text(text, encoding="utf-8")
+        self.assertEqual("ready_for_release", self._describe()["next"])
+
+    def test_skip_never_leaves_the_task_without_a_next_step(self) -> None:
+        """Впереди одни пропускаемые — рекомендация остаётся прежней.
+
+        Иначе пропуск означал бы «дальше некуда», то есть подделывал конец
+        маршрута: `next: None` читают как терминальность (`is_terminal`).
+        """
+        self._use_pipeline(["backlog", "development", "release_notes"])
+        self._task("discussion", "development")
+        self.assertEqual("release_notes", self._describe()["next"])
+
+    def test_terminal_check_ignores_type(self) -> None:
+        """Конец маршрута — свойство пайплайна, а не вида работы."""
+        pipeline = self.mod.pipeline_of(self.mod.load_config(self.tasks))
+        self.assertFalse(self.mod.is_terminal(pipeline, "testing"))
+        self.assertTrue(self.mod.is_terminal(pipeline, "done"))
+
+
 if __name__ == "__main__":
     unittest.main()

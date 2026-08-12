@@ -144,6 +144,11 @@ CATALOG = {
 # section — заголовок рубрики бэклога, куда create_task.py кладёт новую задачу
 # commits: False — у работы этого типа коммитов не бывает, и пустая «История
 # коммитов» у неё норма, а не долг (см. finish_reminders)
+# skip_statuses — статусы, которые этому виду работы не нужны: у обсуждения и
+# код-ревью нет релизного хвоста. Пропуск меняет только ожидаемый следующий
+# шаг (`--targets`), достижимость статусов остаётся прежней
+RELEASE_TAIL = ("ready_for_release", "release_notes", "to_release", "ready_to_deploy")
+
 TASK_TYPES = {
     "feature":    {"label": "Новый функционал", "section": "Новый функционал",
                    "letter": "Н", "color": "sky"},
@@ -154,11 +159,13 @@ TASK_TYPES = {
     "cleanup":    {"label": "Уборка",           "section": "Уборка",
                    "letter": "У", "color": "emerald"},
     "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
-                   "letter": "О", "color": "amber", "commits": False},
+                   "letter": "О", "color": "amber", "commits": False,
+                   "skip_statuses": RELEASE_TAIL},
     "design":     {"label": "Дизайн",           "section": "Дизайн",
                    "letter": "Д", "color": "fuchsia"},
     "review":     {"label": "Код-ревью",        "section": "Код-ревью",
-                   "letter": "К", "color": "lime", "commits": False},
+                   "letter": "К", "color": "lime", "commits": False,
+                   "skip_statuses": RELEASE_TAIL},
 }
 
 
@@ -223,12 +230,17 @@ def actions_of(cfg: dict, pipeline: list[dict]) -> dict:
     return actions
 
 
-def directions(pipeline: list[dict], status: str) -> dict:
+def directions(pipeline: list[dict], status: str, task_type: str = "") -> dict:
     """Куда можно двинуть задачу: вперёд, назад и ожидаемый следующий шаг.
 
     Запретов нет — пайплайн описывает маршрут, а не забор: прыжок вперёд
     (простая задача, ночной хотфикс) законен. Ожидаемым считается ближайший
     следующий статус; съезды (cancelled) доступны всегда, но не ожидаемы.
+
+    Тип задачи сужает **только** ожидаемый шаг: у обсуждения и код-ревью нет
+    релизного хвоста, и вести их туда рекомендацией значит звать в работу,
+    которой не будет. Достижимость статусов тип не трогает — там, где человек
+    решит иначе, забором стоять нечему.
     """
     keys = [s["key"] for s in pipeline]
     if status not in keys:
@@ -242,8 +254,14 @@ def directions(pipeline: list[dict], status: str) -> dict:
     later = keys[idx + 1:]
     offramps = [s["key"] for s in pipeline
                 if s.get("offramp") and s["key"] != status and s["key"] not in later]
-    nxt = next((s["key"] for s in pipeline[idx + 1:] if not s.get("offramp")), None)
-    return {"forward": later + offramps, "backward": keys[:idx], "next": nxt}
+    ahead = [s["key"] for s in pipeline[idx + 1:] if not s.get("offramp")]
+    skip = set(TASK_TYPES.get((task_type or "").strip().lower(), {})
+               .get("skip_statuses") or ())
+    # Пропуск сдвигает рекомендацию вперёд, но не отменяет её: пустой `next`
+    # читается как конец маршрута (is_terminal), а вид работы его не задаёт
+    wanted = [k for k in ahead if k not in skip] or ahead
+    return {"forward": later + offramps, "backward": keys[:idx],
+            "next": wanted[0] if wanted else None}
 
 
 def _read_json(path: Path) -> dict:
@@ -2021,12 +2039,14 @@ def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
     }
     if task_id:
         status = current_status(Path(tasks_dir), task_id)
+        path = find_task_file(Path(tasks_dir), task_id)
+        task_type = str((_read_meta(path).get("type") if path else "") or "")
         out["task"] = task_id
         out["current"] = status
-        out.update(directions(pipeline, status or ""))
+        out["type"] = task_type
+        out.update(directions(pipeline, status or "", task_type))
         # Долг по каждой цели — тем же вызовом, которым скилл и так спрашивает
         # маршрут: второй команде «а можно ли туда» взяться неоткуда
-        path = find_task_file(Path(tasks_dir), task_id)
         blocked: dict[str, list[dict]] = {}
         if path is not None:
             for target in out.get("forward", []):
