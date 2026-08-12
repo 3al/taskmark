@@ -169,7 +169,7 @@ class DeleteApiTest(unittest.TestCase):
         cross = text[text.index("{onDelete && ("):text.index("Удалить задачу")]
         self.assertIn("absolute top-0 right-0", cross, "крестик не в углу карточки")
         self.assertIn("opacity-0", cross, "крестик виден постоянно и засоряет карточку")
-        row = text[text.index("(type || task.paused)"):text.index("{confirming && (")]
+        row = text[text.index("(size || type || task.paused)"):text.index("{confirming && (")]
         self.assertNotIn("onDelete", row, "крестик снова встал в ряд значков")
 
 

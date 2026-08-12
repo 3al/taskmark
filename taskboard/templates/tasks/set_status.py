@@ -83,7 +83,8 @@ def _utf8_console() -> None:
 # объявлена, скрипт про неё не знает, а человек уверен, что она работает.
 # Имена, а не номер версии, — как CAPABILITIES в backend/app.py: набор
 # расширяется, не заводя таблицы соответствия версий возможностям.
-SCRIPT_CAPABILITIES = {"stall", "task_types", "requires", "comments", "epics"}
+SCRIPT_CAPABILITIES = {"stall", "task_types", "task_sizes",
+                       "requires", "comments", "epics"}
 
 # Дефолты дублируют backend/config.py: скрипт автономен и работает
 # без запущенного сервера, в том числе в проектах без установленного taskboard
@@ -166,6 +167,19 @@ TASK_TYPES = {
     "review":     {"label": "Код-ревью",        "section": "Код-ревью",
                    "letter": "К", "color": "lime", "commits": False,
                    "skip_statuses": RELEASE_TAIL},
+}
+
+
+# Размер задачи — дубль backend/config.py. Оценка объёма работы, а не её вид:
+# тип отвечает «что это за работа», размер — «браться ли за неё сейчас».
+# Ключи прописные: в файле задачи это аббревиатура (`size: L`), строчная буква
+# читалась бы как опечатка; разбор регистронезависим — файл правят руками.
+# Порядок словаря — порядок возрастания объёма.
+TASK_SIZES = {
+    "S":  {"label": "S",  "hint": "мелкая правка, один заход"},
+    "M":  {"label": "M",  "hint": "обычная задача на сессию"},
+    "L":  {"label": "L",  "hint": "несколько сессий, лучше с планом"},
+    "XL": {"label": "XL", "hint": "стоит разбить на задачи"},
 }
 
 
@@ -684,6 +698,7 @@ UNBLOCKS_TEXT = "больше не блокирует {id}"
 PAUSE_TEXT = "пауза: {reason}"
 RESUME_TEXT = "пауза снята"
 TYPE_TEXT = "тип: {now} (было {was})"
+SIZE_TEXT = "размер: {now} (было {was})"
 TITLE_TEXT = "название: «{now}» (было «{was}»)"
 
 
@@ -1275,6 +1290,40 @@ def set_type(tasks_dir: Path, task_id: str, value: str,
 def types() -> dict:
     """Каталог типов задач: список спрашивают у скрипта, а не помнят."""
     return {"types": [{"key": key, **meta} for key, meta in TASK_TYPES.items()]}
+
+
+def set_size(tasks_dir: Path, task_id: str, value: str,
+             agent: str | None = None) -> dict:
+    """Проставить или снять размер задачи. Как и тип, по маршруту не двигает.
+
+    Пустое значение **снимает оценку** (`size: ~`): оценка наугад хуже её
+    отсутствия, и передумать должно быть чем.
+
+    Смена идёт в хронологию: «взял как M, оказалось XL» объясняет ход работы
+    следующей сессии. Повтор того же значения событием не считается.
+    """
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    value = (value or "").strip().upper()
+    if value and value not in TASK_SIZES:
+        return {"ok": False,
+                "error": f"Неизвестный размер задачи: {value} "
+                         f"(допустимо: {', '.join(TASK_SIZES)})"}
+    was = str(_read_meta(path).get("size", "") or "").strip().upper()
+    was = was if was in TASK_SIZES else ""
+    _set_fields(path, {"size": value or "~"})
+    if value != was:
+        note_event(tasks_dir, task_id,
+                   SIZE_TEXT.format(now=value or "не указан",
+                                    was=was or "не указан"), agent)
+    return {"ok": True, "task": task_id.strip().upper(), "size": value,
+            "label": TASK_SIZES[value]["label"] if value else "не указан"}
+
+
+def sizes() -> dict:
+    """Каталог размеров задачи: список спрашивают у скрипта, а не помнят."""
+    return {"sizes": [{"key": key, **meta} for key, meta in TASK_SIZES.items()]}
 
 
 def clear_stall(tasks_dir: Path, task_id: str, agent: str | None = None) -> dict:
@@ -2088,6 +2137,10 @@ def main() -> None:
                         help="сменить тип задачи (см. --types)")
     parser.add_argument("--types", action="store_true",
                         help="каталог типов задач (JSON)")
+    parser.add_argument("--size", dest="task_size", metavar="РАЗМЕР", default=None,
+                        help="оценить объём задачи: S | M | L | XL (пусто — снять)")
+    parser.add_argument("--sizes", action="store_true",
+                        help="каталог размеров задачи (JSON)")
     parser.add_argument("--stalled", action="store_true",
                         help="Что сейчас стоит и почему (JSON)")
     parser.add_argument("--debt", metavar="TASK-NNN", nargs="?", const="",
@@ -2138,6 +2191,10 @@ def main() -> None:
 
     if args.types:
         print(json.dumps(types(), ensure_ascii=False, indent=2))
+        return
+
+    if args.sizes:
+        print(json.dumps(sizes(), ensure_ascii=False, indent=2))
         return
 
     if args.stalled:
@@ -2213,6 +2270,18 @@ def main() -> None:
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
         print(f"[OK] {result['task']}: тип — {result['label']} ({result['type']})")
+        if not args.status and args.note is None:
+            return
+
+    # Размер — оценка объёма, не этап: тот же порядок, что у типа
+    if args.task_size is not None:
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --size")
+        result = set_size(tasks_dir, args.task_id, args.task_size, args.agent)
+        if not result.get("ok"):
+            print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[OK] {result['task']}: размер — {result['label']}")
         if not args.status and args.note is None:
             return
 

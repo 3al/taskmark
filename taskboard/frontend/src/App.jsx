@@ -109,6 +109,8 @@ export default function App() {
   // Фильтр «стоят»: остановленные задачи разом, каждая на своём этапе —
   // того, чего отдельный раздел доски не даёт
   const [stalledOnly, setStalledOnly] = useState(false)
+  // Отбор по размеру: пустой список — фильтр выключен, как пустой запрос поиска
+  const [sizesOnly, setSizesOnly] = useState([])
   // Перенос остановленной задачи в работу: спрашиваем, а не запрещаем
   const [pendingMove, setPendingMove] = useState(null)
   // Перенос в съезд с маршрута: без причины отмены он не состоится
@@ -374,17 +376,20 @@ export default function App() {
   // Доска под фильтром: колонки остаются на местах (структура не должна
   // прыгать под руками), внутри — только подходящие задачи. Фильтры
   // складываются: «стоят» сужает найденное, а не заменяет поиск
-  const filtered = !!found || stalledOnly
+  const filtered = !!found || stalledOnly || sizesOnly.length > 0
   const visibleColumns = useMemo(() => {
     if (!filtered) return orderedColumns
+    // Выбранные размеры складываются между собой по «или» — это один вопрос
+    // «что тут мелкого», а не пересечение взаимоисключающих значений
     const keep = (t) => (!found || found.has(t.id)) && (!stalledOnly || t.stalled)
+      && (!sizesOnly.length || sizesOnly.includes(t.size))
     return orderedColumns.map((col) => ({
       ...col,
       groups: col.groups
         .map((g) => ({ ...g, tasks: g.tasks.filter(keep) }))
         .filter((g) => g.tasks.length),
     }))
-  }, [orderedColumns, found, stalledOnly])
+  }, [orderedColumns, found, stalledOnly, sizesOnly])
 
   // Какие колонки показывать полосой. Порядок разбора: явное решение человека
   // сильнее всего, затем настройка «скрывать пустые», иначе колонка развёрнута.
@@ -858,6 +863,8 @@ export default function App() {
         stalledOnly={stalledOnly}
         onStalledOnly={setStalledOnly}
         stalledCount={stalledCount}
+        sizes={sizesOnly}
+        onSizes={setSizesOnly}
       />
 
       {error && (

@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import DEFAULTS, TASK_TYPES  # noqa: E402
 from backend.scaffold import TASKS_TEMPLATES, scaffold_project  # noqa: E402
-from backend.task_parser import (annotate_types, parse_frontmatter,  # noqa: E402
+from backend.task_parser import (annotate_marks, parse_frontmatter,  # noqa: E402
                                  set_task_type)
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend" / "src"
@@ -162,7 +162,7 @@ class BoardAnnotationTest(unittest.TestCase):
         self._write("TASK-001-a.md", "---\nid: TASK-001\ntype: bug\n---\n")
         board = {"columns": [{"groups": [{"tasks": [
             {"id": "TASK-001", "file": "TASK-001-a.md"}]}]}]}
-        annotate_types(self.tasks_dir, board)
+        annotate_marks(self.tasks_dir, board)
         self.assertEqual(board["columns"][0]["groups"][0]["tasks"][0]["type"], "bug")
 
     def test_task_without_type_stays_clean(self) -> None:
@@ -170,7 +170,7 @@ class BoardAnnotationTest(unittest.TestCase):
         self._write("TASK-002-b.md", "---\nid: TASK-002\n---\n")
         board = {"columns": [{"groups": [{"tasks": [
             {"id": "TASK-002", "file": "TASK-002-b.md"}]}]}]}
-        annotate_types(self.tasks_dir, board)
+        annotate_marks(self.tasks_dir, board)
         self.assertNotIn("type", board["columns"][0]["groups"][0]["tasks"][0])
 
     def test_unknown_type_ignored(self) -> None:
@@ -178,7 +178,7 @@ class BoardAnnotationTest(unittest.TestCase):
         self._write("TASK-003-c.md", "---\nid: TASK-003\ntype: whatever\n---\n")
         board = {"columns": [{"groups": [{"tasks": [
             {"id": "TASK-003", "file": "TASK-003-c.md"}]}]}]}
-        annotate_types(self.tasks_dir, board)
+        annotate_marks(self.tasks_dir, board)
         self.assertNotIn("type", board["columns"][0]["groups"][0]["tasks"][0])
 
 

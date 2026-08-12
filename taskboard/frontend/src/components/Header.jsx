@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import CopyButton from './CopyButton'
+import { SIZE_KEYS, TASK_SIZES } from '../taskSizes'
 
 // Кастомный дропдаун проектов: нативный select не темизируется (список рендерит ОС)
 function ProjectSelect({ projects, active, onSwitch }) {
@@ -61,6 +62,7 @@ export default function Header({
   onSwitchProject, onNewTask, onShowLogs, onRefresh, onResetColumns, onOpenSettings,
   onOpenHelp, onOpenUpdate, updateAvailable = false,
   query, onQuery, matches, stalledOnly, onStalledOnly, stalledCount = 0,
+  sizes = [], onSizes,
 }) {
   const [adding, setAdding] = useState(false)
   const [path, setPath] = useState('')
@@ -217,6 +219,30 @@ export default function Header({
         ⛔ стоят
         {stalledCount > 0 && <span className="ml-1.5 text-xs text-zinc-500">{stalledCount}</span>}
       </button>
+
+      {/* Отбор по размеру: чипы, а не строка поиска. Размер живёт во
+          frontmatter, а поиск по тексту его намеренно не видит — иначе запрос
+          вроде `todo` выдавал бы всю доску. Несколько чипов складываются между
+          собой по «или»: «покажи S и M» — это вопрос «что успею сегодня» */}
+      <div className="flex items-center gap-1">
+        {SIZE_KEYS.map((key) => {
+          const on = sizes.includes(key)
+          return (
+            <button
+              key={key}
+              onClick={() => onSizes(on ? sizes.filter((s) => s !== key)
+                                        : [...sizes, key])}
+              title={`Только задачи размера ${key}: ${TASK_SIZES[key].hint}`}
+              className={`px-2 py-1.5 text-xs rounded-lg border transition tabular-nums
+                ${on
+                  ? 'border-sky-600 bg-sky-950/50 text-sky-200'
+                  : 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:bg-zinc-800'}`}
+            >
+              {key}
+            </button>
+          )
+        })}
+      </div>
 
       <div className="flex items-center gap-2">
         {hasCustomOrder && (

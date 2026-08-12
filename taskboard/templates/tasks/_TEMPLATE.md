@@ -3,6 +3,7 @@ id: TASK-NNN
 title: Краткое название задачи
 epic: ~
 type: feature
+size: ~
 status: backlog
 created: YYYY-MM-DD HH:MM
 blocked_by: ~

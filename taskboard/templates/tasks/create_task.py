@@ -395,6 +395,7 @@ id: TASK-{task_num:03d}
 title: {title}
 epic: {epic_value}
 type: {task_type}
+size: ~
 status: {status_key}
 created: {created_date}{blocked_by_line}
 ---"""

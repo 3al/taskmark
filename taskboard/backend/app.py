@@ -45,9 +45,9 @@ from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            stall_details, stalled_tasks)
 from backend.statuses import CATALOG, load_pipeline
 from backend.tasks_delete import delete_plan, delete_task
-from backend.task_parser import (EDITABLE_SECTIONS, annotate_types,
+from backend.task_parser import (EDITABLE_SECTIONS, annotate_marks,
                                  list_all_tasks, parse_task, set_task_section,
-                                 set_task_title, set_task_type)
+                                 set_task_size, set_task_title, set_task_type)
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -119,6 +119,9 @@ class TaskUpdateIn(BaseModel):
     title: str | None = None
     # Тип задачи: метка «что это за работа». Статус и доску не трогает
     type: str | None = None
+    # Размер задачи (S…XL): оценка объёма. Пустая строка снимает оценку —
+    # поэтому None («поле не прислали») и "" значат здесь разное
+    size: str | None = None
     # Простой задачи: список блокеров целиком (строкой или списком) и причина
     # паузы. Пустое значение снимает: [] — все блокировки, "" — паузу
     blocked_by: list[str] | str | None = None
@@ -422,9 +425,10 @@ def api_board() -> dict:
     # у которых не осталось файла, а не для работы
     board["columns"] = visible_columns(board, cfg)
     annotate_epics(tasks_dir, board)
-    # Тип — метка «что это за работа»: на превью кружок с буквой, в окне задачи
-    # подпись целиком. В строке board.md его нет, как и эпика
-    annotate_types(tasks_dir, board)
+    # Метки из frontmatter: тип («что это за работа» — кружок с буквой) и
+    # размер («сколько тут работы» — буквы S…XL). В строке board.md их нет,
+    # как и эпика; читаются одним проходом по файлам задач
+    annotate_marks(tasks_dir, board)
     # Причина простоя есть только во frontmatter — карточке она нужна, чтобы
     # маркер «стоит» рисовался без открытия задачи
     annotate_stall(tasks_dir, board, pipeline)
@@ -710,6 +714,12 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
         if not typed.get("ok"):
             raise HTTPException(400, typed.get("error", "Ошибка смены типа"))
         result["type"] = typed["type"]
+
+    if body.size is not None:
+        sized = set_task_size(tasks_dir, task_id, body.size)
+        if not sized.get("ok"):
+            raise HTTPException(400, sized.get("error", "Ошибка смены размера"))
+        result["size"] = sized["size"]
 
     # Правка текста задачи: каждая секция пишется отдельно и точечно — пока
     # карточка открыта, в тот же файл пишет агент.

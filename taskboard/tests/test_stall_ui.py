@@ -162,7 +162,7 @@ class CardMarkerTest(unittest.TestCase):
         Правый угол строки делят метка типа и пауза (TASK-054), поэтому к краю
         прижата их общая группа, а сама пауза остаётся крайней справа.
         """
-        corner = self.src[self.src.index("(type || task.paused)"):
+        corner = self.src[self.src.index("(size || type || task.paused)"):
                           self.src.index("⏸")]
         self.assertIn("ml-auto", corner, "правый угол строки не прижат к краю")
         self.assertLess(self.src.index("type.letter"), self.src.index("⏸"),
@@ -175,7 +175,7 @@ class CardMarkerTest(unittest.TestCase):
         # Метка типа берёт тот же бокс через MARK — кружок это SLOT с заливкой
         self.assertRegex(self.src, r"const MARK = `\$\{SLOT\}",
                          "кружок типа построен не на общем боксе")
-        corner = self.src[self.src.index("(type || task.paused)"):
+        corner = self.src[self.src.index("(size || type || task.paused)"):
                           self.src.index("Заголовок превью")]
         self.assertEqual(corner.count("SLOT") + corner.count("MARK"), 2,
                          "тип и пауза используют разные боксы")

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { statusStyle } from '../statuses'
 import { taskType } from '../taskTypes'
+import { taskSize } from '../taskSizes'
 import { highlight } from '../highlight'
 
 // Карточка задачи: draggable + droppable (дроп на карточку = вставка на её позицию)
@@ -61,6 +62,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
   const style = statusStyle(status)
   const stripe = stripeKind(task)
   const type = taskType(task.type)
+  const size = taskSize(task.size)
   // Удаление необратимо, поэтому крестик сначала превращается в вопрос — как
   // «Забыть проект» в шапке. Что именно заденет удаление, спрашиваем у бэкенда
   // в момент первого клика: держит ли задача другие, видно только по файлам
@@ -184,8 +186,18 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
               позиция, зависящая от того, есть ли рядом блокировка.
               Тип левее паузы: он у задачи всегда один и тот же, а пауза
               приходит и уходит — прыгающий кружок сложнее находить взглядом */}
-          {(type || task.paused) && (
+          {(size || type || task.paused) && (
             <span className="ml-auto flex items-center gap-1.5 shrink-0">
+              {/* Размер левее типа: он не у каждой задачи есть, а тип и пауза
+                  занимают постоянные места — прыгающая метка ищется взглядом
+                  дольше. Буквами, а не кружком: «XL» в один знак не влезает,
+                  и цветом размер не кодируется вовсе (см. taskSizes.js) */}
+              {size && (
+                <span className={`shrink-0 normal-case tabular-nums ${size.mark}`}
+                      title={`Размер: ${size.label} — ${size.hint}`}>
+                  {size.label}
+                </span>
+              )}
               {/* Кружок, а не подпись: в строке места на один знак. Полное
                   название типа — в окне задачи и в подсказке */}
               {type && (

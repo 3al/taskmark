@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.config import TASK_TYPES
-from backend.notes import BOARD_AUTHOR, TITLE_TEXT, TYPE_TEXT, append_note
+from backend.config import TASK_SIZES, TASK_TYPES
+from backend.notes import (BOARD_AUTHOR, SIZE_TEXT, TITLE_TEXT, TYPE_TEXT,
+                           append_note)
 
 _TASK_FILE_RE = re.compile(r"^TASK-\d+.*\.md$")
 
@@ -193,12 +194,17 @@ def parse_task(tasks_dir: Path, task_id: str) -> dict | None:
             "sections": task_sections(content)}
 
 
-def annotate_types(tasks_dir: Path, board: dict) -> dict:
-    """Проставить карточкам доски тип задачи.
+def annotate_marks(tasks_dir: Path, board: dict) -> dict:
+    """Проставить карточкам доски метки из frontmatter: тип и размер задачи.
 
-    В строке board.md типа нет — как эпик и простой, берём его из frontmatter.
-    Задача без поля (заведена до его появления) и задача с чужим значением
-    метки не получают: пустой кружок на превью хуже отсутствующего.
+    В строке board.md их нет — как эпика и простоя, берём из файла. Обе метки
+    читаются **одним проходом**: файл задачи и так открывается на каждой
+    отрисовке доски, и второй обход ради соседнего поля — цена, которую платит
+    каждое действие агента (доску перерисовывает SSE на любую правку в tasks/).
+
+    Задача без поля (заведена до его появления, размер ещё не оценивали) и
+    задача с чужим значением метки не получают: пустой кружок на превью хуже
+    отсутствующего.
     """
     tasks_dir = Path(tasks_dir)
     for column in board.get("columns", []):
@@ -214,6 +220,11 @@ def annotate_types(tasks_dir: Path, board: dict) -> dict:
                 key = meta.get("type", "")
                 if key in TASK_TYPES:
                     task["type"] = key
+                # Регистр приводим здесь: файл правят руками, а `size: l` —
+                # тот же размер, а не повод промолчать о нём на доске
+                size = str(meta.get("size", "") or "").strip().upper()
+                if size in TASK_SIZES:
+                    task["size"] = size
     return board
 
 
@@ -307,6 +318,37 @@ def set_task_type(tasks_dir: Path, task_id: str, value: str,
     if value != was:
         append_note(path, TYPE_TEXT.format(now=value, was=was or "не указан"), author)
     return {"ok": True, "type": value, "label": TASK_TYPES[value]["label"]}
+
+
+def set_task_size(tasks_dir: Path, task_id: str, value: str,
+                  author: str = BOARD_AUTHOR) -> dict:
+    """Проставить или снять размер задачи — то же, что `set_status.py --size`.
+
+    Пустое значение **снимает оценку** (`size: ~`): оценка, поставленная
+    наугад, хуже её отсутствия, и способ передумать обязан быть. Список
+    закрыт — чужое значение молча превратилось бы в задачу без метки.
+
+    Оценка объёма объясняет ход работы («взял, оказалось XL»), поэтому её
+    смена идёт в хронологию. Повтор того же значения событием не считается.
+    """
+    value = (value or "").strip().upper()
+    if value and value not in TASK_SIZES:
+        return {"ok": False,
+                "error": f"Неизвестный размер задачи: {value} "
+                         f"(допустимо: {', '.join(TASK_SIZES)})"}
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    was = str(meta.get("size", "") or "").strip().upper()
+    was = was if was in TASK_SIZES else ""
+    if not set_meta_fields(path, {"size": value or "~"}):
+        return {"ok": False, "error": f"Не удалось записать размер в {path.name}"}
+    if value != was:
+        append_note(path, SIZE_TEXT.format(now=value or "не указан",
+                                           was=was or "не указан"), author)
+    return {"ok": True, "size": value,
+            "label": TASK_SIZES[value]["label"] if value else ""}
 
 
 def slugify(text: str) -> str:

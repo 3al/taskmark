@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { api } from '../api'
 import { statusLabel, statusStyle } from '../statuses'
 import { TASK_TYPES, taskType } from '../taskTypes'
+import { TASK_SIZES, taskSize } from '../taskSizes'
 import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents, rehypeNoteMeta, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
@@ -246,6 +247,27 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
     }
   }
 
+  // Размер задачи — там же и так же, но со снятием: оценка бывает неверной, и
+  // способ убрать её обязан быть. Пустая строка на бэкенде значит «снять»
+  const [sizePicker, setSizePicker] = useState(false)
+  const [sizeSaving, setSizeSaving] = useState(false)
+
+  const pickSize = async (key) => {
+    setSizePicker(false)
+    const current = taskSize(task?.meta?.size)?.label || ''
+    if (key === current) return
+    setSizeSaving(true)
+    try {
+      await api.updateTask(taskId, { size: key })
+      setTask(await api.task(taskId))
+      onChanged?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSizeSaving(false)
+    }
+  }
+
   // Простой задачи: что показываем и что правим. Форма ввода открывается по
   // кнопке — панель не должна занимать место, пока задача никого не ждёт
   const stall = task?.stall
@@ -478,6 +500,54 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                           {meta.label}
                         </button>
                       ))}
+                    </span>
+                    </>
+                  )}
+                </span>
+                {/* Размер задачи: та же метка-кнопка, что у типа. Оценка есть
+                    не у каждой задачи, поэтому у пустой метка пунктирная —
+                    ею же оценку и ставят */}
+                <span className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setSizePicker((v) => !v)}
+                    disabled={sizeSaving}
+                    title="Оценить объём задачи"
+                    className={`px-1.5 py-px rounded border text-[10px] transition
+                      hover:brightness-125 disabled:opacity-60
+                      ${taskSize(task.meta.size)?.badge
+                        || 'border-dashed border-zinc-700 text-zinc-500'}`}>
+                    {taskSize(task.meta.size)?.label || 'без размера'}
+                  </button>
+                  {sizePicker && (
+                    <>
+                    <span className="fixed inset-0 z-40"
+                          onClick={(e) => { e.stopPropagation(); setSizePicker(false) }} />
+                    <span className="absolute left-0 top-full mt-1 z-50 flex flex-col gap-1
+                      rounded-lg border border-zinc-700 bg-zinc-900 p-1.5 shadow-xl">
+                      {Object.entries(TASK_SIZES).map(([key, meta]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => pickSize(key)}
+                          className={`px-1.5 py-px rounded border text-[10px] text-left
+                            whitespace-nowrap transition hover:brightness-125 ${meta.badge}
+                            ${key === taskSize(task.meta.size)?.label
+                              ? 'ring-1 ring-zinc-500' : ''}`}>
+                          {meta.label} — {meta.hint}
+                        </button>
+                      ))}
+                      {/* Снять оценку: поставленная наугад хуже отсутствующей */}
+                      {taskSize(task.meta.size) && (
+                        <button
+                          type="button"
+                          onClick={() => pickSize('')}
+                          className="px-1.5 py-px rounded border border-dashed border-zinc-700
+                            text-[10px] text-left text-zinc-500 whitespace-nowrap
+                            transition hover:text-zinc-300">
+                          снять оценку
+                        </button>
+                      )}
                     </span>
                     </>
                   )}
