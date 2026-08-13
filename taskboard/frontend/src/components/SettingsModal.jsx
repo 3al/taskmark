@@ -128,8 +128,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
       'card_stale_days']
       .filter((k) => config[k] !== '' && config[k] != null)
       .map((k) => [k, Number(config[k])])),
-    // Переключатель, а не число: пустого значения у него не бывает
+    // Переключатели, а не числа: пустого значения у них не бывает
     card_show_type: config.card_show_type !== false,
+    card_show_progress: config.card_show_progress !== false,
     hide_empty_columns: !!config.hide_empty_columns,
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
@@ -445,6 +446,24 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         <div className="text-[11px] text-zinc-500">
                           кружок с буквой в правом верхнем углу превью; в открытой
                           задаче тип виден всегда
+                        </div>
+                      </span>
+                    </label>
+                    {/* Прогресс плана: тоже про то, что видно на превью, и тоже
+                        включён по умолчанию. Полоска есть только у задач с
+                        секцией «Чеклист» */}
+                    <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-3">
+                      <input
+                        type="checkbox"
+                        checked={config.card_show_progress !== false}
+                        onChange={(e) => set('card_show_progress', e.target.checked)}
+                        className="mt-0.5 accent-sky-500"
+                      />
+                      <span>
+                        Прогресс плана работы
+                        <div className="text-[11px] text-zinc-500">
+                          полоска в середине нижней строки превью — у задач,
+                          где агент завёл чеклист
                         </div>
                       </span>
                     </label>

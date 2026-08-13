@@ -314,3 +314,19 @@ def load_pipeline(cfg: dict) -> Pipeline:
             actions.get("create"))
 
     return Pipeline(statuses, actions)
+
+
+def is_terminal(pipeline: Pipeline | None, status: str) -> bool:
+    """Конец маршрута: терминальный статус или съезд.
+
+    Имена не подставляем — пайплайн настраивается, и в чужом проекте терминал
+    может называться как угодно. Признак уже вычисляется: у последнего статуса
+    маршрута и у съездов нет ожидаемого следующего шага.
+
+    Живёт рядом с самим пайплайном, а не в модуле простоя: правило нужно и
+    задачам (простой, прогресс плана), и доске, а импортировать модуль простоя
+    из разбора задач нельзя — он сам его импортирует.
+    """
+    if not status or pipeline is None or not pipeline.has(status):
+        return False
+    return pipeline.next_expected(status) is None

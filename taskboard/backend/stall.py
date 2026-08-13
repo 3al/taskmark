@@ -22,6 +22,9 @@ from pathlib import Path
 
 from backend.notes import (BLOCK_TEXT, BLOCKS_TEXT, BOARD_AUTHOR, PAUSE_TEXT,
                            RESUME_TEXT, UNBLOCK_TEXT, UNBLOCKS_TEXT, append_note)
+# Реэкспорт: правило конца маршрута живёт рядом с пайплайном, но зовут его
+# отсюда — по простою и терминальности вопросы приходят в один модуль
+from backend.statuses import is_terminal  # noqa: F401
 from backend.task_parser import find_task_file, parse_frontmatter, set_meta_fields
 
 BLOCKED_BY = "blocked_by"
@@ -88,18 +91,6 @@ def task_stall(tasks_dir: Path, task_id: str) -> dict | None:
     """Состояние простоя одной задачи (None — файла нет)."""
     path = find_task_file(Path(tasks_dir), task_id)
     return stall_of(_meta_of(path)) if path else None
-
-
-def is_terminal(pipeline, status: str) -> bool:
-    """Конец маршрута: терминальный статус или съезд.
-
-    Имена не подставляем — пайплайн настраивается, и в чужом проекте терминал
-    может называться как угодно. Признак уже вычисляется: у последнего статуса
-    маршрута и у съездов нет ожидаемого следующего шага.
-    """
-    if not status or pipeline is None or not pipeline.has(status):
-        return False
-    return pipeline.next_expected(status) is None
 
 
 def can_stall(pipeline, status: str) -> dict:

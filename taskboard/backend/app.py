@@ -425,10 +425,10 @@ def api_board() -> dict:
     # у которых не осталось файла, а не для работы
     board["columns"] = visible_columns(board, cfg)
     annotate_epics(tasks_dir, board)
-    # Метки из frontmatter: тип («что это за работа» — кружок с буквой) и
-    # размер («сколько тут работы» — буквы S…XL). В строке board.md их нет,
-    # как и эпика; читаются одним проходом по файлам задач
-    annotate_marks(tasks_dir, board)
+    # Метки из файла задачи: тип («что это за работа» — кружок с буквой),
+    # размер («сколько тут работы» — буквы S…XL) и прогресс плана работы.
+    # В строке board.md их нет, как и эпика; читаются одним проходом
+    annotate_marks(tasks_dir, board, cfg, pipeline)
     # Причина простоя есть только во frontmatter — карточке она нужна, чтобы
     # маркер «стоит» рисовался без открытия задачи
     annotate_stall(tasks_dir, board, pipeline)

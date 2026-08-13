@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.config import TASK_SIZES, TASK_TYPES
+from backend.config import TASK_SIZES, TASK_TYPES, card_style
 from backend.notes import (BOARD_AUTHOR, SIZE_TEXT, TITLE_TEXT, TYPE_TEXT,
                            append_note)
+from backend.statuses import is_terminal
 
 _TASK_FILE_RE = re.compile(r"^TASK-\d+.*\.md$")
 
@@ -61,6 +62,14 @@ EDITABLE_SECTIONS = (
 # Забор блока кода: ``` или ~~~ с отступом не больше трёх пробелов (дальше
 # markdown считает строку уже частью списка или кодом-по-отступу)
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+# План работы: секция необязательная, её заводит агент. Заголовок — константа
+# поставки, как и остальные имена секций файла задачи (зеркало в set_status.py)
+CHECKLIST_SECTION = "## Чеклист"
+
+# Пункт плана. Регистр галочки не важен: файл правят руками, и `- [X]` —
+# та же отметка. Вложенные пункты считаются наравне: это тоже работа
+_CHECKBOX_RE = re.compile(r"^\s*[-*]\s*\[([ xX])\]\s+\S")
 
 
 def mask_code_fences(text: str) -> str:
@@ -194,29 +203,69 @@ def parse_task(tasks_dir: Path, task_id: str) -> dict | None:
             "sections": task_sections(content)}
 
 
-def annotate_marks(tasks_dir: Path, board: dict) -> dict:
-    """Проставить карточкам доски метки из frontmatter: тип и размер задачи.
+def checklist_progress(body: str) -> dict | None:
+    """Сколько пунктов плана закрыто: `{done, total}` либо None.
 
-    В строке board.md их нет — как эпика и простоя, берём из файла. Обе метки
+    Секция «Чеклист» необязательна — её заводит агент под конкретную работу.
+    Нет её или пунктов в ней нет — возвращаем None: `0/0` на превью означало бы
+    «работа не начата» там, где плана просто не вели.
+
+    **Ни одного закрытого пункта — тоже None.** Полоска отвечает на вопрос «где
+    работа идёт»; пустая она говорит ровно то же, что её отсутствие, но занимает
+    строку на каждой карточке с планом. Отсюда же и практическая цена: у задач,
+    заведённых по старому шаблону, чеклист стоит нетронутым.
+
+    Считаются пункты **этой** секции, а не любые галочки файла: в «Истории
+    доработок» живут замечания ревью, и они не про ход работы.
+    """
+    lines = section_body(body, CHECKLIST_SECTION)
+    if lines is None:
+        return None
+    done = total = 0
+    for line in lines.splitlines():
+        m = _CHECKBOX_RE.match(line)
+        if not m:
+            continue
+        total += 1
+        done += m.group(1).lower() == "x"
+    return {"done": done, "total": total} if done else None
+
+
+def annotate_marks(tasks_dir: Path, board: dict, cfg: dict | None = None,
+                   pipeline=None) -> dict:
+    """Проставить карточкам доски метки из файла задачи: тип, размер, прогресс.
+
+    В строке board.md их нет — как эпика и простоя, берём из файла. Все три
     читаются **одним проходом**: файл задачи и так открывается на каждой
-    отрисовке доски, и второй обход ради соседнего поля — цена, которую платит
-    каждое действие агента (доску перерисовывает SSE на любую правку в tasks/).
+    отрисовке доски, и второй обход ради соседнего признака — цена, которую
+    платит каждое действие агента (доску перерисовывает SSE на любую правку
+    в tasks/).
 
-    Задача без поля (заведена до его появления, размер ещё не оценивали) и
-    задача с чужим значением метки не получают: пустой кружок на превью хуже
-    отсутствующего.
+    Задача без поля (заведена до его появления, размер ещё не оценивали, плана
+    не вели) и задача с чужим значением метки не получают: пустой кружок на
+    превью хуже отсутствующего.
+
+    Показ прогресса выключен настройкой — поля нет вовсе, как у возраста:
+    решение «что показывать» принимает бэкенд, а не превью. Там же и второе
+    правило возраста: в конце маршрута (терминальный статус, съезд) работа
+    окончена, и ход её выполнения на превью — шум того же класса, что долг
+    у закрытой задачи.
     """
     tasks_dir = Path(tasks_dir)
+    want_progress = card_style(cfg or {})["card_show_progress"]
     for column in board.get("columns", []):
+        column_progress = want_progress and not is_terminal(
+            pipeline, column.get("status", ""))
         for group in column.get("groups", []):
             for task in group.get("tasks", []):
                 path = tasks_dir / task.get("file", "")
                 if not path.is_file():
                     continue
                 try:
-                    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8"))
+                    content = path.read_text(encoding="utf-8")
                 except OSError:
                     continue
+                meta, _body = parse_frontmatter(content)
                 key = meta.get("type", "")
                 if key in TASK_TYPES:
                     task["type"] = key
@@ -225,6 +274,9 @@ def annotate_marks(tasks_dir: Path, board: dict) -> dict:
                 size = str(meta.get("size", "") or "").strip().upper()
                 if size in TASK_SIZES:
                     task["size"] = size
+                progress = checklist_progress(content) if column_progress else None
+                if progress:
+                    task["progress"] = progress
     return board
 
 

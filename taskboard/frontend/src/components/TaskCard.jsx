@@ -49,6 +49,40 @@ function agePhrase(days) {
   return `${days} ${word} здесь`
 }
 
+// Прогресс плана работы. Делениями, пока пунктов немного: по ним «3 из 5»
+// читается без цифр, а цифрам на превью места нет. Дальше деления сливаются
+// в рябь шириной в пиксель, и полоска становится сплошной с долей заливки —
+// точное число всё равно называет подсказка.
+const PROGRESS_SEGMENTS_MAX = 8
+const PROGRESS_BAR = 'w-14 h-[3px] shrink-0'
+// Закрытый план — своё состояние, а не «почти закрытый»: зелёным его видно, не
+// пересчитывая деления. Цвет тот же, что у терминальных статусов доски
+const PROGRESS_DONE = 'bg-sky-500/70'
+const PROGRESS_FULL = 'bg-emerald-500/80'
+const PROGRESS_REST = 'bg-zinc-700'
+
+function ChecklistProgress({ done, total }) {
+  const title = `План работы: ${done} из ${total}`
+  const filled = done >= total ? PROGRESS_FULL : PROGRESS_DONE
+  if (total <= PROGRESS_SEGMENTS_MAX) {
+    return (
+      <span className={`${PROGRESS_BAR} flex items-stretch gap-px`} title={title}>
+        {Array.from({ length: total }, (_, i) => (
+          <span key={i} className={`flex-1 rounded-[1px]
+            ${i < done ? filled : PROGRESS_REST}`} />
+        ))}
+      </span>
+    )
+  }
+  return (
+    <span className={`${PROGRESS_BAR} block rounded-full overflow-hidden ${PROGRESS_REST}`}
+          title={title}>
+      <span className={`block h-full rounded-full ${filled}`}
+            style={{ width: `${Math.round((done / total) * 100)}%` }} />
+    </span>
+  )
+}
+
 function stripeKind(task) {
   if (task.stall_stale) return 'stale'
   const blocked = task.blocked_by?.length > 0
@@ -287,30 +321,44 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             себе не отвечает на вопрос «что стоит» — его считали в уме. Кто и
             когда двигал, остаётся в подсказке. Задача моложе порога поля
             не получает вовсе, и строки у неё нет */}
-        {(task.stale_days || task.epic) && (
-          <div className="flex items-center gap-2 mt-1 text-zinc-500"
+        {/* Три ячейки, а не поток: полоска прогресса должна стоять по центру
+            карточки независимо от того, есть ли у задачи возраст и эпик. В
+            потоке она уезжала бы вслед за соседями, и колонка превращалась
+            в лесенку */}
+        {(task.stale_days || task.epic || task.progress) && (
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1 text-zinc-500"
                style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
-            {task.stale_days > 0 && (
-              <span className="truncate"
-                    title={[task.agent, task.moved].filter(Boolean).join(' · ')}>
-                {agePhrase(task.stale_days)}
-              </span>
-            )}
-            {task.epic && (
-              // Клик открывает состав эпика, но карточку задачи при этом не
-              // трогает: событие дальше не идёт, иначе поверх окна эпика тут же
-              // открылась бы сама задача
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onOpenEpic?.(task.epic) }}
-                onPointerDown={(e) => e.stopPropagation()}
-                className="ml-auto min-w-0 shrink-0 truncate px-1.5 py-px rounded
-                  border border-zinc-700 text-[10px] font-mono text-zinc-400
-                  transition hover:border-zinc-500 hover:text-zinc-200"
-                title={`Задачи эпика ${task.epic}`}>
-                {task.epic}
-              </button>
-            )}
+            <span className="min-w-0 truncate">
+              {task.stale_days > 0 && (
+                <span title={[task.agent, task.moved].filter(Boolean).join(' · ')}>
+                  {agePhrase(task.stale_days)}
+                </span>
+              )}
+            </span>
+            {/* Прогресс приходит с бэкенда и только у задач с планом: там же
+                решено, показывать ли его вообще (настройка вида превью) */}
+            <span className="flex justify-center">
+              {task.progress?.total > 0 && (
+                <ChecklistProgress done={task.progress.done} total={task.progress.total} />
+              )}
+            </span>
+            <span className="min-w-0 flex justify-end">
+              {task.epic && (
+                // Клик открывает состав эпика, но карточку задачи при этом не
+                // трогает: событие дальше не идёт, иначе поверх окна эпика тут же
+                // открылась бы сама задача
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onOpenEpic?.(task.epic) }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="min-w-0 truncate px-1.5 py-px rounded
+                    border border-zinc-700 text-[10px] font-mono text-zinc-400
+                    transition hover:border-zinc-500 hover:text-zinc-200"
+                  title={`Задачи эпика ${task.epic}`}>
+                  {task.epic}
+                </button>
+              )}
+            </span>
           </div>
         )}
       </div>
