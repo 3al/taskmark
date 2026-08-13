@@ -15,10 +15,11 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -153,8 +154,8 @@ class ParsedTailTest(unittest.TestCase):
         self.assertEqual("", task["moved"])
 
 
-class AnnotateAgeTest(unittest.TestCase):
-    """Возраст показывается только у залежавшихся — остальным строка не нужна."""
+class AgeCaseMixin:
+    """Доска из одной задачи и возраст на ней — общая обвязка двух наборов."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -166,17 +167,34 @@ class AnnotateAgeTest(unittest.TestCase):
 
     def _annotated(self, moved: str, cfg: dict | None = None,
                    today: date | None = None, section: str = "Development",
-                   pipeline=None) -> dict:
+                   pipeline=None, touched: date | None = None) -> dict:
+        """Разобрать доску с одной задачей и проставить возраст.
+
+        `touched` — когда последний раз правили файл задачи; None означает
+        «файла нет», и возраст тогда стоит на одной дате перехода.
+        """
         pipeline = pipeline or self.pipeline
         path = self.tasks_dir / "board.md"
         tail = f" · Агент · {moved}" if moved else " · Агент"
         path.write_text(
             f"# Tasks Board\n\n## {section}\n\n"
             f"- TASK-001 · [Заголовок](TASK-001-x.md){tail}\n", encoding="utf-8")
+        if touched is not None:
+            task_file = self.tasks_dir / "TASK-001-x.md"
+            task_file.write_text(
+                TASK_FILE.format(id="TASK-001", title="Заголовок",
+                                 status="development"), encoding="utf-8")
+            stamp = datetime.combine(touched, time(12, 0)).timestamp()
+            os.utime(task_file, (stamp, stamp))
         board = parse_board(path, pipeline)
-        annotate_age(board, cfg or {}, pipeline, today=today or date(2026, 3, 20))
+        annotate_age(self.tasks_dir, board, cfg or {}, pipeline,
+                     today=today or date(2026, 3, 20))
         tasks = [t for c in board["columns"] for g in c["groups"] for t in g["tasks"]]
         return tasks[0]
+
+
+class AnnotateAgeTest(AgeCaseMixin, unittest.TestCase):
+    """Возраст показывается только у залежавшихся — остальным строка не нужна."""
 
     def test_old_task_gets_age(self) -> None:
         task = self._annotated("2026-03-01", {"card_stale_days": 7})
@@ -242,6 +260,54 @@ class AnnotateAgeTest(unittest.TestCase):
         task = self._annotated("2026-01-01", section="Hotfix Wait")
 
         self.assertEqual(78, task["stale_days"])
+
+
+class EditFreshnessTest(AgeCaseMixin, unittest.TestCase):
+    """Задачу правят, не двигая статус, — залежавшейся она не считается.
+
+    Возраст стоит на дате перехода, и у задачи, которую дорабатывают неделю в
+    одном статусе, превью говорило «7 дней здесь» — читается как «застряла»
+    (TASK-178). Правку видно по времени правки файла задачи.
+    """
+
+    def test_recently_edited_task_is_silent(self) -> None:
+        task = self._annotated("2026-03-01", {"card_stale_days": 7},
+                               touched=date(2026, 3, 20))
+
+        self.assertNotIn("stale_days", task)
+
+    def test_untouched_task_still_ages(self) -> None:
+        """Файл лежит нетронутым — залежалость настоящая, возраст от перехода."""
+        task = self._annotated("2026-03-01", {"card_stale_days": 7},
+                               touched=date(2026, 3, 2))
+
+        self.assertEqual(19, task["stale_days"])
+
+    def test_edit_freshness_uses_the_same_threshold(self) -> None:
+        """Порог один: «залежалось» меряется одной неделей с обоих концов."""
+        task = self._annotated("2026-03-01", {"card_stale_days": 7},
+                               touched=date(2026, 3, 13))
+
+        self.assertEqual(19, task["stale_days"])
+
+    def test_edit_a_day_short_of_the_threshold_silences(self) -> None:
+        task = self._annotated("2026-03-01", {"card_stale_days": 7},
+                               touched=date(2026, 3, 14))
+
+        self.assertNotIn("stale_days", task)
+
+    def test_future_mtime_is_silent(self) -> None:
+        """Часы съехали — молчим: ложная метка «залежалась» хуже её отсутствия."""
+        task = self._annotated("2026-03-01", {"card_stale_days": 7},
+                               touched=date(2026, 4, 1))
+
+        self.assertNotIn("stale_days", task)
+
+    def test_missing_file_keeps_the_age(self) -> None:
+        """Файла нет (строка осталась от удалённой задачи) — молчать не за что."""
+        task = self._annotated("2026-03-01", {"card_stale_days": 7})
+
+        self.assertEqual(19, task["stale_days"])
 
 
 class MoveTouchesDateTest(unittest.TestCase):

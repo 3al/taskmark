@@ -90,7 +90,23 @@ def _parse_entry(line: str) -> dict | None:
     }
 
 
-def annotate_age(board: dict, cfg: dict, pipeline=None,
+def _edited_days_ago(path: Path, today: date) -> int | None:
+    """Сколько дней назад правили файл задачи (None — файла нет).
+
+    Время правки берётся у файловой системы, а не из поля во frontmatter:
+    задачу правят четверо — `set_status.py`, API, доска и агент, редактирующий
+    файл напрямую, — и поле, которое обязан писать каждый из них, четвёртый
+    молча не напишет. `tasks/` лежит в `.gitignore`, так что клонирование
+    репозитория время правки не сбрасывает.
+    """
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    return (today - date.fromtimestamp(mtime)).days
+
+
+def annotate_age(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
                  today: date | None = None) -> dict:
     """Проставить карточкам возраст в статусе — только залежавшимся.
 
@@ -98,9 +114,16 @@ def annotate_age(board: dict, cfg: dict, pipeline=None,
     и держать его в двух местах незачем. Задача моложе порога поля не получает
     вовсе — нижней строки у неё не будет, карточка останется короткой.
 
+    **Возраст в статусе и залежалость — не одно и то же.** Задачу, которую
+    неделю дорабатывают, не двигая статус, дата перехода объявляла бы
+    застрявшей (TASK-178). Поэтому порог проверяется дважды: и по дате
+    перехода, и по времени правки файла задачи. Показывается при этом возраст
+    в статусе — то, что он и означает; работающая задача просто молчит.
+
     Молчим и там, где возраст неизвестен: задачу ни разу не двигали (даты в
     строке нет), дату испортили руками или она из будущего — залежалостью это
-    не является.
+    не является. Время правки из будущего (съехали часы) молчит по той же
+    причине: ложная метка «залежалась» хуже её отсутствия.
 
     Молчим и в конце маршрута: в терминальном статусе и в съезде задача стоит
     по определению — работа окончена. Возраст там был бы шумом того же класса,
@@ -112,6 +135,7 @@ def annotate_age(board: dict, cfg: dict, pipeline=None,
     except (TypeError, ValueError):
         threshold = DEFAULTS["card_stale_days"]
     today = today or date.today()
+    tasks_dir = Path(tasks_dir)
 
     for column in board.get("columns", []):
         if is_terminal(pipeline, column.get("status", "")):
@@ -123,8 +147,14 @@ def annotate_age(board: dict, cfg: dict, pipeline=None,
                     days = (today - date.fromisoformat(moved)).days
                 except ValueError:
                     continue
-                if days >= threshold and days >= 0:
-                    task["stale_days"] = days
+                if days < threshold or days < 0:
+                    continue
+                # Файла нет — строка осталась от удалённой задачи; молчать не
+                # за что, возраст стоит на одной дате перехода
+                edited = _edited_days_ago(tasks_dir / task.get("file", ""), today)
+                if edited is not None and edited < threshold:
+                    continue
+                task["stale_days"] = days
     return board
 
 
