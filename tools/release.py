@@ -16,6 +16,11 @@
         {"ok": true, "version": "1.1.0", "tag": "v1.1.0"}
         Отказ — ненулевой код возврата и {"ok": false, "error": "..."}.
 
+    release.py --history
+        [{"version": "1.1.0", "tag": "v1.1.0", "released_at": "...",
+          "annotated": true, "commit": "1733bab", "tasks": ["TASK-089"]}]
+        Только читает git: когда вышла версия и что в неё вошло.
+
 Разряд версии и текст заметок приходят снаружи: и то и другое — решение человека,
 а не свойство коммитов.
 """
@@ -46,6 +51,17 @@ _SECTION = re.compile(r"^## \[(?P<version>[^\]]+)\][^\n]*\n(?P<body>.*?)(?=^## \
                       re.S | re.M)
 
 _VERSION = re.compile(r"^\d+(\.\d+)*$")
+
+# Состав выпуска в теле релизного коммита: «Задачи выпуска: TASK-089, TASK-090»
+_TASKS_LINE = re.compile(r"^Задачи выпуска:(?P<list>.*)$", re.M)
+_TASK_ID = re.compile(r"TASK-\d+")
+
+# Поля тега для истории. `*`-поля разыменовывают аннотированный тег в коммит:
+# у обычного тега они пусты, зато сам объект и есть коммит. Пустое поле не должно
+# оказаться последним — хвост вывода обрезается, и строка теряет колонку
+_TAG_FIELDS = ("%(refname:short)", "%(taggerdate:iso-strict)",
+               "%(creatordate:iso-strict)", "%(*objectname:short)",
+               "%(objectname:short)")
 
 
 # --- Версия ----------------------------------------------------------------
@@ -142,8 +158,8 @@ def dist_is_fresh(src: Path = FRONTEND_SRC, dist: Path = FRONTEND_DIST) -> bool:
     return index.stat().st_mtime >= newest
 
 
-def _git(*args: str) -> str:
-    return subprocess.run(("git", *args), cwd=ROOT, capture_output=True,
+def _git(*args: str, cwd: Path = ROOT) -> str:
+    return subprocess.run(("git", *args), cwd=cwd, capture_output=True,
                           text=True, encoding="utf-8", check=True).stdout.strip()
 
 
@@ -291,6 +307,65 @@ def publish() -> dict:
     return {"ok": True, "pushed": True, "release": released}
 
 
+# --- История ---------------------------------------------------------------
+
+
+def release_tasks(commit: str, cwd: Path = ROOT) -> list[str]:
+    """Состав выпуска из тела релизного коммита.
+
+    Строки нет или формат другой — пустой список, а не ошибка: тег мог поставить
+    и человек руками, и история от этого перестать читаться не должна.
+    """
+    try:
+        body = _git("log", "-1", "--format=%B", commit, cwd=cwd)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    line = _TASKS_LINE.search(body)
+    return _TASK_ID.findall(line.group("list")) if line else []
+
+
+def history(cwd: Path = ROOT) -> list[dict]:
+    """История выпусков из git: когда вышла версия и что в неё вошло.
+
+    Отдельного файла с историей нет намеренно: он стал бы третьим источником
+    тех же данных и первым, кто с ними разойдётся. Тег и релизный коммит
+    разойтись с выпуском не могут — они **и есть** выпуск.
+
+    Читает и только читает: ничего не пишет и не публикует.
+    """
+    try:
+        raw = _git("for-each-ref", "--format=" + "%09".join(_TAG_FIELDS),
+                   "refs/tags", cwd=cwd)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+
+    entries: list[dict] = []
+    for line in raw.splitlines():
+        parts = line.split("\t")
+        if len(parts) != len(_TAG_FIELDS):
+            continue
+        tag, tagged_at, created_at, deref, obj = parts
+        try:
+            parse_version(tag)
+        except ValueError:
+            continue  # тег не про версию — не выпуск
+        commit = deref or obj
+        entries.append({
+            "version": tag.lstrip("vV"),
+            "tag": tag,
+            # Аннотация хранит время простановки тега — момент выпуска. Обычный
+            # тег его не хранит вовсе, тогда берём время коммита и говорим об этом
+            "released_at": tagged_at or created_at,
+            "annotated": bool(tagged_at),
+            "commit": commit,
+            "tasks": release_tasks(commit, cwd=cwd),
+        })
+
+    entries.sort(key=lambda e: (e["released_at"], parse_version(e["version"])),
+                 reverse=True)
+    return entries
+
+
 # --- CLI -------------------------------------------------------------------
 
 
@@ -299,14 +374,19 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="проверить готовность, ничего не менять")
     parser.add_argument("--apply", action="store_true", help="выпустить версию (без пуша)")
     parser.add_argument("--publish", action="store_true", help="отправить коммит и тег")
+    parser.add_argument("--history", action="store_true",
+                        help="история выпусков из git: когда и что вошло")
     parser.add_argument("--bump", choices=LEVELS, help="разряд версии")
     parser.add_argument("--notes", help="файл с текстом секции changelog")
     parser.add_argument("--tasks", default="", help="состав выпуска: TASK-001,TASK-002")
     args = parser.parse_args()
 
+    result: dict | list
     try:
         if args.check:
             result = check(bump=args.bump)
+        elif args.history:
+            result = history()
         elif args.apply:
             if not args.bump or not args.notes:
                 raise ValueError("для --apply нужны --bump и --notes")
@@ -316,12 +396,13 @@ def main() -> int:
         elif args.publish:
             result = publish()
         else:
-            raise ValueError("укажите --check, --apply или --publish")
+            raise ValueError("укажите --check, --apply, --publish или --history")
     except Exception as exc:  # noqa: BLE001 — наружу отдаём json, а не трассировку
         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("ok") else 1
+    # История — список выпусков, и пустой список отказом не является
+    return 0 if not isinstance(result, dict) or result.get("ok") else 1
 
 
 if __name__ == "__main__":

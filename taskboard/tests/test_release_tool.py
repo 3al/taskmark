@@ -1,9 +1,10 @@
 """Скрипт выпуска: арифметика версий, changelog, готовность к релизу.
 
-Здесь проверяется только то, что можно проверить без git и сети: подсчёт
-следующей версии, разбор и сборка секций changelog, определение преград.
-Сами git-операции и публикация — не тестируются: они за узким интерфейсом,
-и подниматься ради них настоящему репозиторию незачем.
+Здесь проверяется то, что можно проверить без сети: подсчёт следующей версии,
+разбор и сборка секций changelog, определение преград, чтение истории выпусков.
+История читает git — для неё поднимается свой репозиторий во временной папке:
+теги и тела коммитов нужны настоящие, а трогать репозиторий проекта нельзя.
+Запись и публикация не тестируются: они за узким интерфейсом и необратимы.
 
 Скрипт лежит в `tools/`, а не в `taskboard/`: он знает про VERSION и теги
 этого репозитория и в поставку пользователям не идёт.
@@ -11,6 +12,7 @@
 
 import importlib.util
 import json
+import subprocess
 import tempfile
 import unittest
 from datetime import date
@@ -177,6 +179,90 @@ class TestCheckOutput(unittest.TestCase):
 
     def test_ответ_сериализуется(self):
         json.dumps(self.tool.check(bump="patch"), ensure_ascii=False)
+
+
+class TestHistory(unittest.TestCase):
+    """История выпусков: теги и тела релизных коммитов своего репозитория.
+
+    Репозиторий поднимается во временной папке: история должна читаться из
+    любого репозитория, а не только из того, где лежит скрипт.
+    """
+
+    def setUp(self):
+        self.tool = _load()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self._git("init", "-q")
+        self._git("config", "user.email", "release@example.com")
+        self._git("config", "user.name", "Тест выпуска")
+        self._git("config", "commit.gpgsign", "false")
+        self._git("config", "tag.gpgsign", "false")
+
+    def _git(self, *args):
+        return subprocess.run(("git", *args), cwd=self.root, check=True,
+                              capture_output=True, text=True,
+                              encoding="utf-8").stdout.strip()
+
+    def _release(self, version, tasks="", annotated=True):
+        """Релизный коммит и тег на него — как их делает `--apply`."""
+        (self.root / "VERSION").write_text(version + "\n", encoding="utf-8")
+        self._git("add", "-A")
+        body = "Задачи выпуска: " + tasks if tasks else "Выпуск без привязки к задачам."
+        self._git("commit", "-m", f"Релиз {version}", "-m", body)
+        tag = "v" + version
+        if annotated:
+            self._git("tag", "-a", tag, "-m", f"Taskmark {version}")
+        else:
+            self._git("tag", tag)
+        return tag
+
+    def test_без_тегов_история_пуста(self):
+        # Пустой список, а не отказ: репозиторий без выпусков — нормальное состояние
+        self.assertEqual(self.tool.history(self.root), [])
+
+    def test_выпуски_идут_от_свежего_к_старому(self):
+        self._release("1.0.0")
+        self._release("1.1.0")
+        versions = [entry["version"] for entry in self.tool.history(self.root)]
+        self.assertEqual(versions, ["1.1.0", "1.0.0"])
+
+    def test_состав_берётся_из_тела_релизного_коммита(self):
+        self._release("1.0.0", tasks="TASK-089, TASK-090, TASK-091")
+        entry = self.tool.history(self.root)[0]
+        self.assertEqual(entry["tasks"], ["TASK-089", "TASK-090", "TASK-091"])
+        self.assertEqual(entry["tag"], "v1.0.0")
+        self.assertTrue(entry["commit"], "не указан коммит выпуска")
+
+    def test_тело_без_состава_даёт_пустой_список(self):
+        # Тег мог поставить человек руками — это не ошибка чтения истории
+        self._release("1.0.0")
+        self.assertEqual(self.tool.history(self.root)[0]["tasks"], [])
+
+    def test_время_берётся_из_аннотации_тега(self):
+        self._release("1.0.0")
+        entry = self.tool.history(self.root)[0]
+        expected = self._git("for-each-ref", "--format=%(taggerdate:iso-strict)",
+                             "refs/tags/v1.0.0")
+        self.assertTrue(entry["annotated"], "аннотированный тег помечен как обычный")
+        self.assertEqual(entry["released_at"], expected)
+
+    def test_неаннотированный_тег_берёт_дату_коммита_и_помечается(self):
+        # `git tag` без -a времени не хранит — тогда время коммита, но честно
+        self._release("1.0.0", annotated=False)
+        entry = self.tool.history(self.root)[0]
+        self.assertFalse(entry["annotated"], "у обычного тега нет времени выпуска")
+        self.assertEqual(entry["released_at"],
+                         self._git("log", "-1", "--format=%cI"))
+
+    def test_чужие_теги_историей_не_считаются(self):
+        self._release("1.0.0")
+        self._git("tag", "-a", "hotfix", "-m", "не выпуск")
+        self.assertEqual([e["tag"] for e in self.tool.history(self.root)], ["v1.0.0"])
+
+    def test_ответ_сериализуется(self):
+        self._release("1.0.0", tasks="TASK-001")
+        json.dumps(self.tool.history(self.root), ensure_ascii=False)
 
 
 if __name__ == "__main__":

@@ -25,12 +25,17 @@ cd taskboard/frontend && npm run dev                    # dev-сервер фр�
 taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v
 # один тест
 taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v -k test_registry
+
+py tools/release.py --history  # история выпусков: когда вышла версия и что в неё вошло
 ```
 
 - `taskboard.py` сам создаёт `taskboard/.venv` и перезапускается под ним — вручную venv не создавай.
 - `-t taskboard` в команде тестов обязателен: модули импортируются как `backend.*` (не `taskboard.backend.*`), потому что лаунчер кладёт `taskboard/` в `sys.path`.
 - **Не** используй `uvicorn --reload`: на Windows в связке с watchdog/SSE он зависает при перезапуске, поэтому reload реализован своим супервизором (`taskboard.py:dev_supervisor`).
 - Линтера, тайпчека и CI нет. Проверяй изменения запуском сервера.
+- **Про выпуски не гадай по коммитам:** `tools/release.py --history` отдаёт JSON — версия, тег,
+  время выпуска и состав задач, от свежего к старому. Скрипт только читает git; в поставку
+  пользователям он не идёт, у них выпуск устроен по-своему.
 
 ## Архитектура
 
