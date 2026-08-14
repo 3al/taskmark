@@ -157,6 +157,20 @@ class ApprovedCompositionTest(ReleaseSkillText):
         self.assertIn("actions.release_lock", changelog,
                       "changelog собирается не по составу утверждённого")
 
+    def test_changelog_texts_are_reread_from_task_files(self) -> None:
+        """Черновик из переписки — не источник правды для changelog.
+
+        «Тексты подтвердил» означает «просмотрел и, возможно, поправил», а правит
+        человек сами задачи через доску. Собранный по своему черновику changelog
+        молча теряет эти правки (TASK-181).
+        """
+        changelog = self.step_with("Собрать changelog")
+
+        self.assertTrue(re.search(r"перечит|заново", changelog, re.I),
+                        "тексты не перечитываются из файлов задач перед сборкой")
+        self.assertTrue(re.search(r"черновик", changelog, re.I),
+                        "не сказано, что черновик из переписки не источник правды")
+
     def test_closing_follows_the_same_composition(self) -> None:
         closing = self.step_with("Закрыть задачи выпуска")
 
