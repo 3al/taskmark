@@ -65,11 +65,10 @@ function freshPhrase(minutes) {
   return `правили ${minutes} ${word} назад`
 }
 
-// Прогресс плана работы. Делениями, пока пунктов немного: по ним «3 из 5»
-// читается без цифр, а цифрам на превью места нет. Дальше деления сливаются
-// в рябь шириной в пиксель, и полоска становится сплошной с долей заливки —
-// точное число всё равно называет подсказка.
-const PROGRESS_SEGMENTS_MAX = 8
+// Прогресс плана работы — сплошная полоска с долей заливки, **на любом числе
+// пунктов**. Деления у коротких планов читались точнее, но соседние карточки
+// выглядели по-разному без видимой для человека причины, и разница вида
+// читалась как разница смысла. Точное «3 из 5» называет подсказка.
 const PROGRESS_BAR = 'w-14 h-[3px] shrink-0'
 // Закрытый план — своё состояние, а не «почти закрытый»: зелёным его видно, не
 // пересчитывая деления. Цвет тот же, что у терминальных статусов доски
@@ -80,16 +79,6 @@ const PROGRESS_REST = 'bg-zinc-700'
 function ChecklistProgress({ done, total }) {
   const title = `План работы: ${done} из ${total}`
   const filled = done >= total ? PROGRESS_FULL : PROGRESS_DONE
-  if (total <= PROGRESS_SEGMENTS_MAX) {
-    return (
-      <span className={`${PROGRESS_BAR} flex items-stretch gap-px`} title={title}>
-        {Array.from({ length: total }, (_, i) => (
-          <span key={i} className={`flex-1 rounded-[1px]
-            ${i < done ? filled : PROGRESS_REST}`} />
-        ))}
-      </span>
-    )
-  }
   return (
     <span className={`${PROGRESS_BAR} block rounded-full overflow-hidden ${PROGRESS_REST}`}
           title={title}>

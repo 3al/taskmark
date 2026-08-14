@@ -216,6 +216,18 @@ class ProgressOnCardTest(unittest.TestCase):
         """Возраст и эпик по краям, полоска — по центру, независимо от соседей."""
         self.assertIn("grid-cols-[1fr_auto_1fr]", self.src)
 
+    def test_progress_bar_is_always_solid(self) -> None:
+        """Вид полоски один на любой план — деления у коротких раздражали.
+
+        Прежде до восьми пунктов рисовались деления, дальше сплошная заливка:
+        соседние карточки выглядели по-разному без видимой причины, и разница
+        читалась как разница смысла (TASK-180).
+        """
+        self.assertNotIn("PROGRESS_SEGMENTS_MAX", self.src,
+                         "остался порог перехода на деления")
+        self.assertIn("done / total", self.src,
+                      "полоска не заливается долей закрытых пунктов")
+
     def test_full_progress_turns_green(self) -> None:
         """Закрытый план виден цветом: «всё сделано» — отдельное состояние.
 
