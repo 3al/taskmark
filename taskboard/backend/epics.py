@@ -13,20 +13,26 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.task_parser import parse_frontmatter
+from backend.notes import BOARD_AUTHOR, EPIC_TEXT, append_note
+from backend.task_parser import find_task_file, parse_frontmatter, set_meta_fields
 
 EPICS_FILE = "epics.md"
 _LIST_HEADING = "## Список эпиков"
 _EMPTY = "_(нет)_"
 
+# Ключ эпика: одно «слово» с дефисом внутри. Суффикс не обязан быть числовым:
+# кроме Jira-ключей люди заводят мнемонические — «STALL-001», «E001-STALL».
+# Раньше такая запись молча не считалась эпиком, и его имя пропадало из карточки
+# без единого сообщения
+_KEY = r"[A-Za-z][\w.]*-[A-Za-z0-9][\w.-]*"
+
 # Запись эпика: «## E056-18500 — Инвентаризация» (имя может отсутствовать).
-# Суффикс ключа не обязан быть числовым: кроме Jira-ключей люди заводят
-# мнемонические — «STALL-001», «E001-STALL». Раньше такая запись молча не
-# считалась эпиком, и его имя пропадало из карточки без единого сообщения.
-# Ключ — одно «слово» с дефисом внутри, поэтому заголовки разделов реестра
-# («## Список эпиков», «## Формат записи») под него не подходят
+# Форма ключа здесь та же, что и у проверки: заголовки разделов реестра
+# («## Список эпиков», «## Формат записи») под неё не подходят
 _ENTRY_RE = re.compile(
-    r"^##\s+(?P<key>[A-Za-z][\w.]*-[A-Za-z0-9][\w.-]*)\s*(?:—|-|–)?\s*(?P<name>.*)$")
+    rf"^##\s+(?P<key>{_KEY})\s*(?:—|-|–)?\s*(?P<name>.*)$")
+
+_KEY_RE = re.compile(rf"^{_KEY}$")
 
 
 def epics_path(tasks_dir: Path) -> Path:
@@ -133,6 +139,48 @@ def annotate_epics(tasks_dir: Path, board: dict) -> dict:
                 if key:
                     task["epic"] = key
     return board
+
+
+def is_epic_key(key: str) -> bool:
+    """Прочитает ли реестр такой ключ обратно.
+
+    Запись в `epics.md` — заголовок `## <ключ> — <имя>`, и разбирается она
+    регуляркой. Ключ с пробелом или запятой туда запишется, но обратно не
+    прочитается: имя эпика пропадёт без единого сообщения. Поэтому форма ключа
+    проверяется до записи — и в реестр, и во frontmatter задачи.
+    """
+    return bool(_KEY_RE.match((key or "").strip()))
+
+
+def set_task_epic(tasks_dir: Path, task_id: str, value: str,
+                  author: str = BOARD_AUTHOR) -> dict:
+    """Назначить, сменить или снять эпик задачи — правка из окна доски.
+
+    Пустое значение **снимает эпик** (`epic: ~`): задачу заводят и вне эпика,
+    и способ передумать обязан быть.
+
+    Живёт рядом с реестром, а не с остальными полями задачи: форму ключа знает
+    он, и проверка обязана быть одной и той же с обоих концов.
+    """
+    value = (value or "").strip()
+    if value in ("~",):
+        value = ""
+    if value and not is_epic_key(value):
+        return {"ok": False,
+                "error": f"Неверный ключ эпика: {value} "
+                         "(ожидается вид E056-18500 — без пробелов)"}
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    was = str(meta.get("epic", "") or "").strip()
+    was = "" if was == "~" else was
+    if not set_meta_fields(path, {"epic": value or "~"}):
+        return {"ok": False, "error": f"Не удалось записать эпик в {path.name}"}
+    if value != was:
+        append_note(path, EPIC_TEXT.format(now=value or "нет",
+                                           was=was or "нет"), author)
+    return {"ok": True, "epic": value}
 
 
 def register_epic(tasks_dir: Path, key: str, name: str = "") -> bool:

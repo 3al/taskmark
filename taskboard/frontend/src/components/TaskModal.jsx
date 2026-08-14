@@ -10,6 +10,7 @@ import { mdComponents, rehypeNoteMeta, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
 import { taskBody, taskCopyText } from '../taskText'
 import CopyButton from './CopyButton'
+import EpicField from './EpicField'
 import MarkdownEditor from './MarkdownEditor'
 import ReasonPrompt from './ReasonPrompt'
 import TaskPicker from './TaskPicker'
@@ -268,6 +269,61 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
     }
   }
 
+  // Эпик: чем задача является частью. Правится тем же полем, что и в форме
+  // создания, — ключ выбирают из реестра, для нового спрашивается имя.
+  // Форма открывается по кнопке: у большинства задач эпика нет вовсе
+  const [epicForm, setEpicForm] = useState(false)
+  const [epicText, setEpicText] = useState('')
+  const [epicKey, setEpicKey] = useState('')
+  const [epicName, setEpicName] = useState('')
+  const [epicSaving, setEpicSaving] = useState(false)
+
+  const openEpicForm = () => {
+    const current = task?.meta?.epic
+    setEpicText(current && current !== '~' ? current : '')
+    setEpicKey(current && current !== '~' ? current : '')
+    setEpicName('')
+    setEpicForm(true)
+  }
+
+  // Ключ разбирает поле; незнакомый ключ уходит текстом — форму проверит бэкенд,
+  // он же и знает, какую запись реестр сможет прочитать обратно
+  const saveEpic = async (value) => {
+    const key = value !== undefined ? value : (epicKey || epicText.trim())
+    setEpicSaving(true)
+    try {
+      await api.updateTask(taskId, { epic: key, epic_name: epicName.trim() })
+      setTask(await api.task(taskId))
+      setEpicForm(false)
+      onChanged?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setEpicSaving(false)
+    }
+  }
+
+  // Комментарий с доски: строка в хронологию задачи. Время ставит бэкенд, и
+  // это часть смысла — выдуманное время ломает порядок сильнее, чем пропуск
+  const [commentForm, setCommentForm] = useState(false)
+  const [commentBusy, setCommentBusy] = useState(false)
+  const [commentError, setCommentError] = useState(null)
+
+  const addComment = async (text) => {
+    setCommentBusy(true)
+    setCommentError(null)
+    try {
+      await api.addComment(taskId, text)
+      setTask(await api.task(taskId))
+      setCommentForm(false)
+      onChanged?.()
+    } catch (e) {
+      setCommentError(e.message)
+    } finally {
+      setCommentBusy(false)
+    }
+  }
+
   // Простой задачи: что показываем и что правим. Форма ввода открывается по
   // кнопке — панель не должна занимать место, пока задача никого не ждёт
   const stall = task?.stall
@@ -317,6 +373,9 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
     setStallError(null)
     setBlockId('')
     setTypePicker(false)
+    setEpicForm(false)
+    setCommentForm(false)
+    setCommentError(null)
     api.task(taskId).then(setTask).catch((e) => setError(e.message))
   }, [taskId])
 
@@ -331,11 +390,14 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
       // Открытый список типов Esc тоже забирает: он перекрывает шапку,
       // и закрыть окно вместе с ним значило бы промахнуться мимо задачи
       if (typePicker) { setTypePicker(false); return }
+      // Форма эпика — с полем ввода: закрыть окно поверх набранного ключа
+      // значит потерять его молча. Форма комментария гасит Esc у себя
+      if (epicForm) { setEpicForm(false); return }
       onClose()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, editSection, typePicker])
+  }, [onClose, editSection, typePicker, epicForm])
 
   return (
     <div
@@ -384,16 +446,73 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                 саму задачу, а эпик говорит, частью чего она является, — контекст
                 по логике чтения идёт до заголовка. Без рамки и приглушённо:
                 бейдж добавил бы веса, а спорить с названием эпик не должен */}
-            {task?.meta?.epic && task.meta.epic !== '~' && (
-              <button
-                type="button"
-                onClick={() => onOpenEpic?.(task.meta.epic)}
-                className="mb-0.5 flex max-w-full items-baseline gap-1.5 text-xs text-zinc-500
-                  transition hover:text-zinc-300"
-                title={`Задачи эпика ${task.meta.epic}`}>
-                <span className="font-mono">{task.meta.epic}</span>
-                {task.epic_name && <span className="truncate">{task.epic_name}</span>}
-              </button>
+            {/* Задача без эпика показывает пунктирную кнопку — иначе назначить
+                эпик было бы нечем: поле есть только в форме создания */}
+            {task?.meta && !epicForm && (
+              <div className="mb-0.5 flex max-w-full items-baseline gap-1.5 text-xs">
+                {task.meta.epic && task.meta.epic !== '~' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onOpenEpic?.(task.meta.epic)}
+                      className="flex min-w-0 items-baseline gap-1.5 text-zinc-500
+                        transition hover:text-zinc-300"
+                      title={`Задачи эпика ${task.meta.epic}`}>
+                      <span className="font-mono">{task.meta.epic}</span>
+                      {task.epic_name && <span className="truncate">{task.epic_name}</span>}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openEpicForm}
+                      className="shrink-0 text-zinc-600 transition hover:text-zinc-300"
+                      title="Изменить эпик"
+                    >✎</button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={openEpicForm}
+                    className="text-zinc-600 transition hover:text-zinc-400"
+                    title="Назначить эпик"
+                  >+ эпик</button>
+                )}
+              </div>
+            )}
+            {epicForm && (
+              <div className="mb-1 space-y-1">
+                <div className="flex items-center gap-2">
+                  <EpicField
+                    value={epicText}
+                    name={epicName}
+                    onChange={(text, key) => { setEpicText(text); setEpicKey(key) }}
+                    onNameChange={setEpicName}
+                    placeholder="Эпик — Jira-ключ"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => saveEpic()}
+                    disabled={epicSaving}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center text-base
+                      text-zinc-500 hover:text-emerald-400 disabled:opacity-40"
+                    title="Сохранить"
+                  >✓</button>
+                  <button
+                    onClick={() => setEpicForm(false)}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center text-base
+                      text-zinc-500 hover:text-rose-400"
+                    title="Отменить (Esc)"
+                  >✕</button>
+                </div>
+                {task?.meta?.epic && task.meta.epic !== '~' && (
+                  <button
+                    onClick={() => saveEpic('')}
+                    disabled={epicSaving}
+                    className="text-[11px] text-zinc-500 transition hover:text-zinc-300
+                      disabled:opacity-40">
+                    снять эпик
+                  </button>
+                )}
+              </div>
             )}
             {/* Кнопки лежат на нулевой ширине сразу за последним символом, а
                 место под них справа держит распорка — в поток они не попадают
@@ -824,6 +943,33 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
               )}
             </div>
           ))}
+
+          {/* Комментарий человека — в конец хронологии, а не правкой секции:
+              строку собирает бэкенд, и время в ней системное. Форма внизу тела,
+              под самой секцией «Комментарии», где её и ищут */}
+          {task && (
+            <div className="mt-4 border-t border-zinc-800 pt-3">
+              {commentForm ? (
+                <ReasonPrompt
+                  label="Комментарий:"
+                  placeholder="проверил локально, замечаний нет"
+                  submitLabel="Добавить"
+                  busy={commentBusy}
+                  onSubmit={addComment}
+                  onCancel={() => { setCommentForm(false); setCommentError(null) }}
+                />
+              ) : (
+                <button
+                  onClick={() => setCommentForm(true)}
+                  className="text-[11px] text-zinc-500 transition hover:text-zinc-300">
+                  + комментарий
+                </button>
+              )}
+              {commentError && (
+                <div className="mt-1 text-xs text-rose-400">{commentError}</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

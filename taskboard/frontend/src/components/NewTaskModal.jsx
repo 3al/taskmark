@@ -4,6 +4,7 @@ import { FORM_FIELD } from '../fields'
 import { TASK_TYPES } from '../taskTypes'
 import TaskPicker from './TaskPicker'
 import MarkdownEditor from './MarkdownEditor'
+import EpicField from './EpicField'
 
 // Модалка создания задачи (вызов create_task.py через API).
 // Рубрику бэклога выбирать не нужно: её задаёт тип задачи (TASK-124)
@@ -38,9 +39,10 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
   // Задача-блокер: поле хранит номер, но блокировать можно только существующую
   // задачу — иначе новая задача рождается со ссылкой в никуда
   const [blockedTask, setBlockedTask] = useState(null)
-  // Реестр эпиков: известные ключи подсказываем, для нового спрашиваем имя —
-  // имя эпика хранится только в epics.md, ссылка на безымянный эпик бесполезна
-  const [epics, setEpics] = useState([])
+  // Ключ эпика, разобранный полем: в поле лежит «ключ · название» (читается и
+  // служит подсказкой само), а на бэкенд уходит только ключ. Подсказки и имя
+  // нового эпика — работа EpicField, общего с окном задачи
+  const [epicKey, setEpicKey] = useState('')
   // Пресеты критериев: дефолт виден заранее (поле предзаполнено первым),
   // свой вариант можно сохранить — он появится во всех проектах
   const [presets, setPresets] = useState([])
@@ -51,7 +53,6 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
   const [descPreview, setDescPreview] = useState(false)
 
   useEffect(() => {
-    api.epics().then((d) => setEpics(d.items || [])).catch(() => { /* нет реестра */ })
     api.criteriaPresets()
       .then((d) => {
         const items = d.presets || []
@@ -73,21 +74,6 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
   // Подсказки эпика — кастомный тёмный список (как у пресетов критериев), а не
   // нативный datalist: браузер рисует его белым, и он выбивается из темы.
   // Свободный ввод сохраняется: список лишь подсказывает известные ключи
-  const [epicFocus, setEpicFocus] = useState(false)
-  // Ключ эпика, выбранного из списка: в поле лежит «ключ · название» (читается
-  // и служит подсказкой само), а на бэкенд уходит только ключ
-  const [epicPicked, setEpicPicked] = useState(null)
-  const epicLabel = (e) => (e.name ? `${e.key} · ${e.name}` : e.key)
-
-  const epicKey = form.epic.trim()
-  const knownEpic = epicPicked
-    ? epics.find((e) => e.key === epicPicked)
-    : epics.find((e) => e.key.toLowerCase() === epicKey.toLowerCase())
-  const needsEpicName = !!epicKey && !knownEpic
-  const needle = (epicPicked ? epicPicked : epicKey).toLowerCase()
-  const epicSuggestions = epics.filter((e) =>
-    e.key.toLowerCase().includes(needle) || (e.name || '').toLowerCase().includes(needle))
-
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && !busy && onClose()
     window.addEventListener('keydown', onKey)
@@ -119,7 +105,7 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
         paused: inherited.paused,
       }
       // В поле может лежать «ключ · название» — на бэкенд уходит только ключ
-      if (knownEpic) payload.epic = knownEpic.key
+      if (epicKey) payload.epic = epicKey
       const result = await api.createTask(payload)
       onCreated(result.id)
       onClose()
@@ -288,47 +274,13 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
             </div>
           )}
 
-          {/* min-w-0 у обоих полей: у инпута есть интринсическая ширина, и без
-              неё появление второго поля схлопывает первое до полусантиметра */}
-          <div className="flex gap-3">
-            <div className="relative flex-1 min-w-0">
-              <input
-                className={field}
-                placeholder="Эпик — Jira-ключ (опционально)"
-                value={form.epic}
-                onChange={(e) => { setEpicPicked(null); set('epic')(e) }}
-                onFocus={() => setEpicFocus(true)}
-                onBlur={() => setEpicFocus(false)}
-              />
-              {epicFocus && !knownEpic && epicSuggestions.length > 0 && (
-                <div className="absolute z-20 mt-1 w-full max-h-40 overflow-y-auto bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl">
-                  {epicSuggestions.map((e) => (
-                    <button
-                      key={e.key}
-                      type="button"
-                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-zinc-700"
-                      onMouseDown={() => {
-                        setEpicPicked(e.key)
-                        setForm({ ...form, epic: epicLabel(e) })
-                        setEpicFocus(false)
-                      }}
-                    >
-                      <span className="font-mono text-zinc-300">{e.key}</span>
-                      {e.name && <span className="text-zinc-500"> · {e.name}</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {needsEpicName && (
-              <input
-                className={`${field} flex-1 min-w-0`}
-                placeholder="Название нового эпика"
-                value={form.epic_name}
-                onChange={set('epic_name')}
-              />
-            )}
-          </div>
+          <EpicField
+            value={form.epic}
+            name={form.epic_name}
+            onChange={(text, key) => { setForm({ ...form, epic: text }); setEpicKey(key) }}
+            onNameChange={(value) => setForm({ ...form, epic_name: value })}
+            inputClassName={field}
+          />
 
           <div className="flex gap-3">
             <label className="flex-1 text-xs text-zinc-500">

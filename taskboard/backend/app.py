@@ -26,7 +26,7 @@ from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
                             validate_card_style)
 from backend.create_task_runner import create_task
 from backend.epics import (annotate_epics, epic_name, epic_tasks, list_epics,
-                           register_epic)
+                           register_epic, set_task_epic)
 from backend.migrations import (apply_config_migrations, migrate_global_config,
                                 pipeline_removals, rename_notes_section,
                                 retire_artifact_names)
@@ -45,9 +45,11 @@ from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            stall_details, stalled_tasks)
 from backend.statuses import CATALOG, load_pipeline
 from backend.tasks_delete import delete_plan, delete_task
+from backend.notes import append_note
 from backend.task_parser import (EDITABLE_SECTIONS, annotate_marks,
-                                 list_all_tasks, parse_task, set_task_section,
-                                 set_task_size, set_task_title, set_task_type)
+                                 find_task_file, list_all_tasks, parse_task,
+                                 set_task_section, set_task_size, set_task_title,
+                                 set_task_type)
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -132,6 +134,11 @@ class TaskUpdateIn(BaseModel):
     criteria: str | None = None
     # Текст изменения для changelog: черновик пишет скилл выпуска, человек правит
     release_notes: str | None = None
+    # Эпик задачи: ключ реестра. Пустая строка снимает эпик, поэтому None
+    # («поле не прислали») и "" значат здесь разное. Имя нужно, только когда
+    # ключ ещё не в реестре, — как и в форме создания
+    epic: str | None = None
+    epic_name: str = ""
 
 
 class ConfigIn(BaseModel):
@@ -593,6 +600,29 @@ class ConfirmIn(BaseModel):
     section: str | None = None
 
 
+class CommentIn(BaseModel):
+    text: str
+
+
+@app.post("/api/tasks/{task_id}/comment")
+def api_add_comment(task_id: str, body: CommentIn) -> dict:
+    """Дописать комментарий человека в хронологию задачи.
+
+    Отдельный эндпоинт, а не правка секции: «Комментарии» — хронология, и
+    строка в ней складывается из системного времени, подписи источника и сути.
+    Отдай эту секцию текстовому редактору — и время можно будет выдумать, а
+    прежние строки переписать; ровно от этого её и защищают.
+    """
+    tasks_dir, _cfg = _ctx()
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        raise HTTPException(404, f"Задача не найдена: {task_id}")
+    note = append_note(path, body.text)
+    if note is None:
+        raise HTTPException(400, "Пустой комментарий не записывается")
+    return {"ok": True, "note": note}
+
+
 @app.post("/api/tasks/{task_id}/confirm")
 def api_confirm(task_id: str, body: ConfirmIn) -> dict:
     """Подтвердить требования этапа от имени человека.
@@ -724,6 +754,17 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
         if not sized.get("ok"):
             raise HTTPException(400, sized.get("error", "Ошибка смены размера"))
         result["size"] = sized["size"]
+
+    if body.epic is not None:
+        # Сначала пишем в задачу: она же проверяет форму ключа. Регистрация
+        # идёт следом — реестр не должен пополняться ключом, который отклонён
+        epiced = set_task_epic(tasks_dir, task_id, body.epic)
+        if not epiced.get("ok"):
+            raise HTTPException(400, epiced.get("error", "Ошибка смены эпика"))
+        if epiced["epic"]:
+            register_epic(tasks_dir, epiced["epic"], body.epic_name)
+        result["epic"] = epiced["epic"]
+        result["epic_name"] = epic_name(tasks_dir, epiced["epic"])
 
     # Правка текста задачи: каждая секция пишется отдельно и точечно — пока
     # карточка открыта, в тот же файл пишет агент.

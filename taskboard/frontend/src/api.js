@@ -90,6 +90,11 @@ export const api = {
   deleteTaskPlan: (id) => request(`/api/tasks/${encodeURIComponent(id)}/delete-plan`),
   deleteTask: (id) =>
     request(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // Комментарий с доски: отдельный вызов, а не правка секции — строку собирает
+  // бэкенд, и время в ней системное
+  addComment: (id, text) =>
+    request(`/api/tasks/${encodeURIComponent(id)}/comment`,
+            { method: 'POST', body: JSON.stringify({ text }) }),
   updateTask: (id, updates) =>
     request(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
   criteriaPresets: () => request('/api/criteria-presets'),

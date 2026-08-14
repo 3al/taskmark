@@ -31,6 +31,12 @@ PICKER = (
     Path(__file__).resolve().parent.parent
     / "frontend" / "src" / "components" / "TaskPicker.jsx"
 )
+# Поле эпика вынесено в общий компонент (TASK-032): эпик задают и в форме
+# создания, и в открытой карточке
+EPIC_FIELD = (
+    Path(__file__).resolve().parent.parent
+    / "frontend" / "src" / "components" / "EpicField.jsx"
+)
 
 
 class CriteriaPresetsStoreTest(unittest.TestCase):
@@ -141,7 +147,12 @@ class EpicSuggestionsUiTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.src = MODAL.read_text(encoding="utf-8")
+        cls.src = EPIC_FIELD.read_text(encoding="utf-8")
+        cls.form = MODAL.read_text(encoding="utf-8")
+
+    def test_form_uses_shared_field(self) -> None:
+        """Своей копии подсказок в форме нет — поле общее с окном задачи."""
+        self.assertIn("EpicField", self.form)
 
     def test_no_native_datalist(self) -> None:
         self.assertNotIn("<datalist", self.src, "белая браузерная подсказка")
@@ -149,16 +160,17 @@ class EpicSuggestionsUiTest(unittest.TestCase):
 
     def test_custom_suggestion_list(self) -> None:
         # Отфильтрованные по вводу эпики, кликабельные строки тёмного списка
-        self.assertIn("epicSuggestions", self.src)
+        self.assertIn("suggestions", self.src)
         self.assertIn("onMouseDown", self.src,
                       "клик по подсказке должен успеть до blur поля")
 
     def test_suggestion_shows_key_and_name(self) -> None:
-        self.assertRegex(self.src, r"epicSuggestions\.map")
+        self.assertRegex(self.src, r"suggestions\.map")
 
     def test_selected_epic_fills_key_and_name(self) -> None:
         """Выбор из списка пишет в поле «ключ · название» — оно же и подсказка."""
-        self.assertIn("epicLabel", self.src)
+        self.assertRegex(self.src, r"onChange\(label\(e\)",
+                         "выбор из списка не подставляет «ключ · название»")
 
     def test_no_separate_hint_line_below(self) -> None:
         """Подсказка «Эпик: …» под формой дёргала верстку — её больше нет."""
@@ -171,7 +183,8 @@ class EpicSuggestionsUiTest(unittest.TestCase):
 
     def test_submit_sends_key_not_label(self) -> None:
         """В поле может лежать «ключ · название», на бэкенд уходит только ключ."""
-        self.assertIn("epicPicked", self.src)
+        self.assertIn("picked", self.src, "выбранный ключ не запоминается")
+        self.assertIn("epicKey", self.form, "форма отправляет текст поля вместо ключа")
 
 
 class BlockedBySuggestionsUiTest(unittest.TestCase):
