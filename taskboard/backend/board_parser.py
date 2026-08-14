@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from backend.config import DEFAULTS
@@ -90,20 +90,29 @@ def _parse_entry(line: str) -> dict | None:
     }
 
 
-def _edited_days_ago(path: Path, today: date) -> int | None:
-    """Сколько дней назад правили файл задачи (None — файла нет).
+def _edited_at(path: Path) -> datetime | None:
+    """Когда правили файл задачи (None — файла нет).
 
     Время правки берётся у файловой системы, а не из поля во frontmatter:
     задачу правят четверо — `set_status.py`, API, доска и агент, редактирующий
     файл напрямую, — и поле, которое обязан писать каждый из них, четвёртый
     молча не напишет. `tasks/` лежит в `.gitignore`, так что клонирование
     репозитория время правки не сбрасывает.
+
+    Одно и то же время отвечает на два разных вопроса: «давно ли задачу
+    забросили» (дни, порог залежалости) и «правят ли её прямо сейчас» (минуты,
+    подсветка свежести).
     """
     try:
-        mtime = path.stat().st_mtime
+        return datetime.fromtimestamp(path.stat().st_mtime)
     except OSError:
         return None
-    return (today - date.fromtimestamp(mtime)).days
+
+
+def _edited_days_ago(path: Path, today: date) -> int | None:
+    """Сколько дней назад правили файл задачи (None — файла нет)."""
+    edited = _edited_at(path)
+    return None if edited is None else (today - edited.date()).days
 
 
 def annotate_age(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
@@ -155,6 +164,50 @@ def annotate_age(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
                 if edited is not None and edited < threshold:
                     continue
                 task["stale_days"] = days
+    return board
+
+
+def annotate_fresh(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
+                   now: datetime | None = None) -> dict:
+    """Проставить карточкам свежесть правки — только тем, кого правят сейчас.
+
+    Свежесть отвечает на вопрос «над чем работа идёт **прямо сейчас**», и это
+    не залежалость наоборот: та меряется днями простоя, эта — минутами с
+    последней правки файла задачи. Поэтому и поле своё — `fresh_minutes`.
+
+    Порог `card_fresh_minutes` считает бэкенд, как возраст и прогресс: превью
+    получает готовый ответ. **Ноль выключает подсветку** — отдельного флага
+    показа у неё нет: «через сколько минут гаснет» и «показывать ли вообще» —
+    один и тот же вопрос, а два переключателя на него отвечали бы вразнобой.
+
+    Молчим там, где подсветка соврала бы: файла задачи нет (правки не было), а
+    время правки из будущего означает съехавшие часы, а не работу.
+
+    Молчим и в конце маршрута — по той же причине, что возраст и прогресс:
+    работа там окончена. Причина есть и практическая: выпуск правит задачи
+    пачками, и колонка завершённых вспыхивала бы целиком.
+    """
+    threshold = cfg.get("card_fresh_minutes", DEFAULTS["card_fresh_minutes"])
+    try:
+        threshold = int(threshold)
+    except (TypeError, ValueError):
+        threshold = DEFAULTS["card_fresh_minutes"]
+    if threshold <= 0:
+        return board
+    now = now or datetime.now()
+    tasks_dir = Path(tasks_dir)
+
+    for column in board.get("columns", []):
+        if is_terminal(pipeline, column.get("status", "")):
+            continue
+        for group in column.get("groups", []):
+            for task in group.get("tasks", []):
+                edited = _edited_at(tasks_dir / task.get("file", ""))
+                if edited is None:
+                    continue
+                minutes = int((now - edited).total_seconds() // 60)
+                if 0 <= minutes <= threshold:
+                    task["fresh_minutes"] = minutes
     return board
 
 

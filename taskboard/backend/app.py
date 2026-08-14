@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from backend import (baseline, changelog, help_docs, lifecycle, registry,
                      updater, version)
-from backend.board_parser import annotate_age, parse_board
+from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
                             PROJECT_KEYS,
@@ -439,6 +439,9 @@ def api_board() -> dict:
     # ещё и из времени правки файла: порог считает бэкенд, превью получает
     # уже готовый ответ
     annotate_age(tasks_dir, board, cfg, pipeline)
+    # Свежесть — та же величина в другом масштабе: «правят прямо сейчас»
+    # меряется минутами, а не днями, и живёт своим полем
+    annotate_fresh(tasks_dir, board, cfg, pipeline)
     board["report"] = report
     board["config"] = {
         # Фронт рисует колонки, порядок, цвета и правила DnD по пайплайну;

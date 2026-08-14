@@ -49,6 +49,22 @@ function agePhrase(days) {
   return `${days} ${word} здесь`
 }
 
+// Свежесть правки: карточку, файл которой правили только что, видно боковым
+// зрением — мягкое кольцо по контуру, без значка и без места в строках превью.
+// Порог решает бэкенд: поле приходит только у свежих карточек
+const FRESH_RING = 'ring-1 ring-sky-400/70 shadow-[0_0_16px_rgba(56,189,248,0.3)]'
+
+// Сколько минут назад правили — словами, в подсказку номера задачи. Ровно ноль
+// значит «в эту минуту», и «0 минут назад» о нём сказало бы хуже, чем «только что»
+function freshPhrase(minutes) {
+  if (!minutes) return 'правили только что'
+  const last = minutes % 10
+  const teen = minutes % 100 >= 11 && minutes % 100 <= 14
+  const word = !teen && last === 1 ? 'минуту'
+    : !teen && last >= 2 && last <= 4 ? 'минуты' : 'минут'
+  return `правили ${minutes} ${word} назад`
+}
+
 // Прогресс плана работы. Делениями, пока пунктов немного: по ним «3 из 5»
 // читается без цифр, а цифрам на превью места нет. Дальше деления сливаются
 // в рябь шириной в пиксель, и полоска становится сплошной с долей заливки —
@@ -135,6 +151,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         className={`${style.card} group/card relative overflow-hidden border rounded-lg px-3.5 py-2.5
           cursor-grab ${style.cardHover} transition select-none touch-none
           outline-none ${style.cardFocus}
+          ${task.fresh_minutes != null ? FRESH_RING : ''}
           ${isDragging ? 'opacity-40' : ''} ${task.struck ? 'opacity-45 border-dashed' : ''}`}
       >
         {stripe && (
@@ -169,8 +186,12 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
           {/* Кто и когда последним двигал задачу — в подсказке номера: строку
               она больше не занимает, но и не пропадает. Номер есть у каждой
               карточки, а нижней строки у молодых задач нет вовсе */}
+          {/* Кольцо свежести само по себе молчит о том, насколько она свежа —
+              подсказка отвечает здесь же, где живут исполнитель и дата */}
           <span className="shrink-0"
-                title={[task.agent, task.moved].filter(Boolean).join(' · ') || undefined}>
+                title={[task.agent, task.moved,
+                        task.fresh_minutes != null ? freshPhrase(task.fresh_minutes) : '']
+                  .filter(Boolean).join(' · ') || undefined}>
             {task.id}
           </span>
           {task.struck && <span className="text-zinc-600 normal-case shrink-0">superseded</span>}

@@ -313,6 +313,19 @@ export default function App() {
       style.card_show_type === false ? 'none' : 'inline-flex')
   }, [board?.config?.card_style])
 
+  // Подсветка свежести гаснет **молча**: правка файла порождает событие
+  // watcher'а, а вот истечение свежести — нет, и кольцо висело бы на карточке
+  // до следующей чужой правки. Пока на доске есть свежая карточка, доска
+  // перечитывается сама раз в минуту; погасли все — таймер не заводится, и
+  // в покое запросов нет
+  useEffect(() => {
+    const fresh = board?.columns?.some((c) => c.groups?.some(
+      (g) => g.tasks?.some((t) => t.fresh_minutes != null)))
+    if (!fresh) return
+    const timer = setTimeout(() => refresh(), 60000)
+    return () => clearTimeout(timer)
+  }, [board, refresh])
+
   // Точка «есть новая версия» — из кэша сервера, один раз при открытии доски.
   // Проверка обновлений в путь загрузки доски не попадает: она идёт фоном
   // на сервере и только при согласии пользователя

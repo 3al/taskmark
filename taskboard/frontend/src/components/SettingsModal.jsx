@@ -125,7 +125,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     release_script: (config.release_script || '').trim(),
     // Размеры превью: пустое поле — «не меняли», иначе бэкенд получит ноль
     ...Object.fromEntries(['card_title_size', 'card_title_lines', 'card_meta_size',
-      'card_stale_days']
+      'card_stale_days', 'card_fresh_minutes']
       .filter((k) => config[k] !== '' && config[k] != null)
       .map((k) => [k, Number(config[k])])),
     // Переключатели, а не числа: пустого значения у них не бывает
@@ -428,6 +428,32 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                           />
                           <span className="block text-[11px] text-zinc-500 mt-1">
                             возраст показывается нижней строкой превью; от {low} до {high}
+                          </span>
+                        </div>
+                      )
+                    })()}
+                    {/* Свежесть — про минуты, а не про дни, поэтому поле своё.
+                        Переключателя показа у неё нет: ноль минут и означает
+                        «не подсвечивать» — два ответа на один вопрос спорили бы */}
+                    {(() => {
+                      const [low, high] = config.card_limits?.card_fresh_minutes || []
+                      const value = config.card_fresh_minutes
+                      const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                      return (
+                        <div className="mt-3">
+                          <span className={label}>
+                            Подсвечивать задачи, которые правили последние столько минут
+                          </span>
+                          <input
+                            className={`${field} ${bad ? 'border-rose-500' : ''}`}
+                            type="number"
+                            min={low}
+                            max={high}
+                            value={value ?? ''}
+                            onChange={(e) => set('card_fresh_minutes', e.target.value)}
+                          />
+                          <span className="block text-[11px] text-zinc-500 mt-1">
+                            видно, над чем работают прямо сейчас; 0 — не подсвечивать
                           </span>
                         </div>
                       )
