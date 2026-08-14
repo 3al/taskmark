@@ -167,6 +167,22 @@ class EpicSuggestionsUiTest(unittest.TestCase):
     def test_suggestion_shows_key_and_name(self) -> None:
         self.assertRegex(self.src, r"suggestions\.map")
 
+    def test_suggestions_wait_for_input(self) -> None:
+        """Пустое поле молчит: список вываливается с началом ввода (TASK-174).
+
+        Правило одно на все поля с подсказками. Разное поведение соседних полей
+        читается как случайность, даже когда объяснимо длиной списка: у эпиков
+        она мала, у задач — сотни строк.
+        """
+        for name, text in (("поле эпика", self.src),
+                           ("поле задачи", PICKER.read_text(encoding="utf-8"))):
+            with self.subTest(field=name):
+                start = text.index("const suggestions")
+                expr = text[start:text.index("\n\n", start)]
+                self.assertRegex(
+                    expr, r"needle\s*(&&|\?)",
+                    f"{name}: пустой ввод не отсекается — список при фокусе")
+
     def test_selected_epic_fills_key_and_name(self) -> None:
         """Выбор из списка пишет в поле «ключ · название» — оно же и подсказка."""
         self.assertRegex(self.src, r"onChange\(label\(e\)",

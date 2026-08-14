@@ -34,8 +34,14 @@ export default function EpicField({
     : epics.find((e) => e.key.toLowerCase() === key.toLowerCase())
   const needsName = !!key && !known
   const needle = (picked || key).toLowerCase()
-  const suggestions = epics.filter((e) =>
-    e.key.toLowerCase().includes(needle) || (e.name || '').toLowerCase().includes(needle))
+  // Пустой ввод — пустой список: подсказки появляются с началом набора, как в
+  // поле блокирующей задачи. Правило одно на все поля с подсказками, иначе
+  // соседние поля ведут себя по-разному без видимой причины.
+  // Выбранный эпик список тоже закрывает: он уже не подсказка, а выбор
+  const suggestions = needle && !known
+    ? epics.filter((e) =>
+        e.key.toLowerCase().includes(needle) || (e.name || '').toLowerCase().includes(needle))
+    : []
 
   return (
     // min-w-0 у обоих полей: у инпута есть интринсическая ширина, и без неё
@@ -51,7 +57,7 @@ export default function EpicField({
           onFocus={() => setFocus(true)}
           onBlur={() => setFocus(false)}
         />
-        {focus && !known && suggestions.length > 0 && (
+        {focus && suggestions.length > 0 && (
           <div className="absolute z-20 mt-1 w-full max-h-40 overflow-y-auto bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl">
             {suggestions.map((e) => (
               <button
