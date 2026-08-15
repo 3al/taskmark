@@ -56,7 +56,9 @@ class HelpSyncTest(unittest.TestCase):
 
     def test_board_section_points_to_settings(self) -> None:
         text = (DOCS / "02-board.md").read_text(encoding="utf-8")
-        dnd = text.split("## Перетаскивание задач")[-1]
+        # Только свой раздел, а не хвост файла: соседние разделы о шапке говорят
+        # по своему поводу, и проверка тумблера про них ничего не знает
+        dnd = text.split("## Перетаскивание задач")[-1].split("\n## ")[0]
         self.assertNotIn("в шапке", dnd,
                          "помощь всё ещё ищет тумблер в шапке")
         self.assertIn("настройк", dnd.lower(),
