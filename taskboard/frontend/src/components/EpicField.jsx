@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { INLINE_FIELD } from '../fields'
+import { useListKeys } from '../listKeys'
 
 // Поле эпика с подсказками из реестра: ключ выбирают из списка, а не
 // вспоминают. Компонент общий у формы создания и окна задачи — эпик там
@@ -22,6 +23,10 @@ export default function EpicField({
   const [focus, setFocus] = useState(false)
   // Ключ, выбранный из списка: по тексту «ключ · название» его уже не найти
   const [picked, setPicked] = useState(null)
+  // Список закрыт по Esc. Отдельно от фокуса: пока это был один флаг, закрытие
+  // списка выглядело как уход из поля — человек стирал написанное, набирал
+  // заново и подсказок больше не видел
+  const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
     api.epics().then((d) => setEpics(d.items || [])).catch(() => { /* нет реестра */ })
@@ -43,6 +48,20 @@ export default function EpicField({
         e.key.toLowerCase().includes(needle) || (e.name || '').toLowerCase().includes(needle))
     : []
 
+  const open = focus && !dismissed && suggestions.length > 0
+
+  const pick = (epic) => {
+    setPicked(epic.key)
+    onChange(label(epic), epic.key)
+    setFocus(false)
+  }
+
+  // Стрелки, Enter и Esc — общие для всех списков интерфейса
+  const list = useListKeys({
+    items: suggestions, open, resetKey: needle,
+    onPick: pick, onClose: () => setDismissed(true),
+  })
+
   return (
     // min-w-0 у обоих полей: у инпута есть интринсическая ширина, и без неё
     // появление второго поля схлопывает первое до полусантиметра
@@ -53,23 +72,23 @@ export default function EpicField({
           placeholder={placeholder}
           value={value}
           autoFocus={autoFocus}
-          onChange={(e) => { setPicked(null); onChange(e.target.value, '') }}
+          // Правка текста — это новый поиск: закрытый список открываем обратно
+          onChange={(e) => { setPicked(null); setDismissed(false); onChange(e.target.value, '') }}
           onFocus={() => setFocus(true)}
           onBlur={() => setFocus(false)}
+          onKeyDown={list.onKeyDown}
         />
-        {focus && suggestions.length > 0 && (
+        {open && (
           <div className="absolute z-20 mt-1 w-full max-h-40 overflow-y-auto bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl">
-            {suggestions.map((e) => (
+            {suggestions.map((e, i) => (
               <button
                 key={e.key}
                 type="button"
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-zinc-700"
+                className={`w-full text-left px-3 py-1.5 text-xs
+                  ${i === list.active ? 'bg-zinc-700' : 'hover:bg-zinc-700'}`}
                 // mousedown, а не click: blur поля успевает закрыть список
-                onMouseDown={() => {
-                  setPicked(e.key)
-                  onChange(label(e), e.key)
-                  setFocus(false)
-                }}
+                onMouseDown={() => pick(e)}
+                onMouseEnter={() => list.setActive(i)}
               >
                 <span className="font-mono text-zinc-300">{e.key}</span>
                 {e.name && <span className="text-zinc-500"> · {e.name}</span>}

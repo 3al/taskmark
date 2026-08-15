@@ -185,7 +185,7 @@ class EpicSuggestionsUiTest(unittest.TestCase):
 
     def test_selected_epic_fills_key_and_name(self) -> None:
         """Выбор из списка пишет в поле «ключ · название» — оно же и подсказка."""
-        self.assertRegex(self.src, r"onChange\(label\(e\)",
+        self.assertRegex(self.src, r"onChange\(label\(",
                          "выбор из списка не подставляет «ключ · название»")
 
     def test_no_separate_hint_line_below(self) -> None:

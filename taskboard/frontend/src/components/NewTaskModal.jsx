@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { FORM_FIELD } from '../fields'
+import { useListKeys } from '../listKeys'
 import { TASK_TYPES } from '../taskTypes'
 import TaskPicker from './TaskPicker'
 import MarkdownEditor from './MarkdownEditor'
@@ -70,6 +71,17 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
     setPresets(d.presets || [])
     setCustomPresets(d.custom || [])
   }
+
+  const pickPreset = (preset) => {
+    setForm({ ...form, criteria: preset })
+    setPresetsOpen(false)
+  }
+
+  // Стрелки, Enter и Esc — общие для всех списков интерфейса
+  const presetKeys = useListKeys({
+    items: presets, open: presetsOpen,
+    onPick: pickPreset, onClose: () => setPresetsOpen(false),
+  })
 
   // Подсказки эпика — кастомный тёмный список (как у пресетов критериев), а не
   // нативный datalist: браузер рисует его белым, и он выбивается из темы.
@@ -165,7 +177,9 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
             <input className={field} placeholder="Критерии приёмки (опционально)" value={form.criteria} onChange={set('criteria')} />
             <div className="flex items-center gap-2 mt-1">
               {presets.length > 0 && (
-                <div className="relative">
+                // Нажатие приходит от кнопки-переключателя: фокус после клика
+                // остаётся на ней, поэтому слушатель стоит на обёртке
+                <div className="relative" onKeyDown={presetKeys.onKeyDown}>
                   <button
                     type="button"
                     className="rounded-lg px-2 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 border border-dashed border-zinc-600 hover:border-zinc-400 focus:outline-none"
@@ -178,15 +192,14 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
                       {/* Прозрачная подложка: клик мимо закрывает список */}
                       <div className="fixed inset-0 z-10" onClick={() => setPresetsOpen(false)} />
                       <div className="absolute z-20 mt-1 w-72 max-h-48 overflow-y-auto bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl">
-                        {presets.map((p) => (
-                          <div key={p} className="flex items-center">
+                        {presets.map((p, i) => (
+                          <div key={p} className="flex items-center"
+                               onMouseEnter={() => presetKeys.setActive(i)}>
                             <button
                               type="button"
-                              className="flex-1 text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700"
-                              onClick={() => {
-                                setForm({ ...form, criteria: p })
-                                setPresetsOpen(false)
-                              }}
+                              className={`flex-1 text-left px-3 py-1.5 text-xs text-zinc-300
+                                ${i === presetKeys.active ? 'bg-zinc-700' : ''}`}
+                              onClick={() => pickPreset(p)}
                             >
                               {p}
                             </button>

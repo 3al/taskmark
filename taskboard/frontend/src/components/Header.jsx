@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import CopyButton from './CopyButton'
+import { useListKeys } from '../listKeys'
 import { SIZE_KEYS, TASK_SIZES } from '../taskSizes'
 
 // Кастомный дропдаун проектов: нативный select не темизируется (список рендерит ОС)
@@ -20,8 +21,14 @@ function ProjectSelect({ projects, active, onSwitch }) {
     }
   }, [open])
 
+  const pick = (project) => { onSwitch(project.name); setOpen(false) }
+
+  // Стрелки, Enter и Esc — общие для всех списков интерфейса. Нажатие приходит
+  // от кнопки-переключателя: фокус после клика остаётся на ней
+  const list = useListKeys({ items: projects, open, onPick: pick, onClose: () => setOpen(false) })
+
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative" onKeyDown={list.onKeyDown}>
       <button
         onClick={() => setOpen(!open)}
         className="bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-sm w-full
@@ -35,12 +42,16 @@ function ProjectSelect({ projects, active, onSwitch }) {
         <div className="absolute top-full left-0 mt-1 min-w-48 w-full bg-zinc-900 border border-zinc-700
           rounded-lg shadow-2xl shadow-black/60 py-1 z-40 max-h-72 overflow-y-auto">
           {!projects.length && <div className="px-3 py-1.5 text-sm text-zinc-500 italic">пусто</div>}
-          {projects.map((p) => (
+          {projects.map((p, i) => (
             <button
               key={p.name}
-              onClick={() => { onSwitch(p.name); setOpen(false) }}
+              onClick={() => pick(p)}
+              onMouseEnter={() => list.setActive(i)}
+              // Подсветка одна на мышь и клавиатуру; активный проект отличается
+              // цветом текста, а не фоном, — иначе две подсветки спорят
               className={`w-full text-left px-3 py-1.5 text-sm transition
-                ${p.name === active ? 'text-sky-300 bg-zinc-800/70' : 'text-zinc-300 hover:bg-zinc-800'}`}
+                ${p.name === active ? 'text-sky-300' : 'text-zinc-300'}
+                ${i === list.active ? 'bg-zinc-800' : ''}`}
             >
               {p.name}
             </button>

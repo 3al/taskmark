@@ -239,8 +239,12 @@ class TaskModalStallTest(unittest.TestCase):
         глушило событие даже с закрытым списком."""
         self.assertIn("onEscape", self.src, "форма блокировки не закрывается по Esc")
         picker = (COMPONENTS / "TaskPicker.jsx").read_text(encoding="utf-8")
-        self.assertIn("if (open) { e.stopPropagation()", picker,
-                      "Esc гасится независимо от того, открыт ли список")
+        # Открытый список забирает Esc первым (общий хук), и только он гасит
+        # событие; с закрытым списком Esc доходит до формы, а без неё — наружу
+        self.assertIn("if (list.onKeyDown(e)) return", picker,
+                      "список не забирает Esc первым")
+        self.assertRegex(picker, r"Escape' && onEscape",
+                         "Esc гасится независимо от того, открыт ли список")
 
     def test_both_forms_are_built_the_same(self) -> None:
         """Пауза и блокировка — соседние поля одного смысла.
@@ -304,10 +308,16 @@ class SharedComponentsTest(unittest.TestCase):
                       "наверх уходит текст без найденной задачи")
 
     def test_picker_walks_by_keyboard(self) -> None:
-        """По списку подсказок ходят стрелками, выбирают Enter."""
+        """По списку подсказок ходят стрелками, выбирают Enter.
+
+        Правило общее у всех выпадающих списков и живёт в `listKeys.js`:
+        своя копия обработчиков разъезжалась бы с соседними списками.
+        """
         src = (COMPONENTS / "TaskPicker.jsx").read_text(encoding="utf-8")
+        self.assertIn("useListKeys", src, "список подсказок не на общем хуке")
+        hook = (COMPONENTS.parent / "listKeys.js").read_text(encoding="utf-8")
         for key in ("ArrowDown", "ArrowUp", "Enter"):
-            self.assertIn(key, src, f"клавиша {key} в списке подсказок не работает")
+            self.assertIn(key, hook, f"клавиша {key} в списке подсказок не работает")
 
     def test_picker_reports_unknown_task(self) -> None:
         src = (COMPONENTS / "TaskPicker.jsx").read_text(encoding="utf-8")

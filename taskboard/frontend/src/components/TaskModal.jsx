@@ -8,6 +8,7 @@ import { TASK_SIZES, taskSize } from '../taskSizes'
 import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents, rehypeNoteMeta, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
+import { useListKeys } from '../listKeys'
 import { taskBody, taskCopyText } from '../taskText'
 import CopyButton from './CopyButton'
 import EpicField from './EpicField'
@@ -248,6 +249,13 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
     }
   }
 
+  // Стрелки, Enter и Esc — общие для всех списков интерфейса. Нажатие приходит
+  // от метки-кнопки: фокус после клика остаётся на ней
+  const typeKeys = useListKeys({
+    items: Object.keys(TASK_TYPES), open: typePicker,
+    onPick: pickType, onClose: () => setTypePicker(false),
+  })
+
   // Размер задачи — там же и так же, но со снятием: оценка бывает неверной, и
   // способ убрать её обязан быть. Пустая строка на бэкенде значит «снять»
   const [sizePicker, setSizePicker] = useState(false)
@@ -268,6 +276,15 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
       setSizeSaving(false)
     }
   }
+
+  // «Снять оценку» — такая же строка списка, как размеры: иначе по ней нельзя
+  // пройти стрелками и выбрать Enter
+  const sizeOptions = [...Object.keys(TASK_SIZES),
+                       ...(taskSize(task?.meta?.size) ? [''] : [])]
+  const sizeKeys = useListKeys({
+    items: sizeOptions, open: sizePicker,
+    onPick: pickSize, onClose: () => setSizePicker(false),
+  })
 
   // Эпик: чем задача является частью. Правится тем же полем, что и в форме
   // создания, — ключ выбирают из реестра, для нового спрашивается имя.
@@ -587,7 +604,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     цветными метками — выбирают глазами, а не по названию.
                     Задача без типа показывает пустую метку, иначе поставить его
                     было бы нечем */}
-                <span className="relative">
+                <span className="relative" onKeyDown={typeKeys.onKeyDown}>
                   <button
                     type="button"
                     onClick={() => setTypePicker((v) => !v)}
@@ -608,14 +625,16 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                           onClick={(e) => { e.stopPropagation(); setTypePicker(false) }} />
                     <span className="absolute left-0 top-full mt-1 z-50 flex flex-col gap-1
                       rounded-lg border border-zinc-700 bg-zinc-900 p-1.5 shadow-xl">
-                      {Object.entries(TASK_TYPES).map(([key, meta]) => (
+                      {Object.entries(TASK_TYPES).map(([key, meta], i) => (
                         <button
                           key={key}
                           type="button"
                           onClick={() => pickType(key)}
+                          onMouseEnter={() => typeKeys.setActive(i)}
                           className={`px-1.5 py-px rounded border text-[10px] text-left
-                            whitespace-nowrap transition hover:brightness-125
-                            ${meta.badge} ${key === task.meta.type ? 'ring-1 ring-zinc-500' : ''}`}>
+                            whitespace-nowrap transition ${meta.badge}
+                            ${i === typeKeys.active ? 'brightness-125' : ''}
+                            ${key === task.meta.type ? 'ring-1 ring-zinc-500' : ''}`}>
                           {meta.label}
                         </button>
                       ))}
@@ -626,7 +645,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                 {/* Размер задачи: та же метка-кнопка, что у типа. Оценка есть
                     не у каждой задачи, поэтому у пустой метка пунктирная —
                     ею же оценку и ставят */}
-                <span className="relative">
+                <span className="relative" onKeyDown={sizeKeys.onKeyDown}>
                   <button
                     type="button"
                     onClick={() => setSizePicker((v) => !v)}
@@ -644,13 +663,15 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                           onClick={(e) => { e.stopPropagation(); setSizePicker(false) }} />
                     <span className="absolute left-0 top-full mt-1 z-50 flex flex-col gap-1
                       rounded-lg border border-zinc-700 bg-zinc-900 p-1.5 shadow-xl">
-                      {Object.entries(TASK_SIZES).map(([key, meta]) => (
+                      {Object.entries(TASK_SIZES).map(([key, meta], i) => (
                         <button
                           key={key}
                           type="button"
                           onClick={() => pickSize(key)}
+                          onMouseEnter={() => sizeKeys.setActive(i)}
                           className={`px-1.5 py-px rounded border text-[10px] text-left
-                            whitespace-nowrap transition hover:brightness-125 ${meta.badge}
+                            whitespace-nowrap transition ${meta.badge}
+                            ${i === sizeKeys.active ? 'brightness-125' : ''}
                             ${key === taskSize(task.meta.size)?.label
                               ? 'ring-1 ring-zinc-500' : ''}`}>
                           {meta.label} — {meta.hint}
@@ -661,9 +682,11 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                         <button
                           type="button"
                           onClick={() => pickSize('')}
-                          className="px-1.5 py-px rounded border border-dashed border-zinc-700
-                            text-[10px] text-left text-zinc-500 whitespace-nowrap
-                            transition hover:text-zinc-300">
+                          onMouseEnter={() => sizeKeys.setActive(sizeOptions.length - 1)}
+                          className={`px-1.5 py-px rounded border border-dashed border-zinc-700
+                            text-[10px] text-left whitespace-nowrap transition
+                            ${sizeKeys.active === sizeOptions.length - 1
+                              ? 'text-zinc-300' : 'text-zinc-500'}`}>
                           снять оценку
                         </button>
                       )}
