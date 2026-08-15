@@ -108,14 +108,25 @@ export default function Header({
     }
   }
 
-  const btn = 'px-3 py-1.5 text-sm rounded-lg border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition'
+  // whitespace-nowrap: подпись кнопки не должна ломаться на две строки — так
+  // кнопка становится выше соседних, и шапка едет целиком
+  const btn = 'shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-lg border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition'
+  // Поля шапки одной ширины: путь проекта и поиск стоят в одной строке, и
+  // разные ширины читаются как разная важность. Ширина скромная намеренно —
+  // каждый лишний десяток пикселей приближает перенос строки
+  const headerField = 'w-52'
   const activeProject = projects.find((p) => p.name === active)
 
   return (
-    <header className="flex items-start gap-3 px-4 py-3 border-b border-zinc-800 bg-zinc-900/60">
+    // Шапка переносится, а не сжимается: в одну строку она помещается не всегда
+    // (форма пути проекта добавляет разом ~350px), а сжатие вместо переноса
+    // деформирует кнопки — текст в них ломается, «+ Задача» уходит за край.
+    // Поэтому у каждой группы стоит shrink-0: перенос целой группой читается,
+    // сплющенная кнопка — нет
+    <header className="flex flex-wrap items-start gap-2 px-4 py-3 border-b border-zinc-800 bg-zinc-900/60">
       {/* Знак: [x] — синтаксис отмеченной задачи в markdown, тем же моноширинным,
           каким она написана в файле. Дальше название обычным шрифтом интерфейса */}
-      <div className="font-bold text-lg tracking-tight flex items-baseline gap-1.5">
+      <div className="shrink-0 font-bold text-lg tracking-tight flex items-baseline gap-1.5">
         {/* Сдвиг вверх: скобки моноширинного шрифта уходят ниже базовой линии
             заметно глубже букв, и по базовой линии знак кажется съехавшим */}
         <span className="font-mono text-zinc-500 text-base leading-none relative -top-[2px]">[<span className="text-sky-400">x</span>]</span>
@@ -174,13 +185,15 @@ export default function Header({
       </button>
 
       {adding && (
-        <span className="flex items-center gap-2">
+        <span className="flex items-center gap-2 shrink-0">
           <input
             value={path}
             onChange={(e) => setPath(e.target.value)}
             placeholder="D:\мой-проект"
             title="Путь к корню проекта (папка tasks берётся внутри него)"
-            className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm w-72 focus:outline-none focus:border-sky-500"
+            // max-w-full: на узком окне поле сужается само, а не вылезает за край
+            className={`bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm
+              ${headerField} max-w-full focus:outline-none focus:border-sky-500`}
             onKeyDown={(e) => e.key === 'Enter' && addProject()}
           />
           <button className={btn} onClick={addProject}>OK</button>
@@ -191,15 +204,15 @@ export default function Header({
       {!adding && error && <span className="text-xs text-rose-400 self-center">{error}</span>}
 
       {/* Живой фильтр: без кнопки «искать» — доска сужается по мере ввода */}
-      <div className="ml-auto flex items-center relative">
+      <div className="ml-auto flex items-center relative shrink-0">
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Escape' && onQuery('')}
           placeholder="Поиск по задачам…"
           title="Ищет по номеру, заголовку и содержанию задач (Esc — сбросить)"
-          className="bg-zinc-800 border border-zinc-700 rounded-lg pl-2.5 pr-16 py-1.5 text-sm w-56
-            focus:outline-none focus:border-sky-500 placeholder:text-zinc-600"
+          className={`bg-zinc-800 border border-zinc-700 rounded-lg pl-2.5 pr-16 py-1.5 text-sm
+            ${headerField} focus:outline-none focus:border-sky-500 placeholder:text-zinc-600`}
         />
         {query && (
           <span className="absolute right-2 flex items-center gap-1.5">
@@ -222,7 +235,7 @@ export default function Header({
       <button
         onClick={() => onStalledOnly(!stalledOnly)}
         title="Показать только задачи, которые стоят: ждут другую задачу или на паузе"
-        className={`px-3 py-1.5 text-sm rounded-lg border transition
+        className={`shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-lg border transition
           ${stalledOnly
             ? 'border-amber-600 bg-amber-950/50 text-amber-200'
             : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800'}`}
@@ -235,7 +248,7 @@ export default function Header({
           frontmatter, а поиск по тексту его намеренно не видит — иначе запрос
           вроде `todo` выдавал бы всю доску. Несколько чипов складываются между
           собой по «или»: «покажи S и M» — это вопрос «что успею сегодня» */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 shrink-0">
         {SIZE_KEYS.map((key) => {
           const on = sizes.includes(key)
           return (
@@ -255,7 +268,7 @@ export default function Header({
         })}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         {hasCustomOrder && (
           <button className={btn} onClick={onResetColumns} title="Сбросить порядок колонок на порядок по умолчанию">
             ↺ колонки
@@ -278,7 +291,8 @@ export default function Header({
         <button className={btn} onClick={onOpenSettings} title="Настройки">⚙</button>
         {canCreate && (
           <button
-            className="px-3 py-1.5 text-sm rounded-lg bg-sky-600 hover:bg-sky-500 font-medium transition"
+            className="shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-lg bg-sky-600
+              hover:bg-sky-500 font-medium transition"
             onClick={onNewTask}
           >
             + Задача
