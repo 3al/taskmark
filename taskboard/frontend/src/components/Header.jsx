@@ -111,10 +111,18 @@ export default function Header({
   // whitespace-nowrap: подпись кнопки не должна ломаться на две строки — так
   // кнопка становится выше соседних, и шапка едет целиком
   const btn = 'shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-lg border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition'
-  // Поля шапки одной ширины: путь проекта и поиск стоят в одной строке, и
-  // разные ширины читаются как разная важность. Ширина скромная намеренно —
-  // каждый лишний десяток пикселей приближает перенос строки
-  const headerField = 'w-52'
+  // Поля шапки: путь проекта и поиск. Ширина задана **базой + ростом**, а не
+  // фиксированным `w-`, и это не косметика:
+  //
+  // перенос строки браузер решает по базовым ширинам, **до** раздачи свободного
+  // места. Поэтому ни отступы, ни `flex-shrink` перенос не отменяют — сжатие
+  // случается уже внутри готовой строки. Отменяет его только меньшая база:
+  // строка «считает» поля по 160px, а на экране они дорастают до 208 за счёт
+  // свободного места, которого иначе просто не хватало на кнопки.
+  //
+  // База и коэффициент роста у обоих полей одинаковые — значит и ширина у них
+  // всегда одна и та же, сколько бы места ни осталось
+  const headerField = 'basis-40 grow max-w-52 min-w-0'
   const activeProject = projects.find((p) => p.name === active)
 
   return (
@@ -184,35 +192,38 @@ export default function Header({
         + проект
       </button>
 
+      {/* Поле пути — прямой элемент шапки, а не вложенное в обёртку: расти в
+          свободное место может только сам элемент строки. Обёртка сжимала бы
+          его до содержимого, и поле осталось бы уже поиска */}
       {adding && (
-        <span className="flex items-center gap-2 shrink-0">
+        <>
           <input
             value={path}
             onChange={(e) => setPath(e.target.value)}
             placeholder="D:\мой-проект"
             title="Путь к корню проекта (папка tasks берётся внутри него)"
-            // max-w-full: на узком окне поле сужается само, а не вылезает за край
             className={`bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm
-              ${headerField} max-w-full focus:outline-none focus:border-sky-500`}
+              ${headerField} focus:outline-none focus:border-sky-500`}
             onKeyDown={(e) => e.key === 'Enter' && addProject()}
           />
           <button className={btn} onClick={addProject}>OK</button>
-          {error && <span className="text-xs text-rose-400">{error}</span>}
-        </span>
+          {error && <span className="text-xs text-rose-400 self-center shrink-0">{error}</span>}
+        </>
       )}
 
       {!adding && error && <span className="text-xs text-rose-400 self-center">{error}</span>}
 
       {/* Живой фильтр: без кнопки «искать» — доска сужается по мере ввода */}
-      <div className="ml-auto flex items-center relative shrink-0">
+      {/* Поиск прижат вправо: свободное место строки собирается перед ним */}
+      <div className={`ml-auto flex items-center relative ${headerField}`}>
         <input
           value={query}
           onChange={(e) => onQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Escape' && onQuery('')}
           placeholder="Поиск по задачам…"
           title="Ищет по номеру, заголовку и содержанию задач (Esc — сбросить)"
-          className={`bg-zinc-800 border border-zinc-700 rounded-lg pl-2.5 pr-16 py-1.5 text-sm
-            ${headerField} focus:outline-none focus:border-sky-500 placeholder:text-zinc-600`}
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-2.5 pr-16 py-1.5 text-sm
+            focus:outline-none focus:border-sky-500 placeholder:text-zinc-600"
         />
         {query && (
           <span className="absolute right-2 flex items-center gap-1.5">
