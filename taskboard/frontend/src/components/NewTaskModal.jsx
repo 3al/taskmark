@@ -156,8 +156,8 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
           {/* Тот же редактор, что и в открытой задаче: разметку негде было
               подсмотреть, а результат — увидеть до создания задачи. Кнопки поля
               скрыты (создаёт и отменяет форма), Ctrl+Enter создаёт задачу.
-              Одиночные переносы станут абзацами в файле (`as_paragraphs` в
-              create_task.py) — об этом говорит подсказка под полем */}
+              Текст уходит в файл дословно, поэтому предпросмотр показывает
+              ровно то, что там окажется */}
           <MarkdownEditor
             value={form.description}
             onChange={(v) => setForm({ ...form, description: v })}
@@ -171,7 +171,7 @@ export default function NewTaskModal({ onClose, onCreated, source = null }) {
             minRows={5}
             maxRows={16}
             placeholder="Описание — что сделать и зачем. Абзацы через пустую строку, перечисления списком"
-            hint="Ctrl+Enter — создать; одиночные переносы станут абзацами"
+            hint="Ctrl+Enter — создать; текст сохраняется как есть"
           />
           <div>
             <input className={field} placeholder="Критерии приёмки (опционально)" value={form.criteria} onChange={set('criteria')} />

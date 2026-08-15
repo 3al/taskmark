@@ -88,26 +88,26 @@ class TaskTemplateTest(unittest.TestCase):
         # `patch` — рудимент прежнего процесса, в новых задачах его быть не должно
         self.assertNotIn("patch:", text, "поле patch снова попало в задачу")
 
-    def test_input_newlines_become_paragraphs(self) -> None:
-        """Enter в поле формы должен давать абзац, а не склейку в простыню.
+    def test_input_text_is_written_as_is(self) -> None:
+        """Текст автора — это markdown: скрипт его не переразмечает.
 
-        Markdown соединяет одиночные переводы строк, поэтому текст автора
-        разделяем пустой строкой на входе — файл остаётся обычным markdown.
+        Абзацы разделяет пустая строка, перенос внутри абзаца остаётся мягким.
+        Отличить «Enter вместо абзаца» от «перенос ради читаемости исходника»
+        по одной строке нельзя, а попытка ломала размеченный текст: списки
+        разваливались, абзацы превращались в лесенку обрывков.
+        Подробности — в `test_create_task_text.py`.
         """
         scaffold_project(self.tasks_dir, self.cfg, {"harnesses": self.cfg["harnesses"]})
+        description = ("Первая мысль.\n\nВторая мысль.\n"
+                       "- пункт списка\n- второй пункт")
         result = subprocess.run(
             [sys.executable, str(self.tasks_dir / "create_task.py"),
-             "-t", "Многострочное описание",
-             "-d", "Первая мысль.\nВторая мысль.\n- пункт списка\n- второй пункт",
-             "-c", "критерии"],
+             "-t", "Многострочное описание", "-d", description, "-c", "критерии"],
             capture_output=True, text=True, encoding="utf-8", cwd=str(self.root))
         self.assertEqual(result.returncode, 0, result.stderr)
 
         text = next(self.tasks_dir.glob("TASK-*.md")).read_text(encoding="utf-8")
-        self.assertIn("Первая мысль.\n\nВторая мысль.", text,
-                      "соседние строки не разделены в абзацы")
-        self.assertIn("- пункт списка\n- второй пункт", text,
-                      "список разорван пустой строкой")
+        self.assertIn(description, text, "текст описания доехал изменённым")
 
 
 class StartTaskQueueTest(unittest.TestCase):

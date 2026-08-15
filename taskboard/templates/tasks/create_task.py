@@ -175,35 +175,52 @@ TEMPLATE_FILE = "_TEMPLATE.md"
 _FILLED_SECTIONS = ("## Описание", "### Критерии приёмки")
 
 
-# Строки, которые markdown и так разбирает построчно: список, заголовок,
-# цитата, таблица, граница блока кода. Их разделять пустой строкой нельзя
-_STRUCTURAL_LINE = re.compile(r"\s*([-*+>#|]|\d+[.)]\s|```)")
+# Заголовок секции критериев: автор приносит её прямо в описании, когда
+# оформляет текст по правилам проекта
+_CRITERIA_HEADING = "### Критерии приёмки"
+
+# Забор блока кода: ``` или ~~~ с отступом не больше трёх пробелов
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
 
-def as_paragraphs(text: str) -> str:
-    """Одиночные переносы автора → абзацы markdown.
+def normalize_text(text: str) -> str:
+    """Текст автора — это markdown, и портить его нельзя.
 
-    В поле формы и в аргументе `-d` человек жмёт Enter и ждёт новую строку,
-    а markdown склеивает такие переводы в один абзац — отсюда «простыни»
-    в описаниях. Разделяем пустой строкой на входе: файл остаётся валидным
-    markdown, а рендер не приходится учить нестандартной семантике.
+    Единственное, что здесь делается, — приведение переводов строк. Скрипт
+    **ничего не вставляет**: перенос внутри абзаца остаётся мягким, абзацы
+    разделяет пустая строка, список остаётся списком.
+
+    Прежняя версия вставляла пустую строку между соседними непустыми строками,
+    чтобы одиночный перенос автора стал абзацем. На размеченном тексте это
+    ломало ровно то, ради чего его размечали: строка продолжения пункта
+    начинается не с маркера, и пункт разваливался на пункт и оторванные абзацы,
+    а абзац, перенесённый по ширине строки, — на лесенку обрывков. Отличить
+    «Enter вместо абзаца» от «перенос ради читаемости» по одной строке нельзя,
+    поэтому правило одно: как написано, так и записано.
     """
-    lines = text.replace("\r\n", "\n").split("\n")
-    out: list[str] = []
-    in_code = False
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def split_criteria(description: str) -> tuple[str, str]:
+    """Отделить от описания секцию «### Критерии приёмки», если автор её принёс.
+
+    Иначе в файле оказываются три блока подряд: авторский, подставленный из
+    `-c` и незаполненная заглушка шаблона.
+
+    Заголовок ищется **построчно и вне блоков кода**: описания задач сплошь и
+    рядом цитируют куски других файлов, где строки начинаются с `#`.
+    """
+    lines = normalize_text(description).split("\n")
+    fence = False
     for i, line in enumerate(lines):
-        out.append(line)
-        if line.lstrip().startswith("```"):
-            in_code = not in_code
-        if in_code or i + 1 >= len(lines):
+        if _FENCE_RE.match(line):
+            fence = not fence
             continue
-        nxt = lines[i + 1]
-        if not line.strip() or not nxt.strip():
-            continue  # пустая строка уже разделяет
-        if _STRUCTURAL_LINE.match(line) or _STRUCTURAL_LINE.match(nxt):
-            continue  # список и заголовки markdown разбирает сам
-        out.append("")
-    return "\n".join(out)
+        if not fence and line.strip() == _CRITERIA_HEADING:
+            head = "\n".join(lines[:i]).strip()
+            body = "\n".join(lines[i + 1:]).strip()
+            return head, body
+    return description.strip(), ""
 
 
 def _replace_section(text: str, heading: str, body: str) -> str:
@@ -402,10 +419,16 @@ created: {created_date}{blocked_by_line}
 
     # Структуру задаёт `_TEMPLATE.md` проекта; встроенная копия — запасной
     # вариант для проектов, развёрнутых до его появления
-    # Текст автора приводим к абзацам до записи: в файле остаётся обычный
-    # markdown, и он одинаково читается и в окне доски, и в редакторе
-    description = as_paragraphs(description)
-    criteria = as_paragraphs(criteria)
+    # Текст автора пишется дословно: он уже markdown (см. normalize_text).
+    # Секцию критериев, принесённую в описании, отделяем — иначе она задвоится
+    # с подставленной из `-c` и с заглушкой шаблона
+    description = normalize_text(description)
+    criteria = normalize_text(criteria)
+    description, own_criteria = split_criteria(description)
+    # Автор оформил критерии сам — его текст и главный: он писал их вместе
+    # с описанием и видел целиком
+    if own_criteria:
+        criteria = own_criteria
 
     content = render_from_template(tasks_dir, frontmatter, description, criteria)
     if content is None:
