@@ -171,6 +171,27 @@ class ApprovedCompositionTest(ReleaseSkillText):
         self.assertTrue(re.search(r"черновик", changelog, re.I),
                         "не сказано, что черновик из переписки не источник правды")
 
+    def test_texts_come_from_the_script(self) -> None:
+        """Состав и тексты — одной командой, а не чтением файлов вручную.
+
+        Ручной разбор — механическая работа, на которой легко перепутать
+        «секции нет» с «секция пустая»; скрипт различает их сам, и скилл
+        обязан звать его, а не читать секции глазами.
+        """
+        changelog = self.step_with("Собрать changelog")
+
+        self.assertIn("--changelog", changelog, "скилл не зовёт режим скрипта")
+        for state in ('"notes"', "null"):
+            self.assertIn(state, changelog,
+                          f"скилл не объясняет состояние {state} в ответе")
+
+    def test_approved_composition_is_checked_by_the_script(self) -> None:
+        """Задача без текста в утверждённом ищется тем же режимом."""
+        approve = self.step_with("Утвердить состав")
+
+        self.assertIn("--changelog", approve,
+                      "сверка утверждённого состава идёт мимо скрипта")
+
     def test_closing_follows_the_same_composition(self) -> None:
         closing = self.step_with("Закрыть задачи выпуска")
 

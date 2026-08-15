@@ -340,10 +340,37 @@ def _entry_index(lines: list[str], task_id: str) -> int | None:
     return None
 
 
+# Забор блока кода: ``` или ~~~ с отступом не больше трёх пробелов (дальше
+# markdown считает строку частью списка или кодом-по-отступу)
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _in_fence(lines: list[str]) -> list[bool]:
+    """Для каждой строки: лежит ли она внутри блока кода.
+
+    Описания задач сплошь и рядом показывают куски `board.md` и других файлов
+    задач, а там строки начинаются с `##`. Без маски такая строка обрывает
+    секцию на середине — текст приезжает обрезанным, и заметить это трудно.
+    Незакрытый забор маскирует всё до конца файла, как и трактует его markdown.
+    """
+    mask: list[bool] = []
+    fence = False
+    for line in lines:
+        if _FENCE_RE.match(line):
+            fence = not fence
+            mask.append(True)          # сама строка забора — тоже не заголовок
+            continue
+        mask.append(fence)
+    return mask
+
+
 def _section_bounds(lines: list[str], name: str) -> tuple[int, int] | None:
     """Границы раздела ## name: (индекс заголовка, индекс следующего ## или конец)."""
     start = None
+    fenced = _in_fence(lines)
     for i, line in enumerate(lines):
+        if fenced[i]:
+            continue
         m = re.match(r"^##\s+(.*)$", line)
         if not m:
             continue
@@ -1019,6 +1046,75 @@ def queue(tasks_dir: Path, limit: int = 5) -> dict:
                       "blocked_by": state["blocked_by"], "paused": state["paused"]})
     out["total"] = len(tasks)
     out["tasks"] = tasks if limit <= 0 else tasks[:limit]
+    return out
+
+
+def _section_text(lines: list[str], name: str) -> str | None:
+    """Тело секции или None, если её нет.
+
+    Пустая строка и None — **разные ответы**: пустая секция «Изменение для
+    пользователя» означает принятое решение «пользователю сказать нечего»,
+    а отсутствие секции — что до задачи ещё не добирались.
+    """
+    bounds = _section_bounds(lines, name)
+    if bounds is None:
+        return None
+    start, end = bounds
+    return "\n".join(lines[start + 1:end]).strip()
+
+
+def changelog(tasks_dir: Path, status: str = "") -> dict:
+    """Задачи статуса вместе с текстами для changelog.
+
+    Собирать changelog по файлам вручную — механическая работа, на которой
+    легко перепутать «секции нет» с «секция пустая» или зацепить соседнюю.
+    Скрипт отдаёт разбор, скилл выпуска принимает решения.
+
+    Статус не задан — берётся цель `release_lock` (утверждённый состав выпуска).
+    Режим только читает: ничего не переносит и не правит.
+    """
+    tasks_dir = Path(tasks_dir)
+    cfg = load_config(tasks_dir)
+    pipeline = pipeline_of(cfg)
+    if not status:
+        status = actions_of(cfg, pipeline).get("release_lock") or ""
+        if not status:
+            return {"status": "", "section": None, "tasks": [],
+                    "error": "в пайплайне проекта нет статуса утверждённого состава "
+                             "(действие release_lock)"}
+
+    known = {s["key"] for s in pipeline}
+    if status not in known:
+        return {"status": status, "section": None, "tasks": [],
+                "error": f"неизвестный статус: {status} "
+                         f"(есть: {', '.join(sorted(known))})"}
+
+    section = section_for_status(cfg, status)
+    out: dict = {"status": status, "section": section, "tasks": []}
+    board = tasks_dir / cfg.get("board_file", "board.md")
+    if not section or not board.is_file():
+        return out
+
+    lines = board.read_text(encoding="utf-8").splitlines()
+    bounds = _section_bounds(lines, section)
+    if not bounds:
+        return out
+
+    start, end = bounds
+    for i in range(start + 1, end):
+        m = _ENTRY_RE.match(lines[i])
+        if not m:
+            continue
+        path = find_task_file(tasks_dir, m.group("id"))
+        notes = None
+        if path is not None:
+            try:
+                notes = _section_text(
+                    path.read_text(encoding="utf-8-sig").splitlines(), RELEASE_SECTION)
+            except OSError:
+                notes = None
+        out["tasks"].append({"id": m.group("id"), "title": m.group("title"),
+                             "file": m.group("file"), "notes": notes})
     return out
 
 
@@ -2121,6 +2217,9 @@ def main() -> None:
                         help="Законные цели перехода для задачи (JSON)")
     parser.add_argument("--queue", action="store_true",
                         help="Живая очередь доски прямо сейчас (JSON)")
+    parser.add_argument("--changelog", metavar="СТАТУС", nargs="?", const="", default=None,
+                        help="задачи статуса и их тексты для changelog "
+                             "(без значения — утверждённый состав выпуска)")
     parser.add_argument("--limit", type=int, default=5,
                         help="Сколько задач очереди показать, 0 — все (default: 5)")
     parser.add_argument("--epic", metavar="КЛЮЧ", default=None,
@@ -2173,6 +2272,16 @@ def main() -> None:
 
     if args.queue:
         print(json.dumps(queue(tasks_dir, args.limit), ensure_ascii=False, indent=2))
+        return
+
+    if args.changelog is not None:
+        report = changelog(tasks_dir, args.changelog)
+        # Отказ говорится словами и ненулевым кодом: пустой список задач —
+        # нормальный ответ, и путать его с «такого статуса нет» нельзя
+        if report.get("error"):
+            print(f"[ERROR] {report['error']}", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return
 
     if args.epic is not None:
