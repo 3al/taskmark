@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
@@ -807,10 +807,33 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                 )}
 
                 {/* Кого держит эта задача — справочно: снимают блокировку с той
-                    стороны, где она объявлена */}
+                    стороны, где она объявлена. Номер открывается кликом так же,
+                    как у блокера: зависимость читают с обоих концов, и ходить по
+                    ней в одну сторону — половина связи. Заголовок держим в
+                    подсказке, а не в строке: список тут бывает длинным, и
+                    справочная строка не должна спорить с причиной простоя */}
                 {stall?.blocks_tasks?.length > 0 && (
                   <div className="text-xs text-zinc-600">
-                    держит: {stall.blocks_tasks.map((b) => b.id).join(', ')}
+                    держит:{' '}
+                    {stall.blocks_tasks.map((b, i) => (
+                      <Fragment key={b.id}>
+                        {i > 0 && ', '}
+                        {b.found ? (
+                          <button
+                            onClick={() => onOpenTask?.(b.id)}
+                            className="font-mono text-zinc-500 hover:text-zinc-300"
+                            title={`Открыть: ${b.title}`}
+                          >
+                            {b.id}
+                          </button>
+                        ) : (
+                          /* Подписи «задача не найдена» в этой строке нет — значит
+                             битую ссылку от рабочей не отличить, пока по ней не
+                             кликнули. Поэтому ссылкой она и не притворяется */
+                          <span className="font-mono" title="Задача не найдена">{b.id}</span>
+                        )}
+                      </Fragment>
+                    ))}
                   </div>
                 )}
 

@@ -225,6 +225,25 @@ class TaskModalStallTest(unittest.TestCase):
         app = (SRC / "App.jsx").read_text(encoding="utf-8")
         self.assertIn("taskTrail", app, "путь по задачам нигде не хранится")
 
+    def test_held_task_is_clickable_too(self) -> None:
+        """«Держит» — тот же список задач, что и «ждёт», и ходят по нему так же.
+
+        Зависимость читают с обоих концов: если в одну сторону номер
+        открывается кликом, а в другую его приходится искать поиском по
+        доске, работает половина связи.
+        """
+        held = self.src[self.src.index("держит:"):self.src.index("stallForm === 'pause'")]
+        self.assertIn("onOpenTask", held, "номер в «держит» не открывает задачу")
+
+    def test_missing_held_task_is_not_a_link(self) -> None:
+        """Строка «держит» компактна и подписи «задача не найдена» не несёт.
+
+        Значит битую ссылку в ней от рабочей не отличить, пока по ней не
+        кликнули и не получили пустое окно: ссылкой она не притворяется.
+        """
+        held = self.src[self.src.index("держит:"):self.src.index("stallForm === 'pause'")]
+        self.assertIn("b.found", held, "номер несуществующей задачи выдаётся за ссылку")
+
     def test_pause_and_block_are_editable(self) -> None:
         self.assertIn("paused", self.src)
         self.assertIn("updateTask", self.src,
