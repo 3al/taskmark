@@ -220,14 +220,54 @@ class HumanConfirmTest(unittest.TestCase):
         self.assertNotIn("подтверждено:", trace,
                          "префикс тавтологичен: формулировка сама говорит о подтверждении")
 
-    def test_note_falls_back_to_id_when_undeclared(self) -> None:
-        """Требования нет в конфиге — врать нечем, остаётся идентификатор."""
+    def test_undeclared_requirement_is_rejected(self) -> None:
+        """Требования нет в маршруте — подтверждать нечего.
+
+        Отметка фиксирует чужое слово, и строка о том, чего никто не говорил,
+        обесценивает соседние: разобрать потом, какая настоящая, будет нечем.
+        """
         from backend.requirements import confirm_requirements
 
-        confirm_requirements(self.tasks, "TASK-001", ["unknown"], "", {})
+        result = confirm_requirements(self.tasks, "TASK-001", ["выдумка"], "", self.cfg)
 
-        self.assertTrue([n for n in self._notes() if "unknown" in n],
-                        "без объявления в заметке должен остаться идентификатор")
+        self.assertEqual([], result["confirmed"])
+        self.assertEqual(["выдумка"], result["rejected"],
+                         "отвергнутое проглочено молча — клиент считает его принятым")
+        self.assertEqual("~", self._meta().get("confirmed"),
+                         "во frontmatter записан несуществующий идентификатор")
+        self.assertFalse([n for n in self._notes() if "выдумка" in n],
+                         "в хронологию легла строка о том, чего никто не подтверждал")
+
+    def test_requirement_closed_by_work_is_rejected(self) -> None:
+        """Чужой предикат закрывается работой, а не решением человека."""
+        from backend.requirements import confirm_requirements
+
+        cfg = {"pipeline": PIPELINE,
+               "requires": {"testing": [
+                   {"id": "verified", "check": "confirm",
+                    "ask": "проверку подтвердил человек"},
+                   {"id": "commits", "check": "section_filled",
+                    "name": "История коммитов"}]}}
+
+        result = confirm_requirements(self.tasks, "TASK-001",
+                                      ["verified", "commits"], "", cfg)
+
+        self.assertEqual(["verified"], result["confirmed"])
+        self.assertEqual(["commits"], result["rejected"],
+                         "требование, закрываемое работой, подтверждено решением")
+        self.assertEqual("verified", self._meta().get("confirmed"))
+        self.assertFalse([n for n in self._notes() if "История коммитов" in n])
+
+    def test_rejected_field_is_always_there(self) -> None:
+        """Контракт ответа один на все ветки: клиенту не приходится гадать."""
+        from backend.requirements import confirm_requirements
+
+        confirm_requirements(self.tasks, "TASK-001", ["verified"], "", self.cfg)
+        repeat = confirm_requirements(self.tasks, "TASK-001", ["verified"], "", self.cfg)
+        empty = confirm_requirements(self.tasks, "TASK-001", [], "", self.cfg)
+
+        self.assertEqual([], repeat["rejected"], "повтор — не отказ: слово уже записано")
+        self.assertEqual([], empty["rejected"])
 
     def test_repeat_is_silent(self) -> None:
         from backend.requirements import confirm_requirements

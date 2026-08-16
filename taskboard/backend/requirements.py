@@ -755,42 +755,51 @@ def confirm_requirements(tasks_dir, task_id: str, ids: list[str],
     адресовано ему и невыполнимо им же (TASK-110).
 
     Остальные предикаты закрываются работой, а не решением, и отсюда не
-    закрываются вовсе.
+    закрываются вовсе — как и требования, которых в маршруте нет.
+
+    Отвергнутое возвращается отдельным списком: клиент шлёт идентификаторы сам,
+    и разницу между «подтвердили» и «проигнорировали» он обязан видеть. Молча
+    записанное чужое слово хуже отказа — строка о том, чего никто не говорил,
+    обесценивает все соседние.
     """
     tasks_dir = Path(tasks_dir)
     path = find_task_file(tasks_dir, task_id)
     if path is None:
         return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
 
+    rows = _rows(load_pipeline(cfg or {}) if pipeline is None else pipeline)
     wanted = [i for i in (parse_req_ids(ids) or []) if i]
-    if not wanted:
-        return {"ok": True, "task": task_id, "confirmed": []}
+    known = {}
+    for req_id in wanted:
+        req = requirement_by_id(cfg or {}, rows, req_id)
+        if req and _one_line(req.get("check")) == "confirm":
+            known[req_id] = req
+    rejected = [i for i in wanted if i not in known]
+    if not known:
+        return {"ok": True, "task": task_id, "confirmed": [], "rejected": rejected}
 
     content = path.read_text(encoding="utf-8-sig")
     meta, _body = parse_frontmatter(content)
     current = parse_req_ids(meta.get(CONFIRMED_FIELD))
     have = [i.lower() for i in current]
-    added = [i for i in wanted if i.lower() not in have]
+    added = [i for i in known if i.lower() not in have]
     if not added:
-        return {"ok": True, "task": task_id, "confirmed": []}
+        return {"ok": True, "task": task_id, "confirmed": [], "rejected": rejected}
 
     set_meta_fields(path, {CONFIRMED_FIELD: ", ".join(current + added)})
     # След обязателен: подтверждение без строки в хронологии неотличимо от
     # этапа, пройденного молча.
     # В строке — формулировка требования, а не его идентификатор: комментарии читает
-    # человек, и служебное имя ему ничего не говорит. Формулировку берём из
-    # конфига по id; нет объявления — остаётся id, врать нечем.
+    # человек, и служебное имя ему ничего не говорит. Формулировка есть всегда:
+    # без объявления в конфиге требование сюда не доходит вовсе
     # «на доске» не пишем — это уже сказано подписью строки (`· доска ·`)
     # Без слова «подтверждено»: формулировка требования сама им является
     # («проверку подтвердил человек», «тексты релиза утверждены»), и префикс
     # давал тавтологию
-    rows = _rows(load_pipeline(cfg or {}) if pipeline is None else pipeline)
     tail = f" — перенос в «{where}»" if where else ""
     for req_id in added:
-        req = requirement_by_id(cfg or {}, rows, req_id)
-        what = requirement_text(req) if req else req_id
-        append_note(path, f"{what}{tail}")
-    return {"ok": True, "task": task_id, "confirmed": added}
+        append_note(path, f"{requirement_text(known[req_id])}{tail}")
+    return {"ok": True, "task": task_id, "confirmed": added, "rejected": rejected}
 
 
 def task_waivers(tasks_dir, task_id: str, cfg: dict, pipeline=None) -> list[dict]:
