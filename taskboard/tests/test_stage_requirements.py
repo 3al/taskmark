@@ -399,6 +399,93 @@ class GateTest(RequirementsTestCase):
                          .returncode, 1)
 
 
+class ConfirmOnlyDeclaredTest(RequirementsTestCase):
+    """Подтвердить можно только то, что маршрут просит, и только решением.
+
+    Отметка фиксирует чужое слово. Записанная по опечатке, она даёт строку,
+    читающуюся как подтверждение человеком того, чего никто не подтверждал, —
+    и обесценивает все соседние: разобрать потом, какая настоящая, нечем.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._requires({"testing": [{"id": "verified", "check": "confirm",
+                                     "ask": "проверку подтвердил человек"},
+                                    {"id": "commits", "check": "section_filled",
+                                     "name": "История коммитов"}]})
+
+    def test_unknown_id_is_refused(self) -> None:
+        path = self._task(status="testing")
+
+        result = self._run("TASK-001", "--confirm", "выдумка", "проверил",
+                           "--agent", "Тест")
+
+        self.assertEqual(1, result.returncode, "подтверждено требование, которого нет")
+        self.assertIsNone(self._meta(path).get("confirmed"),
+                          "во frontmatter записан несуществующий идентификатор")
+        self.assertFalse([n for n in self._notes(path) if "проверил" in n],
+                         "в хронологию легла строка о том, чего никто не подтверждал")
+
+    def test_refusal_names_what_can_be_confirmed(self) -> None:
+        """В консоли пустая реакция неотличима от опечатки."""
+        self._task(status="testing")
+
+        out = self._run("TASK-001", "--confirm", "выдумка", "проверил", "--agent", "Тест")
+
+        self.assertIn("verified", out.stderr + out.stdout,
+                      "отказ не называет, что вообще подтверждается")
+
+    def test_requirement_closed_by_work_is_refused(self) -> None:
+        """Секции и поля закрываются работой, а не решением человека."""
+        path = self._task(status="testing")
+
+        result = self._run("TASK-001", "--confirm", "commits", "коммиты на месте",
+                           "--agent", "Тест")
+
+        self.assertEqual(1, result.returncode, "требование по секции подтверждено словом")
+        self.assertIsNone(self._meta(path).get("confirmed"))
+
+    def test_declared_confirm_still_works(self) -> None:
+        path = self._task(status="testing")
+
+        result = self._run("TASK-001", "--confirm", "verified", "показал экран",
+                           "--agent", "Тест")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("verified", self._meta(path).get("confirmed"))
+
+    def test_waive_takes_any_declared_requirement(self) -> None:
+        """Списывают любое требование маршрута: предикат тут роли не играет."""
+        path = self._task(status="testing")
+
+        result = self._run("TASK-001", "--waive", "commits", "--reason", "нечего коммитить",
+                           "--agent", "Тест")
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("commits", self._meta(path).get("waived"))
+
+    def test_waive_of_unknown_is_refused_too(self) -> None:
+        """Обход требования, которого нет, — та же ложная запись в файле."""
+        path = self._task(status="testing")
+
+        result = self._run("TASK-001", "--waive", "выдумка", "--reason", "не нужно",
+                           "--agent", "Тест")
+
+        self.assertEqual(1, result.returncode)
+        self.assertIsNone(self._meta(path).get("waived"))
+
+    def test_backend_refuses_the_same(self) -> None:
+        """Два зеркала одного правила: скрипт и бэкенд не спорят."""
+        from backend.requirements import confirm_requirements
+
+        self._task(status="testing")
+        result = confirm_requirements(self.tasks, "TASK-001", ["выдумка", "commits"],
+                                      "", self.cfg)
+
+        self.assertEqual([], result["confirmed"])
+        self.assertEqual(["выдумка", "commits"], result["rejected"])
+
+
 class ReturnResetsConfirmationTest(RequirementsTestCase):
     """Возврат назад — признание, что этап не закрыт: его проходят заново."""
 

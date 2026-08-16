@@ -1986,13 +1986,48 @@ def task_debt(tasks_dir, task_id: str, cfg: dict | None = None) -> dict:
             "recommended": [r for r in pending if not r.get("mandatory")]}
 
 
+def markable_requirements(cfg: dict, pipeline: list[dict], check: str = "") -> list[dict]:
+    """Требования маршрута, которые вообще можно отметить, — без повторов.
+
+    Идентификатор человек придумывает сам, и опечатка в нём неотличима от
+    честной записи: перечислить known — единственный способ показать разницу.
+    `check` сужает список до одного предиката (подтверждают только `confirm`).
+    """
+    seen: set[str] = set()
+    out: list[dict] = []
+    for status in [s["key"] for s in pipeline]:
+        for req in stage_requirements(cfg, pipeline, status):
+            req_id = _one_line(req.get("id")).lower()
+            if not req_id or req_id in seen:
+                continue
+            if check and _one_line(req.get("check")) != check:
+                continue
+            seen.add(req_id)
+            out.append(req)
+    return out
+
+
+def _markable_hint(cfg: dict, pipeline: list[dict], check: str, what: str) -> str:
+    """Хвост отказа: что вместо этого можно отметить."""
+    known = markable_requirements(cfg, pipeline, check)
+    if not known:
+        return f"{what} в этом проекте нечего: таких требований в маршруте нет"
+    return f"{what} можно: {'; '.join(requirement_wording(r) for r in known)}"
+
+
 def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
-                      text: str, agent: str | None, what: str | None) -> dict:
+                      text: str, agent: str | None, what: str | None,
+                      check: str = "") -> dict:
     """Записать факт (подтверждение или списание) и оставить строку в комментариях.
 
     Во frontmatter идёт только идентификатор — плоским списком, как `blocked_by`.
     Человеческая причина живёт в «Комментариях» со временем из системы: она
     нужна тому, кто придёт к задаче позже, а не механизму.
+
+    **Отмечается только объявленное требование.** Запись фиксирует факт о
+    конкретном требовании маршрута; идентификатор, которого там нет, — опечатка,
+    и принятая молча она даёт строку в хронологии о том, чего никто не делал.
+    Зеркало `backend/requirements.py`.
     """
     tasks_dir = Path(tasks_dir)
     path = find_task_file(tasks_dir, task_id)
@@ -2007,6 +2042,23 @@ def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
                 "error": f"«{req_id}»: без объяснения не выполняется — причина "
                          f"остаётся в файле для того, кто придёт позже"}
 
+    cfg = load_config(tasks_dir)
+    pipeline = pipeline_of(cfg)
+    req = requirement_by_id(cfg, pipeline, req_id)
+    doing = "Списать" if what else "Подтвердить"
+    if req is None:
+        return {"ok": False,
+                "error": f"«{req_id}»: такого требования в маршруте нет. "
+                         f"{_markable_hint(cfg, pipeline, check, doing)}"}
+    # Предикат `confirm` означает «человек сказал»; остальные закрываются
+    # работой, и словом их не закрыть — в отличие от списания, которое обходит
+    # любое требование, потому и требует причины
+    if check and _one_line(req.get("check")) != check:
+        return {"ok": False,
+                "error": f"«{req_id}»: закрывается работой, а не решением — "
+                         f"подтверждать нечем. "
+                         f"{_markable_hint(cfg, pipeline, check, doing)}"}
+
     # Повтор ничего не меняет — и писать о нём нечего: событие было одно, а
     # вторая одинаковая строка засоряет хронологию, ради которой комментарии и ведут
     ids = parse_req_ids(_read_meta(path).get(field))
@@ -2017,9 +2069,7 @@ def _mark_requirement(tasks_dir, task_id: str, field: str, req_id: str,
     # читает человек, и служебное имя ему ничего не говорит. Для подтверждения
     # префикса нет вовсе — формулировка сама им является («проверку подтвердил
     # человек»), и «подтверждено: проверку подтвердил человек» было тавтологией
-    req = requirement_by_id(load_config(tasks_dir), pipeline_of(load_config(tasks_dir)),
-                            req_id)
-    named = requirement_text(req) if req else req_id
+    named = requirement_text(req)
     line = f"{named} — {text}" if what is None else f"{what}: {named} — {text}"
     note = add_note(tasks_dir, task_id, line, agent=agent)
     if not note.get("ok"):
@@ -2088,7 +2138,7 @@ def confirm_requirement(tasks_dir, task_id: str, req_id: str, text: str,
                         agent: str | None = None) -> dict:
     """Отметить требование выполненным: подтверждение — тоже факт, не суждение."""
     return _mark_requirement(tasks_dir, task_id, CONFIRMED_FIELD, req_id, text,
-                             agent, None)
+                             agent, None, check="confirm")
 
 
 def waive_requirement(tasks_dir, task_id: str, req_id: str, reason: str,
