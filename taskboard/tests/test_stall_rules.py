@@ -357,6 +357,125 @@ class ScriptRulesTest(Project):
         self.assertEqual(1, report["total"])
 
 
+class StaleForAgentTest(Project):
+    """Протухшую пометку видит и агент, а не только доска (TASK-148).
+
+    Пока скрипт считал простой по одному наличию поля, закрытый блокер держал
+    задачу насмерть: очередь помечала её стоящей, агент пропускал свободную
+    работу, а старт отказывал ссылкой на задачу, которая давно в `done`.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.make("TASK-013", "Блокер")
+        self.make("TASK-014", "Ждущая")
+        self.run_script("TASK-014", "--block", "TASK-013")
+
+    def run_script(self, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.tasks / "set_status.py"),
+             "--tasks-dir", str(self.tasks), *args],
+            capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+    def close_blocker(self, status: str = "done", reason: str = "") -> None:
+        args = ["TASK-013", status] + (["--reason", reason] if reason else [])
+        done = self.run_script(*args)
+        self.assertEqual(0, done.returncode, done.stderr)
+
+    def entry(self, task_id: str = "TASK-014") -> dict:
+        queue = json.loads(self.run_script("--queue").stdout)
+        return next(t for t in queue["tasks"] if t["id"] == task_id)
+
+    def report(self, task_id: str = "TASK-014") -> dict:
+        report = json.loads(self.run_script("--stalled").stdout)
+        return next(t for t in report["tasks"] if t["id"] == task_id)
+
+    def test_live_blocker_still_holds_the_queue(self) -> None:
+        entry = self.entry()
+
+        self.assertTrue(entry["stalled"], "задача с живым блокером выдана за свободную")
+        self.assertFalse(entry["stale"])
+
+    def test_closed_blocker_frees_the_queue(self) -> None:
+        self.close_blocker()
+
+        entry = self.entry()
+        self.assertFalse(entry["stalled"],
+                         "закрытый блокер держит задачу — агент пропустит свободную работу")
+        self.assertTrue(entry["stale"], "очередь не говорит, что пометка протухла")
+        self.assertEqual(["TASK-013"], entry["blocked_by"],
+                         "номер из пометки пропал — снимать станет нечего")
+
+    def test_report_names_the_stale_mark(self) -> None:
+        self.close_blocker()
+
+        task = self.report()
+        self.assertTrue(task["stale"], "срез выдаёт протухшую пометку за действующую")
+        self.assertTrue(task["blocked_by_tasks"][0]["resolved"])
+        self.assertIn("TASK-013", task["stale_reason"])
+        self.assertIn("--unblock", task["stale_reason"],
+                      "срез не говорит, чем снять пометку")
+
+    def test_start_passes_and_warns(self) -> None:
+        self.close_blocker()
+
+        started = self.run_script("TASK-014", "development")
+
+        self.assertEqual(0, started.returncode,
+                         "старт отказывает из-за блокера, который уже закрыт")
+        self.assertEqual("development", self.meta("TASK-014")["status"])
+        self.assertIn("--unblock", started.stdout,
+                      "о протухшей пометке сказано, а чем снять — нет")
+
+    def test_live_blocker_still_refuses_the_start(self) -> None:
+        refused = self.run_script("TASK-014", "development")
+
+        self.assertNotEqual(0, refused.returncode, "стоящая задача взята в работу молча")
+        self.assertEqual("todo", self.meta("TASK-014")["status"])
+
+    def test_paused_task_stays_stalled(self) -> None:
+        """Блокер закрыт, но задача на паузе — она всё ещё стоит."""
+        self.run_script("TASK-014", "--pause", "ждём стенд")
+        self.close_blocker()
+
+        self.assertTrue(self.entry()["stalled"])
+        self.assertFalse(self.entry()["stale"], "пауза — не протухшая пометка")
+
+    def test_missing_blocker_still_holds(self) -> None:
+        """Битая ссылка молча не освобождает: она предупреждение, а не разрешение."""
+        self.run_script("TASK-014", "--unblock")
+        self.run_script("TASK-014", "--block", "TASK-404")
+
+        self.assertTrue(self.entry()["stalled"])
+
+    def test_cancelled_blocker_speaks_differently(self) -> None:
+        """Отменённый блокер освобождает, но об отмене говорит прямо: вместе с
+        ним мог отпасть и предмет самой задачи."""
+        self.close_blocker("cancelled", reason="дублирует TASK-002")
+
+        self.assertFalse(self.entry()["stalled"])
+        task = self.report()
+        self.assertTrue(task["blocked_by_tasks"][0]["cancelled"])
+        self.assertIn("отменена", task["stale_reason"])
+
+        started = self.run_script("TASK-014", "development")
+        self.assertEqual(0, started.returncode, started.stderr)
+        self.assertIn("отменена", started.stdout,
+                      "отмена блокера прошла под видом выполнения")
+
+    def test_backend_slice_says_the_same(self) -> None:
+        """Срез бэкенда — тот же ответ: два источника одного среза не спорят."""
+        from backend.stall import stalled_tasks
+        self.close_blocker()
+
+        task = next(t for t in stalled_tasks(self.tasks, self.pipeline)["tasks"]
+                    if t["id"] == "TASK-014")
+
+        self.assertTrue(task["stale"])
+        self.assertEqual(self.report()["stale_reason"], task["stale_reason"],
+                         "скрипт и бэкенд объясняют протухшую пометку по-разному")
+
+
 class ApiWiringTest(unittest.TestCase):
     """Правило спрашивают все клиенты, а не только доска."""
 

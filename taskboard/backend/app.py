@@ -676,8 +676,8 @@ def api_mark_types_reviewed() -> dict:
 @app.get("/api/tasks/stalled")
 def api_stalled() -> dict:
     """Что сейчас стоит и почему — срез простоя по всем задачам проекта."""
-    tasks_dir, _cfg = _ctx()
-    return stalled_tasks(tasks_dir)
+    tasks_dir, cfg = _ctx()
+    return stalled_tasks(tasks_dir, load_pipeline(cfg))
 
 
 @app.post("/api/tasks")

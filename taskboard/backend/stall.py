@@ -149,6 +149,10 @@ def resolve_ids(tasks_dir: Path, ids, pipeline=None) -> list[dict]:
     `resolved` — блокер сам дошёл до конца маршрута и больше не держит. Снимать
     пометку автоматически не станем: она стоит в чужом файле, и правка по
     касательной («двинули A — молча изменили B») удивляет сильнее, чем помощь.
+
+    `cancelled` — тот же конец маршрута, но другого смысла: блокер не сделали, а
+    похоронили, и вместе с ним мог отпасть предмет самой ждущей задачи. Держать
+    её из-за этого нечему, а сказать об этом надо другими словами.
     """
     tasks_dir = Path(tasks_dir)
     out: list[dict] = []
@@ -157,11 +161,46 @@ def resolve_ids(tasks_dir: Path, ids, pipeline=None) -> list[dict]:
         meta = _meta_of(path) if path else {}
         status = meta.get("status", "")
         label = (pipeline.get(status) or {}).get("label", "") if pipeline and status else ""
+        resolved = bool(path) and is_terminal(pipeline, status)
+        offramp = bool((pipeline.get(status) or {}).get("offramp")) if pipeline else False
         out.append({"id": task_id, "title": meta.get("title", ""),
                     "status": status, "label": label or status,
                     "found": path is not None,
-                    "resolved": bool(path) and is_terminal(pipeline, status)})
+                    "resolved": resolved,
+                    "cancelled": resolved and offramp})
     return out
+
+
+def is_stale(blockers: list[dict], paused: str = "") -> bool:
+    """Держать нечему: пометка есть, а все блокеры дошли до конца маршрута.
+
+    Пауза этого не касается — она ждёт обстоятельства, а не задачу: пока она
+    стоит, задача стоит вместе с ней. Ненайденный блокер тоже держит: битая
+    ссылка — предупреждение валидатора, а не разрешение работать.
+    """
+    return bool(blockers) and all(b["resolved"] for b in blockers) and not paused
+
+
+def stale_reason(blockers: list[dict], unblock_hint: str = "--unblock") -> str:
+    """Чем протухла пометка и что с ней делать — одной строкой для агента.
+
+    Выполненный блокер и отменённый разводятся текстом: первый снимает вопрос,
+    второй его задаёт — предмет ждущей задачи мог отпасть вместе с ним.
+    """
+    done = [b["id"] for b in blockers if b["resolved"] and not b["cancelled"]]
+    cancelled = [b["id"] for b in blockers if b["cancelled"]]
+    if not done and not cancelled:
+        return ""
+    parts = []
+    if done:
+        parts.append(f"{', '.join(done)} "
+                     f"{'завершены' if len(done) > 1 else 'завершена'}")
+    if cancelled:
+        parts.append(f"{', '.join(cancelled)} "
+                     f"{'отменены' if len(cancelled) > 1 else 'отменена'}, "
+                     f"проверьте, не отпал ли вместе с ней предмет задачи")
+    ids = " ".join(b["id"] for b in blockers)
+    return f"{' и '.join(parts)} — снять пометку: {unblock_hint} {ids}"
 
 
 def stall_details(tasks_dir: Path, meta: dict, pipeline=None) -> dict:
@@ -173,10 +212,10 @@ def stall_details(tasks_dir: Path, meta: dict, pipeline=None) -> dict:
     # предлагает снять. Две причины: все блокеры дошли до конца маршрута или
     # сама задача завершена (у закрытой работы «ждёт» смысла не имеет)
     blocked = state["blocked_by_tasks"]
-    all_resolved = bool(blocked) and all(b["resolved"] for b in blocked) \
-        and not state["paused"]
+    all_resolved = is_stale(blocked, state["paused"])
     state["stale"] = bool(state["stalled"]) and (
         all_resolved or is_terminal(pipeline, meta.get("status", "")))
+    state["stale_reason"] = stale_reason(blocked) if all_resolved else ""
     return state
 
 
@@ -375,23 +414,32 @@ def _all_tasks(tasks_dir: Path) -> dict[str, dict]:
     return out
 
 
-def stalled_tasks(tasks_dir: Path) -> dict:
+def stalled_tasks(tasks_dir: Path, pipeline=None) -> dict:
     """Срез «что сейчас стоит и почему» — для скиллов, как `--queue`.
 
     Читать ради этого всю доску незачем: причина простоя лежит во frontmatter.
+
+    Задача с протухшей пометкой из среза не исчезает — пометка-то стоит, и
+    снять её кому-то придётся, — но помечена `stale` с объяснением: иначе
+    читающий идёт смотреть блокер и обнаруживает, что тот давно закрыт.
     """
     tasks: list[dict] = []
     for task_id, info in _all_tasks(tasks_dir).items():
         state = info["stall"]
         if not state["stalled"]:
             continue
+        blockers = resolve_ids(tasks_dir, state["blocked_by"], pipeline)
+        stale = is_stale(blockers, state["paused"])
         tasks.append({
             "id": task_id,
             "title": info["meta"].get("title", ""),
             "status": info["meta"].get("status", ""),
             "file": info["path"].name,
             "blocked_by": state["blocked_by"],
+            "blocked_by_tasks": blockers,
             "paused": state["paused"],
+            "stale": stale,
+            "stale_reason": stale_reason(blockers) if stale else "",
         })
     return {"total": len(tasks), "tasks": tasks}
 

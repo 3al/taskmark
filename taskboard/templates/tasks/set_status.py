@@ -496,10 +496,16 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # терминальном простой снимется сам. Зеркало backend/stall.py
     task_path = find_task_file(tasks_dir, task_id)
     actions = actions_of(cfg, pipeline)
-    if task_path is not None and not force and status in (actions.get("start"),
-                                                          actions.get("return")):
-        state = stall_of(_read_meta(task_path))
-        if state["stalled"]:
+    stale_warning = ""
+    if task_path is not None and status in (actions.get("start"),
+                                            actions.get("return")):
+        state = effective_stall(tasks_dir, _read_meta(task_path), pipeline)
+        # Протухшая пометка старт не держит: блокер закрыт, ждать нечего.
+        # Но и молчать нельзя — снимает её человек или агент, и сказать об
+        # этом надо в тот момент, когда пометка попалась на глаза
+        if state["stale"]:
+            stale_warning = f"пометка простоя протухла: {state['stale_reason']}"
+        if state["stalled"] and not force:
             parts = []
             if state["blocked_by"]:
                 parts.append(f"ждёт {', '.join(state['blocked_by'])}")
@@ -665,7 +671,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             # открывают: заодно показываем, что в нём разъехалось. Сюда же —
             # записи о требованиях, которых механизм не знает: они выглядят
             # закрытыми этапами, а не гасят ничего
-            "warnings": structure + [
+            "warnings": structure + ([stale_warning] if stale_warning else []) + [
                 f"в полях {CONFIRMED_FIELD}/{WAIVED_FIELD} не опознано: "
                 f"{', '.join(unknown)} — таких требований в маршруте нет, и "
                 f"этап они не закрывают"
@@ -1036,14 +1042,17 @@ def queue(tasks_dir: Path, limit: int = 5) -> dict:
         if not m:
             continue
         # Признак простоя идёт вместе с очередью: без него агент не отличит
-        # стоящую задачу от свободной и возьмёт первую сверху
+        # стоящую задачу от свободной и возьмёт первую сверху. Считается он
+        # с поправкой на закрытые блокеры — иначе протухшая пометка выбрасывает
+        # свободную работу из очереди, и никто об этом не узнаёт
         path = find_task_file(tasks_dir, m.group("id"))
-        state = stall_of(_read_meta(path)) if path else stall_of({})
+        state = effective_stall(tasks_dir, _read_meta(path) if path else {}, pipeline)
         tasks.append({"position": len(tasks) + 1, "id": m.group("id"),
                       "title": m.group("title"), "file": m.group("file"),
                       "meta": re.sub(r"^·\s*", "", m.group("tail").strip()).strip(),
                       "stalled": state["stalled"],
-                      "blocked_by": state["blocked_by"], "paused": state["paused"]})
+                      "blocked_by": state["blocked_by"], "paused": state["paused"],
+                      "stale": state["stale"], "stale_reason": state["stale_reason"]})
     out["total"] = len(tasks)
     out["tasks"] = tasks if limit <= 0 else tasks[:limit]
     return out
@@ -1223,6 +1232,79 @@ def stall_of(meta: dict) -> dict:
     paused = _one_line(meta.get("paused"))
     return {"blocked_by": blocked_by, "blocks": parse_ids(meta.get("blocks")),
             "paused": paused, "stalled": bool(blocked_by or paused)}
+
+
+def resolve_ids(tasks_dir: Path, ids, pipeline: list[dict]) -> list[dict]:
+    """Развернуть номера блокеров в `[{id, title, status, found, resolved, cancelled}]`.
+
+    Зеркало backend/stall.py. Номера мало: «TASK-013» ничего не говорит о том,
+    держит ли эта задача до сих пор. Ненайденный блокер не выбрасываем —
+    помечаем `found: False`.
+    """
+    tasks_dir = Path(tasks_dir)
+    out: list[dict] = []
+    for task_id in parse_ids(ids):
+        path = find_task_file(tasks_dir, task_id)
+        meta = _read_meta(path) if path else {}
+        status = meta.get("status", "")
+        entry = next((s for s in pipeline if s["key"] == status), {})
+        resolved = bool(path) and is_terminal(pipeline, status)
+        out.append({"id": task_id, "title": meta.get("title", ""),
+                    "status": status, "label": entry.get("label", status),
+                    "found": path is not None,
+                    "resolved": resolved,
+                    "cancelled": resolved and bool(entry.get("offramp"))})
+    return out
+
+
+def is_stale(blockers: list[dict], paused: str = "") -> bool:
+    """Держать нечему: пометка есть, а все блокеры дошли до конца маршрута.
+
+    Зеркало backend/stall.py. Пауза этого не касается — она ждёт
+    обстоятельства, а не задачу. Ненайденный блокер держит: битая ссылка —
+    предупреждение валидатора, а не разрешение работать.
+    """
+    return bool(blockers) and all(b["resolved"] for b in blockers) and not paused
+
+
+def stale_reason(blockers: list[dict], unblock_hint: str = "--unblock") -> str:
+    """Чем протухла пометка и что с ней делать — одной строкой для агента.
+
+    Зеркало backend/stall.py. Выполненный блокер и отменённый разводятся
+    текстом: первый снимает вопрос, второй его задаёт — предмет ждущей задачи
+    мог отпасть вместе с ним.
+    """
+    done = [b["id"] for b in blockers if b["resolved"] and not b["cancelled"]]
+    cancelled = [b["id"] for b in blockers if b["cancelled"]]
+    if not done and not cancelled:
+        return ""
+    parts = []
+    if done:
+        parts.append(f"{', '.join(done)} "
+                     f"{'завершены' if len(done) > 1 else 'завершена'}")
+    if cancelled:
+        parts.append(f"{', '.join(cancelled)} "
+                     f"{'отменены' if len(cancelled) > 1 else 'отменена'}, "
+                     f"проверьте, не отпал ли вместе с ней предмет задачи")
+    ids = " ".join(b["id"] for b in blockers)
+    return f"{' и '.join(parts)} — снять пометку: {unblock_hint} {ids}"
+
+
+def effective_stall(tasks_dir: Path, meta: dict, pipeline: list[dict]) -> dict:
+    """Стоит ли задача **на самом деле** — с поправкой на закрытые блокеры.
+
+    Пометка `blocked_by` живёт в файле, пока её не снимут, а блокер тем
+    временем уезжает в конец маршрута. Дальше все, кто читает простой, обязаны
+    считать одинаково: очередь, срез и гейт старта.
+    """
+    state = stall_of(meta)
+    blockers = resolve_ids(tasks_dir, state["blocked_by"], pipeline)
+    stale = is_stale(blockers, state["paused"])
+    state["blocked_by_tasks"] = blockers
+    state["stale"] = stale
+    state["stale_reason"] = stale_reason(blockers) if stale else ""
+    state["stalled"] = bool(state["paused"]) or bool(blockers) and not stale
+    return state
 
 
 def _edit_list_field(path: Path, field: str, task_id: str, add: bool) -> None:
@@ -1442,8 +1524,13 @@ def stalled(tasks_dir: Path) -> dict:
     """Срез «что сейчас стоит и почему» — для агента, как `--queue`.
 
     Причина простоя лежит во frontmatter, поэтому доску читать незачем.
+
+    Задача с протухшей пометкой из среза не исчезает — пометка-то стоит, и
+    снять её кому-то придётся, — но помечена `stale` с объяснением: иначе
+    читающий идёт смотреть блокер и обнаруживает, что тот давно закрыт.
     """
     tasks_dir = Path(tasks_dir)
+    pipeline = pipeline_of(load_config(tasks_dir))
     tasks = []
     for path in sorted(tasks_dir.glob("TASK-*.md")):
         m = re.match(r"^(TASK-\d+).*\.md$", path.name)
@@ -1453,12 +1540,15 @@ def stalled(tasks_dir: Path) -> dict:
             meta = _read_meta(path)
         except OSError:
             continue
-        state = stall_of(meta)
-        if not state["stalled"]:
+        if not stall_of(meta)["stalled"]:
             continue
+        state = effective_stall(tasks_dir, meta, pipeline)
         tasks.append({"id": m.group(1).upper(), "title": meta.get("title", ""),
                       "status": meta.get("status", ""), "file": path.name,
-                      "blocked_by": state["blocked_by"], "paused": state["paused"]})
+                      "blocked_by": state["blocked_by"],
+                      "blocked_by_tasks": state["blocked_by_tasks"],
+                      "paused": state["paused"],
+                      "stale": state["stale"], "stale_reason": state["stale_reason"]})
     return {"total": len(tasks), "tasks": tasks}
 
 
