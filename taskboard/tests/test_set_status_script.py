@@ -145,6 +145,14 @@ class SetStatusTest(unittest.TestCase):
         dev = board.split("## Development")[1].split("##")[0]
         self.assertIn("_(нет)_", dev, "опустевший раздел остался без заглушки")
 
+    def test_leaves_placeholder_in_emptied_subsection(self) -> None:
+        """Подраздел ### держит свою заглушку: задача ушла — она вернулась."""
+        self._add_task(section="### Рефакторинг")
+        self.mod.set_status(self.tasks, "TASK-001", "development", agent="Claude Opus 5")
+        board = self.board.read_text(encoding="utf-8")
+        block = board.split("### Рефакторинг")[1].split("###")[0]
+        self.assertIn("_(нет)_", block, "опустевший подраздел остался без заглушки")
+
     def test_drops_placeholder_in_target_section(self) -> None:
         self._add_task()
         self.mod.set_status(self.tasks, "TASK-001", "development", agent="Claude Opus 5")

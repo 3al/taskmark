@@ -15,6 +15,12 @@ from backend.task_parser import (find_task_file, parse_frontmatter, set_meta_fie
                                  set_task_status)
 
 
+PLACEHOLDER = "_(нет)_"
+
+# Строка задачи в разделе: по ней раздел считается непустым
+_ENTRY_LINE_RE = re.compile(r"^\s*-\s*(?:~~)?\s*TASK-\d+\s*·")
+
+
 def _status_for_section(cfg: dict, to_section: str) -> str | None:
     """Статус frontmatter для раздела доски по пайплайну проекта."""
     return load_pipeline(cfg).status_for_section(to_section)
@@ -73,7 +79,7 @@ def ensure_section(board_path: Path, pipeline: Pipeline, status: str) -> bool:
         if marker:
             break
 
-    block = f"## {title}\n\n_(нет)_\n\n"
+    block = f"## {title}\n\n{PLACEHOLDER}\n\n"
     if marker:
         content = content[:marker.start()] + block + content[marker.start():]
     else:
@@ -114,7 +120,7 @@ def add_entry(board_path: Path, pipeline: Pipeline, to_section: str, entry: str)
     task_lines = [i for i in range(start + 1, end)
                   if re.match(r"^\s*-\s*(?:~~)?\s*TASK-\d+\s*·", lines[i])]
     insert_at = (task_lines[-1] + 1) if task_lines else start + 1
-    _drop_empty_placeholder(lines, start, end)
+    insert_at = _drop_empty_placeholder(lines, start, end, insert_at)
     lines.insert(insert_at, entry)
     board_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"ok": True, "section": to_section}
@@ -216,8 +222,13 @@ def move_task(
         if status and ensure_section(board_path, pipeline, status):
             lines = board_path.read_text(encoding="utf-8").splitlines()
             bounds = _section_bounds(lines, to_section)
-        if bounds is None:
+            # Доска перечитана: вставленный раздел мог сдвинуть строку задачи
+            src_idx = _find_entry_line(lines, task_id)
+        if bounds is None or src_idx is None:
             return {"ok": False, "error": f"Раздел {to_section} не найден"}
+
+    # Из какого раздела забираем — чтобы вернуть в него заглушку
+    from_section = _section_at(lines, src_idx)
 
     # Дата в строке — момент перехода, и перенос мышью обязан её обновлять:
     # иначе она показывает предыдущий переход, а возраст задачи в статусе врёт.
@@ -241,7 +252,7 @@ def move_task(
             insert_at = after_idx + 1
         else:
             insert_at = (task_lines[-1] + 1) if task_lines else start + 1
-        _drop_empty_placeholder(lines, start, end)
+        insert_at = _drop_empty_placeholder(lines, start, end, insert_at)
     elif group:
         # Вставка в пустой подраздел ### — сразу после его заголовка
         insert_at = None
@@ -252,14 +263,14 @@ def move_task(
                 break
         if insert_at is None:
             insert_at = (task_lines[-1] + 1) if task_lines else start + 1
-        _drop_empty_placeholder(lines, start, end)
+        insert_at = _drop_empty_placeholder(lines, start, end, insert_at)
     elif position is not None and position < len(task_lines):
         # Явная позиция — вставить перед задачей с этим индексом
         insert_at = task_lines[position]
     elif position is not None:
         # Явный конец раздела
         insert_at = (task_lines[-1] + 1) if task_lines else start + 1
-        _drop_empty_placeholder(lines, start, end)
+        insert_at = _drop_empty_placeholder(lines, start, end, insert_at)
     else:
         # Позиция не задана: раздел создания задач — в начало (возврат из
         # очереди), остальные разделы — в конец
@@ -267,9 +278,12 @@ def move_task(
             insert_at = start + 1
         else:
             insert_at = (task_lines[-1] + 1) if task_lines else start + 1
-        _drop_empty_placeholder(lines, start, end)
+        insert_at = _drop_empty_placeholder(lines, start, end, insert_at)
 
     lines.insert(insert_at, entry_line)
+
+    if from_section and from_section.lower() != to_section.lower():
+        _add_placeholder_if_empty(lines, from_section)
 
     board_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -318,9 +332,75 @@ def move_task(
     return result
 
 
-def _drop_empty_placeholder(lines: list[str], start: int, end: int) -> None:
-    """Удалить строку-заглушку _(нет)_ внутри раздела (in-place)."""
-    for i in range(start + 1, min(end, len(lines))):
-        if lines[i].strip() == "_(нет)_":
+def _blocks(lines: list[str], start: int, end: int) -> list[tuple[int, int]]:
+    """Блоки раздела, каждый из которых держит свою заглушку.
+
+    Подразделы ### — самостоятельные блоки: пустеют и наполняются они
+    поодиночке, и заглушка у каждого своя. Раздел без подразделов — один блок.
+    """
+    subs = [i for i in range(start + 1, min(end, len(lines)))
+            if lines[i].startswith("### ")]
+    if not subs:
+        return [(start, end)]
+    return [(at, subs[k + 1] if k + 1 < len(subs) else end)
+            for k, at in enumerate(subs)]
+
+
+def _block_at(lines: list[str], start: int, end: int, idx: int) -> tuple[int, int]:
+    """Блок раздела, которому принадлежит строка idx."""
+    for b_start, b_end in _blocks(lines, start, end):
+        if b_start <= idx < b_end:
+            return b_start, b_end
+    return start, end
+
+
+def _drop_empty_placeholder(lines: list[str], start: int, end: int,
+                            insert_at: int | None = None) -> int:
+    """Удалить заглушку блока, в который идёт вставка (in-place).
+
+    Границы раздела шире блока: у раздела с подразделами заглушек столько же,
+    сколько ###, и убрать нужно ровно ту, рядом с которой встанет запись, —
+    иначе освобождается чужой подраздел, а целевой остаётся с заглушкой под
+    записью. Возвращает поправленную позицию вставки: удаление строки выше неё
+    сдвигает всё, что ниже.
+    """
+    at = start if insert_at is None else insert_at
+    b_start, b_end = _block_at(lines, start, end, at)
+    for i in range(b_start + 1, min(b_end, len(lines))):
+        if lines[i].strip() == PLACEHOLDER:
             lines.pop(i)
-            return
+            return at - 1 if i < at else at
+    return at
+
+
+def _section_at(lines: list[str], idx: int) -> str | None:
+    """Имя раздела ##, в котором лежит строка idx."""
+    for i in range(min(idx, len(lines) - 1), -1, -1):
+        m = re.match(r"^##\s+(.*)$", lines[i])
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _add_placeholder_if_empty(lines: list[str], name: str) -> None:
+    """Вернуть заглушку в опустевшие блоки раздела (in-place).
+
+    Зеркало _drop_empty_placeholder: блок без задач и без заглушки читается не
+    как «пусто», а как «сломалось» — между заголовками просто ничего нет.
+    Блоки обходим с конца: вставка сдвигает границы только тех, что ниже.
+    """
+    bounds = _section_bounds(lines, name)
+    if bounds is None:
+        return
+    start, end = bounds
+    for b_start, b_end in reversed(_blocks(lines, start, end)):
+        body = lines[b_start + 1:b_end]
+        if any(_ENTRY_LINE_RE.match(ln) for ln in body):
+            continue
+        if any(ln.strip() == PLACEHOLDER for ln in body):
+            continue
+        # Пустые строки от уехавших записей схлопываем: заглушка идёт сразу за
+        # заголовком, отбивка перед следующим остаётся одна
+        rest = [ln for ln in body if ln.strip()]
+        tail = [] if b_end >= len(lines) else [""]
+        lines[b_start + 1:b_end] = ["", PLACEHOLDER] + (["", *rest] if rest else []) + tail

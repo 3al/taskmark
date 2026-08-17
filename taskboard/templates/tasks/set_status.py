@@ -413,22 +413,37 @@ def _drop_placeholder(lines: list[str], start: int, end: int) -> None:
             return
 
 
+def _blocks(lines: list[str], start: int, end: int) -> list[tuple[int, int]]:
+    """Блоки раздела, каждый из которых держит свою заглушку.
+
+    Подразделы ### — самостоятельные блоки: пустеют они поодиночке, и заглушка
+    у каждого своя. Раздел без подразделов — один блок.
+    """
+    subs = [i for i in range(start + 1, min(end, len(lines)))
+            if lines[i].startswith("### ")]
+    if not subs:
+        return [(start, end)]
+    return [(at, subs[k + 1] if k + 1 < len(subs) else end)
+            for k, at in enumerate(subs)]
+
+
 def _add_placeholder_if_empty(lines: list[str], name: str) -> None:
-    """Вернуть заглушку в раздел, если в нём не осталось задач."""
+    """Вернуть заглушку в опустевшие блоки раздела.
+
+    Блоки обходим с конца: вставка сдвигает границы только тех, что ниже.
+    """
     bounds = _section_bounds(lines, name)
     if not bounds:
         return
     start, end = bounds
-    body = lines[start + 1:end]
-    if any(re.match(r"^\s*-\s*(?:~~)?\s*TASK-\d+\s*·", ln) for ln in body):
-        return
-    if any(ln.strip() == PLACEHOLDER for ln in body):
-        return
-    # Подразделы ### получают заглушку сами по себе — здесь только пустой ##
-    if any(ln.startswith("### ") for ln in body):
-        return
-    lines.insert(start + 1, "")
-    lines.insert(start + 2, PLACEHOLDER)
+    for b_start, b_end in reversed(_blocks(lines, start, end)):
+        body = lines[b_start + 1:b_end]
+        if any(re.match(r"^\s*-\s*(?:~~)?\s*TASK-\d+\s*·", ln) for ln in body):
+            continue
+        if any(ln.strip() == PLACEHOLDER for ln in body):
+            continue
+        lines.insert(b_start + 1, "")
+        lines.insert(b_start + 2, PLACEHOLDER)
 
 
 def _tidy_section(lines: list[str], name: str) -> None:
