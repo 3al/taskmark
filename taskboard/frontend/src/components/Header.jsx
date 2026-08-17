@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import AddProjectModal from './AddProjectModal'
 import CopyButton from './CopyButton'
 import { useListKeys } from '../listKeys'
 import { SIZE_KEYS, TASK_SIZES } from '../taskSizes'
@@ -76,23 +77,9 @@ export default function Header({
   sizes = [], onSizes,
 }) {
   const [adding, setAdding] = useState(false)
-  const [path, setPath] = useState('')
   const [error, setError] = useState(null)
   // Подтверждение удаления: кнопка ✕ рядом с проектом легко нажать случайно
   const [confirmingRemove, setConfirmingRemove] = useState(false)
-
-  const addProject = async () => {
-    if (!path.trim()) return
-    setError(null)
-    try {
-      await api.registerProject(path.trim())
-      setPath('')
-      setAdding(false)
-      onRefresh()
-    } catch (e) {
-      setError(e.message)
-    }
-  }
 
   // Забыть проект: вычищает из реестра (файлы не трогаются),
   // сервер переключается на следующий в списке
@@ -111,26 +98,29 @@ export default function Header({
   // whitespace-nowrap: подпись кнопки не должна ломаться на две строки — так
   // кнопка становится выше соседних, и шапка едет целиком
   const btn = 'shrink-0 whitespace-nowrap px-3 py-1.5 text-sm rounded-lg border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800 transition'
-  // Поля шапки: путь проекта и поиск. Ширина задана **базой + ростом**, а не
-  // фиксированным `w-`, и это не косметика:
+  // Поле шапки (поиск). Ширина задана **базой + ростом**, а не фиксированным
+  // `w-`, и это не косметика:
   //
   // перенос строки браузер решает по базовым ширинам, **до** раздачи свободного
   // места. Поэтому ни отступы, ни `flex-shrink` перенос не отменяют — сжатие
   // случается уже внутри готовой строки. Отменяет его только меньшая база:
-  // строка «считает» поля по 160px, а на экране они дорастают до 208 за счёт
+  // строка «считает» поле по 160px, а на экране оно дорастает до 208 за счёт
   // свободного места, которого иначе просто не хватало на кнопки.
   //
-  // База и коэффициент роста у обоих полей одинаковые — значит и ширина у них
-  // всегда одна и та же, сколько бы места ни осталось
+  // Константа осталась отдельной: следующее поле шапки обязано получить ту же
+  // базу — разные ширины соседних полей читаются как разная важность
   const headerField = 'basis-40 grow max-w-52 min-w-0'
   const activeProject = projects.find((p) => p.name === active)
 
   return (
-    // Шапка переносится, а не сжимается: в одну строку она помещается не всегда
-    // (форма пути проекта добавляет разом ~350px), а сжатие вместо переноса
-    // деформирует кнопки — текст в них ломается, «+ Задача» уходит за край.
-    // Поэтому у каждой группы стоит shrink-0: перенос целой группой читается,
-    // сплющенная кнопка — нет
+    // Шапка переносится, а не сжимается: сжатие вместо переноса деформирует
+    // кнопки — текст в них ломается, «+ Задача» уходит за край. Поэтому у
+    // каждой группы стоит shrink-0: перенос целой группой читается, сплющенная
+    // кнопка — нет.
+    //
+    // Отсюда же правило для нового контрола: **всё, что можно показать в окне,
+    // в строку шапки не ставят.** Форма пути проекта стоила ~430px и ломала
+    // строку одним своим появлением — теперь она в окне, а в шапке кнопка
     <header className="flex flex-wrap items-start gap-2 px-4 py-3 border-b border-zinc-800 bg-zinc-900/60">
       {/* Знак: [x] — синтаксис отмеченной задачи в markdown, тем же моноширинным,
           каким она написана в файле. Дальше название обычным шрифтом интерфейса */}
@@ -188,30 +178,22 @@ export default function Header({
         )}
       </div>
 
-      <button className={btn} onClick={() => setAdding(!adding)} title="Добавить проект по пути к его корню">
+      {/* Форма добавления живёт в окне, а не в строке шапки: поле пути с
+          кнопками — это ~430px, из-за которых строка переносилась (правило
+          выше). В шапке остаётся одна кнопка, в окне полю есть где стоять */}
+      <button className={btn} onClick={() => setAdding(true)} title="Добавить проект по пути к его корню">
         + проект
       </button>
 
-      {/* Поле пути — прямой элемент шапки, а не вложенное в обёртку: расти в
-          свободное место может только сам элемент строки. Обёртка сжимала бы
-          его до содержимого, и поле осталось бы уже поиска */}
       {adding && (
-        <>
-          <input
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            placeholder="D:\мой-проект"
-            title="Путь к корню проекта (папка tasks берётся внутри него)"
-            className={`bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm
-              ${headerField} focus:outline-none focus:border-sky-500`}
-            onKeyDown={(e) => e.key === 'Enter' && addProject()}
-          />
-          <button className={btn} onClick={addProject}>OK</button>
-          {error && <span className="text-xs text-rose-400 self-center shrink-0">{error}</span>}
-        </>
+        <AddProjectModal
+          startPath={projectDir(activeProject?.tasks_dir || '')}
+          onAdded={onRefresh}
+          onClose={() => setAdding(false)}
+        />
       )}
 
-      {!adding && error && <span className="text-xs text-rose-400 self-center">{error}</span>}
+      {error && <span className="text-xs text-rose-400 self-center">{error}</span>}
 
       {/* Живой фильтр: без кнопки «искать» — доска сужается по мере ввода */}
       {/* Поиск прижат вправо: свободное место строки собирается перед ним */}

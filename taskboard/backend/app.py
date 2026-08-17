@@ -25,6 +25,7 @@ from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
                             save_global_config, save_project_config,
                             validate_card_style)
 from backend.create_task_runner import create_task
+from backend.fs_browse import browse_dir
 from backend.epics import (annotate_epics, epic_name, epic_tasks, list_epics,
                            register_epic, set_task_epic)
 from backend.migrations import (apply_config_migrations, migrate_global_config,
@@ -209,6 +210,18 @@ def _resolve_tasks_dir(path: Path) -> Path:
 @app.get("/api/projects")
 def api_projects() -> dict:
     return registry.list_projects()
+
+
+@app.get("/api/fs/dirs")
+def api_fs_dirs(path: str = "") -> dict:
+    """Подпапки каталога — для выбора корня проекта мышью.
+
+    Абсолютного пути браузер не отдаёт, поэтому файловую систему показывает
+    сервер. Отказ (нет папки, нет доступа) приходит в теле с `ok: false`:
+    обход чужих каталогов упирается в них постоянно, и для окна это обычный
+    ответ, а не сбой.
+    """
+    return browse_dir(path)
 
 
 @app.post("/api/projects")

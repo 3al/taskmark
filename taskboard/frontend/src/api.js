@@ -58,6 +58,9 @@ export const api = {
     request(`/api/tasks/${id}/confirm`, {
       method: 'POST', body: JSON.stringify({ ids, section }),
     }),
+  // Подпапки каталога для выбора корня проекта мышью: путь к папке браузер не
+  // отдаёт, поэтому файловую систему показывает сервер
+  browseDirs: (path = '') => request(`/api/fs/dirs?path=${encodeURIComponent(path)}`),
   ensureQueue: () => request('/api/queue/ensure', { method: 'POST' }),
   repairPlan: () => request('/api/board/repair'),
   repairApply: () => request('/api/board/repair', { method: 'POST' }),
