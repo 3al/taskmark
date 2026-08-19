@@ -438,7 +438,7 @@ class TypeUiTest(unittest.TestCase):
         Подложка гасит событие у себя, поэтому до фона оно не доходит вовсе.
         """
         text = (FRONTEND / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
-        picker = text[text.index("{typePicker && ("):text.index("статус: {task.meta.status")]
+        picker = text[text.index("{typePicker && ("):text.index("создана: {task.meta.created")]
         self.assertIn("fixed inset-0", picker, "под списком нет подложки")
         self.assertIn("stopPropagation", picker,
                       "клик по подложке уходит дальше и закрывает окно")

@@ -725,8 +725,10 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     onPick={pickAssignee}
                   />
                 )}
+                {/* Статус — в цвет заголовка своей колонки на доске (ключ `header`):
+                    шрифт и размер мета-строки прежние, отличается только цвет */}
                 <span>
-                статус: {task.meta.status || '—'} · создана: {task.meta.created || '—'}
+                статус: <span className={style.header}>{task.meta.status || '—'}</span> · создана: {task.meta.created || '—'}
                 </span>
               </div>
             )}

@@ -231,6 +231,19 @@ class CatalogColorsTest(unittest.TestCase):
             self.assertIn(f".md-tint-{color} ", css,
                           f"для цвета {color} нет оттенка заголовков md-tint")
 
+    def test_status_in_task_window_wears_its_column_color(self) -> None:
+        """Статус в мета-строке окна — в цвет заголовка своей колонки.
+
+        Рядом с датой создания одним серым статус читался как часть служебной
+        подписи; красит его тот же ключ `header`, что и заголовок колонки на доске.
+        """
+        src = (Path(__file__).resolve().parent.parent
+               / "frontend" / "src" / "components" / "TaskModal.jsx").read_text(encoding="utf-8")
+        self.assertRegex(
+            src,
+            r"<span className=\{style\.header\}>\{task\.meta\.status",
+            "статус в окне задачи снова не в цвет своей колонки")
+
 
 class ProjectConfigLocationTest(unittest.TestCase):
     """Конфиг проекта не должен попадать в его git-дерево."""
