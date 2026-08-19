@@ -289,6 +289,19 @@ def load_pipeline(cfg: dict) -> Pipeline:
         meta["key"] = key
         statuses.append(meta)
 
+    # Этапы, спрашивающие исполнителя. Поставка не включает их нигде: имя
+    # обязательно там, где этап его спрашивает, и включённое по умолчанию
+    # требование доехало бы обновлением до тех, кто о нём не просил. Список
+    # проекта — полный набор отмеченных галочек, поэтому пустой значит «нигде»
+    chosen = cfg.get("assignee_statuses")
+    if isinstance(chosen, (list, tuple, set)):
+        allowed = {str(key) for key in chosen}
+        for meta in statuses:
+            meta["assignee"] = meta["key"] in allowed
+    else:
+        for meta in statuses:
+            meta["assignee"] = bool(meta.get("assignee"))
+
     known = {s["key"] for s in statuses}
     # Значение может стать None: пайплайн бывает пустым, и действию некуда вести
     actions: dict[str, str | None] = dict(DEFAULT_ACTIONS)
@@ -314,6 +327,19 @@ def load_pipeline(cfg: dict) -> Pipeline:
             actions.get("create"))
 
     return Pipeline(statuses, actions)
+
+
+def accepts_assignee(pipeline: Pipeline | None, status: str) -> bool:
+    """Спрашивает ли этап исполнителя.
+
+    Правило живёт рядом с пайплайном, а не в UI: поле прячет окно, а отказывает
+    API, и трактовка у них обязана быть одна. Незнакомый статус исполнителя не
+    принимает — задача осталась на этапе, которого в маршруте больше нет, и
+    назначать на него некого; снятие имени это не запрещает (см. app.py).
+    """
+    if pipeline is None or not status:
+        return False
+    return bool((pipeline.get(status) or {}).get("assignee"))
 
 
 def is_terminal(pipeline: Pipeline | None, status: str) -> bool:

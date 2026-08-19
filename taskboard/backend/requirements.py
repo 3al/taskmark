@@ -479,6 +479,37 @@ def exception_gaps_message(gaps: list[dict]) -> str:
             f"в отказ, которого нечем закрыть")
 
 
+# Исполнитель — требование **входа**, а не выхода: остальные проверки говорят,
+# что должно быть сделано, чтобы уйти с этапа, а имя нужно ровно в тот момент,
+# когда задача на этап попала, — иначе всё время, пока она там стоит, неизвестно,
+# кто ею занят. Отсюда и отдельная ветка: объявлять его в `requires` этапа
+# значило бы спросить имя на выходе, то есть когда оно уже не нужно.
+#
+# Декларации в конфиге у него нет: этап объявляет это флагом `assignee` в
+# пайплайне (галочка «исполнитель» в настройках), и второе место, где то же
+# самое включается по-другому, разошлось бы с первым
+ASSIGNEE_FIELD = "assignee"
+# `ask` — утверждение о выполненном («исполнитель назначен»): так требования
+# читаются в долге и в отказе. `todo` — то же самое указанием, для мест, где
+# человеку говорят, что сделать: «уедет с долгом — исполнитель назначен» звучит
+# как сообщение о том, что он уже есть
+ASSIGNEE_REQUIREMENT = {"id": "assignee", "check": "field", "name": ASSIGNEE_FIELD,
+                        "ask": "исполнитель назначен",
+                        "todo": "назначить исполнителя"}
+
+
+def entry_requirements(pipeline, status: str) -> list[dict]:
+    """Что этап требует на входе. Сейчас это только исполнитель.
+
+    Съезд с маршрута не спрашивает никого: отменённой задачей не занимаются.
+    """
+    meta = next((s for s in _rows(pipeline) if s["key"] == status), {})
+    if not meta.get("assignee") or meta.get("offramp"):
+        return []
+    return [dict(ASSIGNEE_REQUIREMENT, mandatory=True, entry=True,
+                 stage=status, stage_label=meta.get("label", status))]
+
+
 def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dict]:
     """Что этап просит на выходе: объявленное проектом и рекомендованное каталогом.
 
@@ -657,10 +688,16 @@ def task_debt(tasks_dir, task_id: str, cfg: dict, pipeline=None) -> dict:
 
 
 def _debt(content: str, meta: dict, cfg: dict, rows: list[dict]) -> dict:
-    """Долг по разобранному файлу задачи: {status, debt, recommended}."""
+    """Долг по разобранному файлу задачи: {status, debt, recommended}.
+
+    К требованиям пройденных этапов добавляется то, что спрашивает **нынешний**
+    этап на входе: незаполненный исполнитель — долг сразу, пока задача на этапе
+    стоит, а не при попытке уйти с него.
+    """
     status = _one_line(meta.get("status"))
     reqs = [r for key in crossed(rows, status)
             for r in stage_requirements(cfg, rows, key)]
+    reqs += entry_requirements(rows, status)
     pending = _unmet(reqs, content, meta)
     return {"status": status,
             "debt": [r for r in pending if r.get("mandatory")],
@@ -682,7 +719,10 @@ def move_debt(tasks_dir, task_id: str, cfg: dict, target: str,
     content = path.read_text(encoding="utf-8-sig")
     meta, _body = parse_frontmatter(content)
     current = _one_line(meta.get("status"))
-    reqs = move_requirements(cfg, rows, current, target)
+    # Требования пройденных этапов плюс то, что спросит сам целевой: имя
+    # исполнителя человек должен видеть в цене переноса, а не узнавать о долге
+    # уже после того, как отпустил карточку
+    reqs = move_requirements(cfg, rows, current, target) + entry_requirements(rows, target)
     return [r for r in _unmet(reqs, content, meta) if r.get("mandatory")]
 
 
@@ -853,7 +893,8 @@ def annotate_debt(tasks_dir, board: dict, cfg: dict, pipeline) -> dict:
     """
     tasks_dir = Path(tasks_dir)
     rows = _rows(pipeline)
-    if not (cfg.get("requires") or any(s.get("recommends") for s in rows)):
+    if not (cfg.get("requires") or any(s.get("recommends") for s in rows)
+            or any(s.get("assignee") for s in rows)):
         return board
     for column in board.get("columns", []):
         for group in column.get("groups", []):

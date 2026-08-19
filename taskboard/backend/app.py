@@ -18,7 +18,7 @@ from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
                             PROJECT_KEYS,
-                            add_criteria_preset,
+                            add_assignee, add_criteria_preset, assignees,
                             card_style, criteria_presets,
                             custom_criteria_presets, load_global_config,
                             load_project_config, remove_criteria_preset,
@@ -44,13 +44,13 @@ from backend.search import search_tasks
 from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            move_confirmation, set_blocked_by, set_paused,
                            stall_details, stalled_tasks)
-from backend.statuses import CATALOG, load_pipeline
+from backend.statuses import CATALOG, accepts_assignee, load_pipeline
 from backend.tasks_delete import delete_plan, delete_task
 from backend.notes import append_note
 from backend.task_parser import (EDITABLE_SECTIONS, annotate_marks,
                                  find_task_file, list_all_tasks, parse_task,
-                                 set_task_section, set_task_size, set_task_title,
-                                 set_task_type)
+                                 set_task_assignee, set_task_section,
+                                 set_task_size, set_task_title, set_task_type)
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -140,6 +140,10 @@ class TaskUpdateIn(BaseModel):
     # ключ ещё не в реестре, — как и в форме создания
     epic: str | None = None
     epic_name: str = ""
+    # Исполнитель: кто занимается задачей на этапе проверки. Список открытый —
+    # имя приходит текстом, а известные копятся в глобальном конфиге. Пустая
+    # строка снимает назначение, поэтому None и "" здесь тоже значат разное
+    assignee: str | None = None
 
 
 class ConfigIn(BaseModel):
@@ -499,6 +503,16 @@ def api_search(q: str = "") -> dict:
     return {"query": q, "items": search_tasks(tasks_dir, q)}
 
 
+@app.get("/api/assignees")
+def api_assignees() -> dict:
+    """Известные исполнители — подсказки поля в окне задачи.
+
+    Список глобальный, а не проектный: человек ведёт несколько проектов одной
+    машины, и заводить одни и те же имена в каждом он не станет.
+    """
+    return {"items": assignees()}
+
+
 @app.get("/api/epics")
 def api_epics() -> dict:
     """Реестр эпиков проекта — подсказки при создании задачи."""
@@ -553,6 +567,12 @@ def _debt_item(req: dict) -> dict:
     """
     return {"id": req.get("id"), "text": requirement_text(req),
             "check": req.get("check"), "confirmable": req.get("check") == "confirm",
+            # Требование входа закрывает человек и **сейчас**: обещать «агент
+            # закроет позже» про имя исполнителя нельзя — агент его не знает.
+            # `todo` — та же суть указанием, а не утверждением о выполненном:
+            # в списке дел «исполнитель назначен» читается как «уже есть»
+            "entry": bool(req.get("entry")),
+            "todo": req.get("todo") or "",
             "stage": req.get("stage_label") or req.get("stage")}
 
 
@@ -573,6 +593,9 @@ def api_task(task_id: str) -> dict:
     # Можно ли вообще ставить простой в этом статусе: в терминальном UI просто
     # не показывает кнопки — подпись про недоступное действие только шумит
     task["stall"]["can_set"] = can_stall(pipeline, task["meta"].get("status", ""))["ok"]
+    # Спрашивает ли этап исполнителя: правило одно, и считает его бэкенд —
+    # окно рисует поле по этому признаку, а не по списку статусов у себя
+    task["can_assign"] = accepts_assignee(pipeline, task["meta"].get("status", ""))
     # Долг этапа: поля `confirmed`/`waived` окно рисует поимённо, а долг из них
     # не выводится — он считается по положению задачи и требованиям конфига
     debt = task_debt(tasks_dir, task_id, cfg, pipeline)
@@ -767,6 +790,31 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
         if not sized.get("ok"):
             raise HTTPException(400, sized.get("error", "Ошибка смены размера"))
         result["size"] = sized["size"]
+
+    if body.assignee is not None:
+        # Исполнителя спрашивают не на каждом этапе: на своих задачу делает
+        # тот, кто её взял. Правило спрашиваем у пайплайна — окно поле прячет,
+        # а API обязано отказать: иначе прятание превращается в украшение.
+        # Снятие имени разрешено всюду: задачу могли перенести с этапа
+        # проверки, и застрявшее имя надо чем-то убирать
+        name = " ".join(body.assignee.split())
+        if name:
+            task = parse_task(tasks_dir, task_id)
+            status = (task or {}).get("meta", {}).get("status", "")
+            pipeline = load_pipeline(cfg)
+            if not accepts_assignee(pipeline, status):
+                label = pipeline.label_of(status) if status else "—"
+                raise HTTPException(
+                    400, f"Этап «{label}» исполнителя не спрашивает — "
+                         f"включить можно в настройках жизненного цикла")
+        assigned = set_task_assignee(tasks_dir, task_id, name)
+        if not assigned.get("ok"):
+            raise HTTPException(400, assigned.get("error", "Ошибка назначения"))
+        # Имя запоминается после записи, а не до: список подсказок не должен
+        # пополняться тем, что в задачу не доехало
+        if assigned["assignee"]:
+            add_assignee(assigned["assignee"])
+        result["assignee"] = assigned["assignee"]
 
     if body.epic is not None:
         # Сначала пишем в задачу: она же проверяет форму ключа. Регистрация

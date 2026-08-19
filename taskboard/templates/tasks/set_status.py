@@ -83,7 +83,7 @@ def _utf8_console() -> None:
 # объявлена, скрипт про неё не знает, а человек уверен, что она работает.
 # Имена, а не номер версии, — как CAPABILITIES в backend/app.py: набор
 # расширяется, не заводя таблицы соответствия версий возможностям.
-SCRIPT_CAPABILITIES = {"stall", "task_types", "task_sizes",
+SCRIPT_CAPABILITIES = {"stall", "task_types", "task_sizes", "task_assignee",
                        "requires", "comments", "epics"}
 
 # Дефолты дублируют backend/config.py: скрипт автономен и работает
@@ -218,6 +218,17 @@ def pipeline_of(cfg: dict) -> list[dict]:
         meta.setdefault("section", _titleize(key))
         meta["key"] = key
         out.append(meta)
+
+    # Этапы, спрашивающие исполнителя: полный набор галочек из настроек.
+    # Поставка не включает их нигде — зеркало backend/statuses.py
+    chosen = cfg.get("assignee_statuses")
+    if isinstance(chosen, (list, tuple, set)):
+        allowed = {str(k) for k in chosen}
+        for meta in out:
+            meta["assignee"] = meta["key"] in allowed
+    else:
+        for meta in out:
+            meta["assignee"] = bool(meta.get("assignee"))
     return out
 
 
@@ -553,6 +564,16 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
         return {"ok": False,
                 "error": gate_message(task_id, pipeline, from_status, status, blocked)}
 
+    # Гейт входа: этап, спрашивающий исполнителя, спрашивает его сейчас, а не на
+    # выходе — всё время, пока задача там стоит, должно быть видно, кто ею занят.
+    # Имя знает только человек, поэтому агент обязан спросить: у доски свой путь
+    # (перенос проходит, а незаполненный исполнитель становится долгом)
+    if unmet(entry_requirements(pipeline, status), task_file):
+        return {"ok": False,
+                "error": f"Этап «{_label_of(pipeline, status)}» спрашивает "
+                         f"исполнителя: кто займётся задачей? Назовите его — "
+                         f"--assignee \"Имя\" (известные имена: --assignees)"}
+
     lines = board_path.read_text(encoding="utf-8").splitlines()
     src_idx = _entry_index(lines, task_id)
     if src_idx is None:
@@ -747,6 +768,7 @@ PAUSE_TEXT = "пауза: {reason}"
 RESUME_TEXT = "пауза снята"
 TYPE_TEXT = "тип: {now} (было {was})"
 SIZE_TEXT = "размер: {now} (было {was})"
+ASSIGNEE_TEXT = "исполнитель: {now} (было {was})"
 TITLE_TEXT = "название: «{now}» (было «{was}»)"
 
 
@@ -1518,6 +1540,78 @@ def sizes() -> dict:
     """Каталог размеров задачи: список спрашивают у скрипта, а не помнят."""
     return {"sizes": [{"key": key, **meta} for key, meta in TASK_SIZES.items()]}
 
+def _global_config_path() -> Path:
+    """Файл глобального конфига инструмента — общий для всех проектов машины."""
+    return Path.home() / ".taskboard" / "config.json"
+
+
+def assignees() -> dict:
+    """Известные исполнители: список общий для всех проектов машины.
+
+    Людей поставка не знает — имена приносит работа, поэтому список открытый и
+    пополняется тем, что назначили. Он нужен, чтобы спрашивать «кто занимается
+    задачей» с вариантами, а не с чистого листа.
+    """
+    stored = _read_json(_global_config_path())
+    return {"assignees": [str(n) for n in (stored.get("assignees") or [])]}
+
+
+def _remember_assignee(name: str) -> None:
+    """Запомнить имя в глобальном конфиге, если оно новое.
+
+    Читаем-правим-пишем один ключ: остальное в файле принадлежит инструменту, и
+    переписывать его целиком отсюда нельзя.
+    """
+    name = " ".join((name or "").split())
+    known = assignees()["assignees"]
+    if not name or name in known:
+        return
+    path = _global_config_path()
+    stored = _read_json(path)
+    stored["assignees"] = [*known, name]
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(stored, ensure_ascii=False, indent=2),
+                        encoding="utf-8")
+    except OSError:
+        pass  # список подсказок — удобство, а не условие работы
+
+
+def set_assignee(tasks_dir: Path, task_id: str, value: str,
+                 agent: str | None = None, status: str = "") -> dict:
+    """Назначить исполнителя задачи или снять назначение (`assignee: ~`).
+
+    Список имён открытый: проверять нечего, кроме пустоты, — зато назначают не
+    на каждом этапе. Спрашивает ли этап исполнителя, объявляет пайплайн
+    (флаг `assignee`); `status` — этап, на котором задача окажется, если имя
+    ставят вместе с переводом.
+
+    **Снятие разрешено везде**: задачу могли перенести с этапа проверки, и
+    застрявшее имя надо чем-то убирать.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    value = " ".join((value or "").split())
+    cfg = load_config(tasks_dir)
+    pipeline = pipeline_of(cfg)
+    status = status or _one_line(_read_meta(path).get("status"))
+    if value and not entry_requirements(pipeline, status):
+        return {"ok": False,
+                "error": f"Этап «{_label_of(pipeline, status)}» исполнителя не "
+                         f"спрашивает — включить можно в настройках инструмента, "
+                         f"галочкой «исполнитель» у статуса"}
+    was = _one_line(_read_meta(path).get(ASSIGNEE_FIELD))
+    was = "" if was == EMPTY else was
+    _set_fields(path, {ASSIGNEE_FIELD: value or EMPTY})
+    if value != was:
+        note_event(tasks_dir, task_id,
+                   ASSIGNEE_TEXT.format(now=value or "не назначен",
+                                        was=was or "не назначен"), agent)
+        _remember_assignee(value)
+    return {"ok": True, "task": task_id.strip().upper(), "assignee": value}
+
 
 def clear_stall(tasks_dir: Path, task_id: str, agent: str | None = None) -> dict:
     """Снять с задачи и блокировки, и паузу (при переезде в конец маршрута)."""
@@ -1676,6 +1770,36 @@ def _requirement_kind(req: dict) -> tuple[str, str]:
     важен, как и при её поиске в файле.
     """
     return (_one_line(req.get("check")).lower(), _one_line(req.get("name")).lower())
+
+
+# Исполнитель — требование **входа**, а не выхода: остальные проверки говорят,
+# что должно быть сделано, чтобы уйти с этапа, а имя нужно ровно тогда, когда
+# задача на этап попала, — иначе всё время, пока она там стоит, неизвестно, кто
+# ею занят. Объявить его в `requires` значило бы спросить имя на выходе, то есть
+# когда оно уже не нужно.
+#
+# Декларации в конфиге у него нет: этап объявляет это флагом `assignee` в
+# пайплайне (галочка «исполнитель» в настройках инструмента)
+ASSIGNEE_FIELD = "assignee"
+# `ask` — утверждение о выполненном («исполнитель назначен»): так требования
+# читаются в долге и в отказе. `todo` — то же самое указанием, для мест, где
+# человеку говорят, что сделать: «уедет с долгом — исполнитель назначен» звучит
+# как сообщение о том, что он уже есть
+ASSIGNEE_REQUIREMENT = {"id": "assignee", "check": "field", "name": ASSIGNEE_FIELD,
+                        "ask": "исполнитель назначен",
+                        "todo": "назначить исполнителя"}
+
+
+def entry_requirements(pipeline: list[dict], status: str) -> list[dict]:
+    """Что этап требует на входе. Сейчас это только исполнитель.
+
+    Съезд с маршрута не спрашивает никого: отменённой задачей не занимаются.
+    """
+    meta = next((s for s in pipeline if s["key"] == status), {})
+    if not meta.get("assignee") or meta.get("offramp"):
+        return []
+    return [dict(ASSIGNEE_REQUIREMENT, mandatory=True, entry=True,
+                 stage=status, stage_label=meta.get("label", status))]
 
 
 def stage_requirements(cfg: dict, pipeline: list[dict], status: str) -> list[dict]:
@@ -1995,6 +2119,9 @@ def task_debt(tasks_dir, task_id: str, cfg: dict | None = None) -> dict:
     status = current_status(tasks_dir, task_id) or ""
     reqs = [r for key in crossed(pipeline, status)
             for r in stage_requirements(cfg, pipeline, key)]
+    # Плюс то, что спрашивает нынешний этап на входе: незаполненный исполнитель —
+    # долг сразу, пока задача на этапе стоит, а не при попытке уйти с него
+    reqs += entry_requirements(pipeline, status)
     pending = unmet(reqs, path)
     return {"ok": True, "task": task_id, "status": status,
             "debt": [r for r in pending if r.get("mandatory")],
@@ -2395,6 +2522,10 @@ def main() -> None:
                         help="оценить объём задачи: S | M | L | XL (пусто — снять)")
     parser.add_argument("--sizes", action="store_true",
                         help="каталог размеров задачи (JSON)")
+    parser.add_argument("--assignee", metavar="ИМЯ", default=None,
+                        help="кто занимается задачей на этапе проверки (пусто — снять)")
+    parser.add_argument("--assignees", action="store_true",
+                        help="известные исполнители: общий на машине список (JSON)")
     parser.add_argument("--stalled", action="store_true",
                         help="Что сейчас стоит и почему (JSON)")
     parser.add_argument("--debt", metavar="TASK-NNN", nargs="?", const="",
@@ -2459,6 +2590,10 @@ def main() -> None:
 
     if args.sizes:
         print(json.dumps(sizes(), ensure_ascii=False, indent=2))
+        return
+
+    if args.assignees:
+        print(json.dumps(assignees(), ensure_ascii=False, indent=2))
         return
 
     if args.stalled:
@@ -2546,6 +2681,23 @@ def main() -> None:
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
         print(f"[OK] {result['task']}: размер — {result['label']}")
+        if not args.status and args.note is None:
+            return
+
+    # Исполнитель — свойство этапа, а не этап: флаг работает и сам по себе, и
+    # вместе с переводом. Именно вместе он и нужен чаще всего: этап, спрашивающий
+    # исполнителя, без имени не пропустит, поэтому назначаем **до** перевода и
+    # проверяем имя по целевому статусу, а не по нынешнему
+    if args.assignee is not None:
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --assignee")
+        result = set_assignee(tasks_dir, args.task_id, args.assignee, args.agent,
+                              status=args.status or "")
+        if not result.get("ok"):
+            print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[OK] {result['task']}: исполнитель — "
+              f"{result['assignee'] or 'не назначен'}")
         if not args.status and args.note is None:
             return
 

@@ -10,6 +10,7 @@ import { mdComponents, rehypeNoteMeta, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
 import { useListKeys } from '../listKeys'
 import { taskBody, taskCopyText } from '../taskText'
+import AssigneeField from './AssigneeField'
 import CopyButton from './CopyButton'
 import EpicField from './EpicField'
 import MarkdownEditor from './MarkdownEditor'
@@ -285,6 +286,25 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
     items: sizeOptions, open: sizePicker,
     onPick: pickSize, onClose: () => setSizePicker(false),
   })
+
+  // Исполнитель: кто занимается задачей на этапе проверки. Поле есть не в
+  // каждом статусе — спрашивает ли этап исполнителя, говорит бэкенд
+  // (`can_assign`): правило одно, и считать его здесь заново значило бы
+  // разойтись с ним при первой же правке пайплайна
+  const [assigneeSaving, setAssigneeSaving] = useState(false)
+
+  const pickAssignee = async (name) => {
+    setAssigneeSaving(true)
+    try {
+      await api.updateTask(taskId, { assignee: name })
+      setTask(await api.task(taskId))
+      onChanged?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setAssigneeSaving(false)
+    }
+  }
 
   // Эпик: чем задача является частью. Правится тем же полем, что и в форме
   // создания, — ключ выбирают из реестра, для нового спрашивается имя.
@@ -694,6 +714,17 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     </>
                   )}
                 </span>
+                {/* Исполнитель: показываем там, где этап его спрашивает, и там,
+                    где имя уже стоит, — иначе назначение, пережившее перенос
+                    карточки, исчезло бы из виду, оставшись в файле */}
+                {(task.can_assign
+                  || (task.meta.assignee && task.meta.assignee !== '~')) && (
+                  <AssigneeField
+                    value={task.meta.assignee === '~' ? '' : (task.meta.assignee || '')}
+                    busy={assigneeSaving}
+                    onPick={pickAssignee}
+                  />
+                )}
                 <span>
                 статус: {task.meta.status || '—'} · создана: {task.meta.created || '—'}
                 </span>

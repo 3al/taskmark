@@ -84,6 +84,9 @@ export const api = {
   getConfig: () => request('/api/config'),
   pipeline: () => request('/api/pipeline'),
   pipelineSources: () => request('/api/pipeline/sources'),
+  // Известные исполнители: список общий для всех проектов машины и
+  // пополняется по ходу — новое имя запоминает сама правка задачи
+  assignees: () => request('/api/assignees'),
   epics: () => request('/api/epics'),
   // Состав эпика: задачи в порядке маршрута проекта + имя из реестра
   epicTasks: (key) => request(`/api/epics/${encodeURIComponent(key)}/tasks`),

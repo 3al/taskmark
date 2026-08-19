@@ -52,6 +52,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   const [statusesOverride, setStatusesOverride] = useState(null)
   // Требования этапов правятся тем же редактором; null — не трогали
   const [requiresOverride, setRequiresOverride] = useState(null)
+  // Этапы, спрашивающие исполнителя; null — галочек не трогали, и проект
+  // остаётся на умолчаниях поставки (ревью и тестирование)
+  const [assigneeStatuses, setAssigneeStatuses] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   // Выполненные миграции после сохранения (переименования в проекте)
@@ -144,6 +147,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     // Требования — ключ верхнего уровня, а не внутри `statuses`: вложенное
     // затирается применением источника пайплайна
     ...(requiresOverride !== null ? { requires: requiresOverride } : {}),
+    // Этапы с исполнителем — список ключей, а не флаг внутри `statuses`: тот
+    // затирается применением готового маршрута, а галочки к маршруту не
+    // относятся
+    ...(assigneeStatuses !== null ? { assignee_statuses: assigneeStatuses } : {}),
   })
 
   // Сначала спрашиваем бэкенд, не осиротеют ли задачи выключаемых статусов
@@ -629,10 +636,12 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         requires={requiresOverride ?? config.requires ?? {}}
                         predicates={config.predicates}
                         onOpenHelp={onOpenHelp}
-                        onChange={({ pipeline: next, actions: nextActions, statuses, requires }) => {
+                        onChange={({ pipeline: next, actions: nextActions, statuses,
+                                     requires, assigneeStatuses: nextAssignees }) => {
                           setPipelineState({ pipeline: next, actions: nextActions })
                           if (statuses !== undefined) setStatusesOverride(statuses)
                           if (requires !== undefined) setRequiresOverride(requires)
+                          if (nextAssignees !== undefined) setAssigneeStatuses(nextAssignees)
                         }}
                       />
                     </div>

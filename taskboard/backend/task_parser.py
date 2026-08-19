@@ -6,8 +6,8 @@ import re
 from pathlib import Path
 
 from backend.config import TASK_SIZES, TASK_TYPES, card_style
-from backend.notes import (BOARD_AUTHOR, SIZE_TEXT, TITLE_TEXT, TYPE_TEXT,
-                           append_note)
+from backend.notes import (ASSIGNEE_TEXT, BOARD_AUTHOR, SIZE_TEXT, TITLE_TEXT,
+                           TYPE_TEXT, append_note)
 from backend.statuses import is_terminal
 
 _TASK_FILE_RE = re.compile(r"^TASK-\d+.*\.md$")
@@ -401,6 +401,35 @@ def set_task_size(tasks_dir: Path, task_id: str, value: str,
                                            was=was or "не указан"), author)
     return {"ok": True, "size": value,
             "label": TASK_SIZES[value]["label"] if value else ""}
+
+
+def set_task_assignee(tasks_dir: Path, task_id: str, value: str,
+                      author: str = BOARD_AUTHOR) -> dict:
+    """Назначить исполнителя задачи или снять назначение (`assignee: ~`).
+
+    Список имён открытый — в отличие от типа и размера: людей поставка не
+    знает, их приносит работа. Поэтому проверять здесь нечего, кроме пустоты;
+    известные имена копятся отдельно (`config.add_assignee`) и служат
+    подсказкой, а не забором.
+
+    На каком этапе назначение вообще уместно, решает пайплайн
+    (`statuses.accepts_assignee`) — это правило вызывающего, а не записи:
+    снятие имени разрешено всюду, иначе застрявшее после переноса имя нечем
+    было бы убрать.
+    """
+    value = " ".join((value or "").split())
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    was = str(meta.get("assignee", "") or "").strip()
+    was = "" if was == "~" else was
+    if not set_meta_fields(path, {"assignee": value or "~"}):
+        return {"ok": False, "error": f"Не удалось записать исполнителя в {path.name}"}
+    if value != was:
+        append_note(path, ASSIGNEE_TEXT.format(now=value or "не назначен",
+                                               was=was or "не назначен"), author)
+    return {"ok": True, "assignee": value}
 
 
 def slugify(text: str) -> str:

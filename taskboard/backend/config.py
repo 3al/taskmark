@@ -221,7 +221,11 @@ PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
                 "card_stale_days",
                 # Типы задач, про которые проекту уже говорили: требования
                 # настраивает человек, и спрашивать второй раз незачем
-                "known_task_types"}
+                "known_task_types",
+                # Этапы, на которых у задачи спрашивают исполнителя: это часть
+                # жизненного цикла. Сам список имён, наоборот, глобален —
+                # люди работают в нескольких проектах одной машины
+                "assignee_statuses"}
 
 
 def lost_section(cfg: dict) -> str:
@@ -393,3 +397,24 @@ def remove_criteria_preset(text: str) -> list[str]:
     extra = [p for p in custom_criteria_presets() if p != text.strip()]
     save_global_config({"criteria_presets": extra})
     return criteria_presets()
+
+
+# Исполнители: кто занимается задачей на этапах проверки. Список лежит в
+# глобальном конфиге (ключ assignees) — человек работает в нескольких проектах
+# одной машины, и заводить одни и те же имена в каждом он не станет.
+# Встроенных значений тут нет и быть не может: имена приносит работа, а не
+# поставка, — поэтому список пополняется по ходу, как пресеты критериев
+
+def assignees() -> list[str]:
+    """Известные имена исполнителей — общие для всех проектов машины."""
+    return [str(name) for name in (load_global_config().get("assignees") or [])]
+
+
+def add_assignee(name: str) -> list[str]:
+    """Запомнить имя, если оно новое. Вернуть полный список."""
+    name = (name or "").strip()
+    known = assignees()
+    if not name or name in known:
+        return known
+    save_global_config({"assignees": [*known, name]})
+    return assignees()

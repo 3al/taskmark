@@ -173,10 +173,23 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
   // Подписи и требования передают только те правки, которые их меняют:
   // у остальных ключ приходит `undefined`, и форма оставляет своё. Иначе
   // перестановка статуса стрелкой стирала бы подставленное источником
-  const emit = (nextPipeline, nextActions = actions, nextStatuses, nextRequires) => {
+  const emit = (nextPipeline, nextActions = actions, nextStatuses, nextRequires,
+                nextAssignees) => {
     setPicked('')
     onChange({ pipeline: nextPipeline, actions: nextActions,
-               statuses: nextStatuses, requires: nextRequires })
+               statuses: nextStatuses, requires: nextRequires,
+               assigneeStatuses: nextAssignees })
+  }
+
+  // Спрашивает ли этап исполнителя. Наружу уходит **весь** список отмеченных, а
+  // не одна правка: снятая галочка значит «на этом этапе поля нет», и отличить
+  // её от «проект про исполнителя ещё не спрашивали» можно только по списку
+  // целиком
+  const toggleAssignee = (index) => {
+    const next = pipeline.map((s, i) =>
+      (i === index ? { ...s, assignee: !s.assignee } : s))
+    emit(next, actions, undefined, undefined,
+         next.filter((s) => s.assignee).map((s) => s.key))
   }
 
   // Готовый маршрут подставляется в форму, а не сохраняется: дальше его можно
@@ -366,6 +379,22 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     </span>
                   ))}
                   <div className="ml-auto flex items-center gap-0.5 shrink-0">
+                    {/* Исполнитель: этапы, где работу делает кто-то другой
+                        (ревью, тестирование), спрашивают имя. Съезд с маршрута
+                        не спрашивает: отменённой задачей никто не занимается */}
+                    {!status.offramp && (
+                      <button onClick={() => toggleAssignee(i)}
+                              title={status.assignee
+                                ? `На этапе «${status.label}» у задачи спрашивают исполнителя`
+                                : `Спрашивать исполнителя на этапе «${status.label}»`}
+                              className={`px-1.5 mr-1 text-[10px] rounded border ${
+                                status.assignee
+                                  ? 'border-zinc-600 bg-zinc-700/40 text-zinc-300'
+                                  : 'border-dashed border-zinc-700 text-zinc-600'
+                              } hover:text-zinc-200`}>
+                        исполнитель
+                      </button>
+                    )}
                     {/* Съезд с маршрута требований не имеет: из отмены не выходят */}
                     {!status.offramp && (
                       <button onClick={() => setOpenReq(open ? null : status.key)}

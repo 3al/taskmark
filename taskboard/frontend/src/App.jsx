@@ -699,7 +699,11 @@ export default function App() {
           // требование ещё можно выполнить, и сказать надо именно это
           terminal: Boolean(result.terminal),
           confirmable: debt.filter((d) => d.confirmable),
-          blocking: debt.filter((d) => !d.confirmable),
+          // Требование входа (исполнитель) — третья группа: его закрывает
+          // человек и прямо сейчас. «Агент закроет позже» про имя исполнителя
+          // было бы неправдой — агент его не знает и спросит у человека
+          entry: debt.filter((d) => d.entry && !d.confirmable),
+          blocking: debt.filter((d) => !d.confirmable && !d.entry),
         })
         return
       }
@@ -1107,6 +1111,21 @@ export default function App() {
                         — {d.text}
                         {d.stage && <span className="text-zinc-500"> · этап «{d.stage}»</span>}
                       </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Требование входа: этап спрашивает его о задаче, которая только
+                  что туда попала, и закрывает его человек — прямо в карточке.
+                  Текст здесь указанием (`todo`), а не утверждением о выполненном:
+                  «исполнитель назначен» в списке дел читается как «уже есть».
+                  Этап не называем — это тот, куда карточку и тащат */}
+              {pendingDebt.entry.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-zinc-400">Что нужно сделать в карточке задачи:</div>
+                  <ul className="space-y-1 text-zinc-200">
+                    {pendingDebt.entry.map((d) => (
+                      <li key={d.id}>— {d.todo || d.text}</li>
                     ))}
                   </ul>
                 </div>
