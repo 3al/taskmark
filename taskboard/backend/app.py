@@ -36,7 +36,8 @@ from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
                                   apply_preset_exceptions, confirm_requirements,
                                   gate_impact, is_terminal, move_debt, requirement_text,
                                   task_debt, task_waivers, unreviewed_task_types)
-from backend.queue_ops import ensure_section, move_task, relink_entry, retitle_entry
+from backend.queue_ops import (ensure_pipeline_sections, ensure_section, move_task,
+                               relink_entry, retitle_entry)
 from backend.scaffold import (HARNESSES, SINGLE_FILE_PARTS, agentic_diff,
                               agentic_stale_details, resolve_element,
                               scaffold_project, uses_vault)
@@ -65,7 +66,8 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "move_group": True, "scaffold": True, "agentic_diff": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
                 "board_repair": True, "stall": True, "update": True,
-                "epic_tasks": True, "agentic_merge": True, "task_copy": True}
+                "epic_tasks": True, "agentic_merge": True, "task_copy": True,
+                "board_sections": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -937,6 +939,15 @@ def api_ensure_queue() -> dict:
         raise HTTPException(400, "В пайплайне нет статуса очереди")
     ensure_section(board_path, pipeline, pick)
     return {"ok": True}
+
+
+@app.post("/api/board/sections/ensure")
+def api_ensure_sections() -> dict:
+    """Создать разделы под статусы пайплайна, которых нет на доске."""
+    tasks_dir, cfg, _report = _validate_or_400()
+    board_path = tasks_dir / cfg.get("board_file", "board.md")
+    pipeline = load_pipeline(cfg)
+    return {"ok": True, "created": ensure_pipeline_sections(board_path, pipeline)}
 
 
 @app.get("/api/board/repair")

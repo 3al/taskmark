@@ -786,6 +786,10 @@ export default function App() {
     // гасит повторный вопрос: настроит или решит, что относится, — его дело
     requires_types_unreviewed: { action: 'typesReviewed', label: 'Настроить',
                                  help: 'lifecycle' },
+    // Статус есть в маршруте, а раздела под него на доске нет — колонки не будет.
+    // Создаётся тем же, чем раздел очереди, поэтому свой путь, а не `part`
+    no_board_sections: { action: 'boardSections', label: 'Создать разделы',
+                         help: 'validation' },
     // Правила — часть механизма, а не опция: без них агент не знает процесса
     no_rules: { part: 'rules', label: 'Развернуть', help: 'agentic' },
     // Отсутствие целой части чинится так же, как её устаревание: одной кнопкой
@@ -812,6 +816,15 @@ export default function App() {
     }
     if (fix.modal === 'scaffold') {
       setShowScaffold(true)
+      return
+    }
+    if (fix.action === 'boardSections') {
+      try {
+        await api.ensureSections()
+        refresh()
+      } catch (e) {
+        setError(e.message)
+      }
       return
     }
     if (fix.action === 'requiresExceptions') {

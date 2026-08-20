@@ -62,6 +62,9 @@ export const api = {
   // отдаёт, поэтому файловую систему показывает сервер
   browseDirs: (path = '') => request(`/api/fs/dirs?path=${encodeURIComponent(path)}`),
   ensureQueue: () => request('/api/queue/ensure', { method: 'POST' }),
+  // Разделы под статусы маршрута, которых нет на доске: без них у статуса
+  // нет колонки, а задача в нём на доске не показывается
+  ensureSections: () => request('/api/board/sections/ensure', { method: 'POST' }),
   repairPlan: () => request('/api/board/repair'),
   repairApply: () => request('/api/board/repair', { method: 'POST' }),
   scaffold: (options) => request('/api/scaffold', { method: 'POST', body: JSON.stringify(options) }),

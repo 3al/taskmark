@@ -113,11 +113,16 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     pick_section = pipeline.section_of(pipeline.action("pick") or "")
     features["queue_section"] = bool(pick_section) and pick_section.lower() in known
 
-    # Разделы пайплайна, которых на доске нет: колонки не будет, пока не создадим
+    # Разделы пайплайна, которых на доске нет: колонки не будет, пока не создадим.
+    # Это деградация, а не мягкое предупреждение: раздел создаётся одной
+    # кнопкой, а без кода строка оставалась жалобой без выхода (TASK-129)
     missing = [s["section"] for s in pipeline.statuses()
                if s["section"].lower() not in known]
     if missing:
-        warnings.append("Нет разделов доски для статусов пайплайна: " + ", ".join(missing))
+        degraded.append({
+            "code": "no_board_sections",
+            "message": ("Нет разделов доски для статусов пайплайна: " + ", ".join(missing)),
+            "names": missing})
 
     # Разделы вне пайплайна не трогаем молча — показываем как есть и предупреждаем.
     # Кроме технического раздела: его завела сама починка, жаловаться на него —

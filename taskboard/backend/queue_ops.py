@@ -88,6 +88,27 @@ def ensure_section(board_path: Path, pipeline: Pipeline, status: str) -> bool:
     return True
 
 
+def ensure_pipeline_sections(board_path: Path, pipeline: Pipeline) -> list[str]:
+    """Создать все разделы пайплайна, которых на доске нет.
+
+    Обход идёт в порядке маршрута, поэтому сосед, по которому `ensure_section`
+    ищет место, к его очереди уже стоит на доске: разделы встают по маршруту,
+    а не стопкой в конце. Возвращает созданные заголовки.
+    """
+    created: list[str] = []
+    for status in pipeline.keys():
+        title = pipeline.section_of(status)
+        if not title:
+            continue
+        content = board_path.read_text(encoding="utf-8")
+        if re.search(rf"^##\s+{re.escape(title)}\s*$", content,
+                     flags=re.MULTILINE | re.IGNORECASE):
+            continue
+        if ensure_section(board_path, pipeline, status):
+            created.append(title)
+    return created
+
+
 def ensure_plain_section(board_path: Path, title: str) -> None:
     """Создать раздел ## title в конце доски, если его нет.
 
