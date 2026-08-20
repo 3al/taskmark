@@ -91,6 +91,29 @@ def retire_artifact_names(tasks_dir: Path) -> list[str]:
     return actions
 
 
+def record_vault_choice(tasks_dir: Path) -> bool:
+    """Записать в конфиг проекта ответ на вопрос «включён ли волт».
+
+    На вопрос отвечают двое: бэкенд — по маркерам в развёрнутых скиллах,
+    автономный `set_status.py` — по ключу `vault` в конфиге рядом с собой.
+    В проекте, развёрнутом до появления ключа, ответы расходятся: доска
+    считает волт включённым, а скрипт молчит о записи знаний.
+
+    Ответ по файлам — единственный источник, который у проекта есть, поэтому
+    его и записываем. Пока окружение не развёрнуто, сверять нечего: ключ
+    не ставим, его назовёт диалог выбора при развёртывании.
+    """
+    from backend.scaffold import _deployed_skills, uses_vault
+
+    if "vault" in config.stored_project_config(tasks_dir):
+        return False
+    project_root = tasks_dir.parent
+    if not any(_deployed_skills(project_root).glob("*/SKILL.md")):
+        return False
+    config.save_project_config(tasks_dir, {"vault": uses_vault(project_root)})
+    return True
+
+
 def rename_notes_section(tasks_dir: Path, cfg: dict) -> list[str]:
     """Переименовать секцию «Заметки агента» в «Комментарии» (TASK-131).
 

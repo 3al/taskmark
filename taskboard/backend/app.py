@@ -29,8 +29,8 @@ from backend.fs_browse import browse_dir
 from backend.epics import (annotate_epics, epic_name, epic_tasks, list_epics,
                            register_epic, set_task_epic)
 from backend.migrations import (apply_config_migrations, migrate_global_config,
-                                pipeline_removals, rename_notes_section,
-                                retire_artifact_names)
+                                pipeline_removals, record_vault_choice,
+                                rename_notes_section, retire_artifact_names)
 from backend.pipeline_sources import list_sources
 from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
                                   apply_preset_exceptions, confirm_requirements,
@@ -39,7 +39,7 @@ from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
 from backend.queue_ops import (ensure_pipeline_sections, ensure_section, move_task,
                                relink_entry, retitle_entry)
 from backend.scaffold import (HARNESSES, SINGLE_FILE_PARTS, agentic_diff,
-                              agentic_stale_details, resolve_element,
+                              agentic_stale_details, remove_element, resolve_element,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
 from backend.stall import (annotate_stall, blocker_candidates, can_stall,
@@ -67,7 +67,7 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
                 "board_repair": True, "stall": True, "update": True,
                 "epic_tasks": True, "agentic_merge": True, "task_copy": True,
-                "board_sections": True}
+                "board_sections": True, "agentic_remove": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -1047,6 +1047,27 @@ def api_agentic_resolve(body: ResolveIn) -> dict:
     return result
 
 
+class RemoveIn(BaseModel):
+    part: str
+    name: str
+
+
+@app.post("/api/agentic/remove")
+def api_agentic_remove(body: RemoveIn) -> dict:
+    """Удалить лишний элемент: скилл выключенной возможности и его обёртку.
+
+    Удаляется только то, что при текущих настройках не поставляется, и только
+    по кнопке: молча снести файл, который пользователь мог править, нельзя.
+    Прежнее содержимое уходит в бэкап, как при обновлении из шаблона.
+    """
+    tasks_dir, cfg = _ctx()
+    result = remove_element(tasks_dir.parent, body.part, body.name, cfg)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Не удалось удалить элемент"))
+    watcher.send("changed")
+    return result
+
+
 @app.post("/api/scaffold")
 def api_scaffold(body: ScaffoldIn | None = None) -> dict:
     """Развернуть структуру tasks/ и агентское окружение в активном проекте."""
@@ -1176,6 +1197,9 @@ def _startup() -> None:
         try:
             retire_artifact_names(tasks_dir)
             rename_notes_section(tasks_dir, load_project_config(tasks_dir))
+            # …и ключ волта переезжает из эвристики по файлам в конфиг
+            # проекта: автономный set_status.py читает только его
+            record_vault_choice(tasks_dir)
         except Exception:
             pass
     # Проверка обновлений — фоном и только при согласии (update_check: auto).

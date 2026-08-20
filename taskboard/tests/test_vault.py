@@ -21,9 +21,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend import baseline  # noqa: E402
-from backend.config import DEFAULTS  # noqa: E402
-from backend.scaffold import (SKILLS_TEMPLATES, environment_issues,  # noqa: E402
-                              feature_skills, render_rules, scaffold_project)
+from backend.config import (DEFAULTS, save_project_config,  # noqa: E402
+                            stored_project_config)
+from backend.migrations import record_vault_choice  # noqa: E402
+from backend.scaffold import (SKILLS_TEMPLATES, agentic_stale_details,  # noqa: E402
+                              environment_issues, feature_skills, remove_element,
+                              render_rules, scaffold_project)
 from backend.validator import validate_project  # noqa: E402
 
 BOTH = {"claude": True, "opencode": True}
@@ -255,6 +258,117 @@ class VaultTest(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["degraded"], [])
         self.assertEqual(environment_issues(self.tasks_dir, self.cfg), [])
+
+
+    # --- Галочку сняли: лишнее видно и убирается кнопкой ---
+
+    def _turn_vault_off(self) -> None:
+        """Развернуть проект с волтом и снять галочку в настройках."""
+        self._deploy(vault=True)
+        self.cfg["vault"] = False
+
+    def _extra(self) -> list[dict]:
+        return [i for i in agentic_stale_details(self.root, self.cfg)
+                if i["state"] == "extra"]
+
+    def test_vault_disabled_later_is_reported(self) -> None:
+        """Скилл выключенной возможности остался на диске — это видно."""
+        self._turn_vault_off()
+
+        codes = self._codes()
+        self.assertIn("extra_skills", codes, "лишний скилл никто не заметил")
+        self.assertIn("extra_commands", codes, "обёртка opencode осталась незамеченной")
+        self.assertEqual(
+            {(i["part"], i["name"]) for i in self._extra()},
+            {("skills", "write-vault"), ("commands", "write-vault")})
+
+    def test_disabling_vault_deletes_nothing_by_itself(self) -> None:
+        """Молчаливого удаления нет: ни при настройках, ни при развёртывании."""
+        self._turn_vault_off()
+        scaffold_project(self.tasks_dir, self.cfg,
+                         {"parts": ["skills", "commands", "rules"]})
+
+        self.assertTrue((self._skills_dir() / "write-vault" / "SKILL.md").is_file(),
+                        "файл пользователя снесли без его ведома")
+
+    def test_extra_skill_is_removed_by_the_button(self) -> None:
+        self._turn_vault_off()
+        note = self.root / "vault" / "tasks" / "заметка.md"
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("знание", encoding="utf-8")
+
+        for part in ("skills", "commands"):
+            result = remove_element(self.root, part, "write-vault", self.cfg)
+            self.assertTrue(result["ok"], result.get("error"))
+
+        self.assertFalse((self._skills_dir() / "write-vault").exists(),
+                         "скилл остался на диске")
+        self.assertFalse((self.root / ".opencode" / "commands" / "write-vault.md").exists())
+        self.assertEqual(self._extra(), [], "лишнее убрали, а жалоба осталась")
+        self.assertEqual(note.read_text(encoding="utf-8"), "знание",
+                         "заметки пользователя — не наша поставка")
+
+    def test_delivered_skill_is_not_removable(self) -> None:
+        """Удаляется только лишнее: иначе кнопка сносит рабочий скилл."""
+        self._deploy(vault=True)
+
+        result = remove_element(self.root, "skills", "start-task", self.cfg)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue((self._skills_dir() / "start-task" / "SKILL.md").is_file())
+
+    def test_vault_dir_is_never_removable(self) -> None:
+        """В `vault/` лежат заметки пользователя."""
+        self._turn_vault_off()
+
+        result = remove_element(self.root, "vault", "SYS/structure.md", self.cfg)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue((self.root / "vault" / "SYS" / "structure.md").is_file())
+
+    def test_skill_returns_when_vault_is_enabled_again(self) -> None:
+        self._turn_vault_off()
+        remove_element(self.root, "skills", "write-vault", self.cfg)
+        remove_element(self.root, "commands", "write-vault", self.cfg)
+
+        self.cfg["vault"] = True
+        scaffold_project(self.tasks_dir, self.cfg,
+                         {"parts": ["vault", "skills", "commands", "rules"]})
+
+        self.assertTrue((self._skills_dir() / "write-vault" / "SKILL.md").is_file())
+        self.assertEqual(self._codes(), [])
+
+    def test_ui_knows_the_button_for_extra(self) -> None:
+        """Код деградации и его кнопка живут в разных файлах."""
+        app = (Path(__file__).resolve().parent.parent
+               / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+        for code in ("extra_skills:", "extra_commands:"):
+            self.assertIn(code, app, "строка баннера останется без кнопки")
+
+    # --- Один ответ на вопрос «включён ли волт» ---
+
+    def test_vault_choice_is_recorded_in_project_config(self) -> None:
+        """Проект без ключа: бэкенд считает по файлам, скрипт — по ключу.
+
+        Скрипт автономен и читает только конфиг рядом с собой, поэтому ответ
+        записывается в конфиг проекта, а не остаётся эвристикой бэкенда.
+        """
+        self._deploy(vault=True)
+        # Конфиг проекта, каким он был до появления ключа: среды выбраны,
+        # ответа про волт нет
+        save_project_config(self.tasks_dir, {"harnesses": BOTH})
+
+        record_vault_choice(self.tasks_dir)
+
+        self.assertIs(stored_project_config(self.tasks_dir).get("vault"), True)
+
+    def test_undeployed_project_keeps_the_question_open(self) -> None:
+        """Окружение ещё не разворачивали — ответа нет, и выдумывать его нечем."""
+        self.tasks_dir.mkdir(parents=True)
+
+        record_vault_choice(self.tasks_dir)
+
+        self.assertNotIn("vault", stored_project_config(self.tasks_dir))
 
 
 if __name__ == "__main__":

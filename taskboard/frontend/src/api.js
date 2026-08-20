@@ -79,6 +79,12 @@ export const api = {
     request(`/api/agentic/diff?part=${encodeURIComponent(part)}&name=${encodeURIComponent(name)}`),
   // Исход расхождения выбирает пользователь: merge — слить, template — взять
   // шаблон, keep — оставить свою версию (файл не трогаем, элемент затихает)
+  // Удаление лишнего: скилла выключенной возможности и его обёртки opencode.
+  // Отдельно от resolve — там три исхода расхождения, здесь файла быть не должно
+  agenticRemove: (part, name) =>
+    request('/api/agentic/remove', {
+      method: 'POST', body: JSON.stringify({ part, name }),
+    }),
   agenticResolve: (part, name, action) =>
     request('/api/agentic/resolve', {
       method: 'POST',

@@ -797,6 +797,10 @@ export default function App() {
     no_commands: { part: 'commands', label: 'Развернуть', help: 'agentic' },
     // Состав поставки зависит от сред, а их знает только пользователь
     no_harness_choice: { modal: 'scaffold', label: 'Настроить', help: 'agentic' },
+    // Скилл выключенной возможности остался на диске. В то же окно: удаление
+    // необратимо, и решать по имени в баннере, не видя содержимого, нельзя
+    extra_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    extra_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     // Агентское окружение — не «обновить всё вслепую»: сначала подробности,
     // где видно каждый элемент, его diff и точечное обновление
     outdated_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic' },

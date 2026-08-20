@@ -750,6 +750,66 @@ def _command_targets(project_root: Path, features: set[str] | None = None,
     ]
 
 
+# Состояние элемента, которого при текущем конфиге в проекте быть не должно:
+# возможность выключена, а её скилл остался развёрнутым. Отдельное от состояний
+# `baseline`: там сравнивают развёрнутое с эталоном, а здесь эталона нет вовсе
+EXTRA = "extra"
+
+
+def _extra_targets(project_root: Path,
+                   cfg: dict | None = None) -> list[tuple[str, str, Path]]:
+    """(часть, имя, путь) для развёрнутого, что при текущем конфиге не поставляется.
+
+    Скилл выключенной возможности остаётся на диске: развёртывание его не
+    трогает, а видеть его агент продолжает — и продолжает им пользоваться.
+    Молча удалить нельзя (файл могли править), поэтому он показывается наравне
+    с расхождениями, отдельным состоянием, и убирается кнопкой.
+    Данные пользователя (`vault/` и всё в нём) лишними не бывают: это не наша
+    поставка, и решение о них не наше.
+    """
+    skipped = _skipped_skills(project_features(project_root, cfg))
+    active = harnesses(project_root, cfg)
+    out: list[tuple[str, str, Path]] = []
+    for name in sorted(skipped):
+        skill = _deployed_skills(project_root, cfg) / name / "SKILL.md"
+        if skill.is_file():
+            out.append(("skills", name, skill))
+        command = _deployed_commands(project_root) / f"{name}.md"
+        if active["opencode"] and command.is_file():
+            out.append(("commands", name, command))
+    return out
+
+
+def _extra_target(project_root: Path, part: str, name: str,
+                  cfg: dict | None = None) -> Path | None:
+    """Путь лишнего элемента или None, если такой в проекте не лишний."""
+    return next((path for p, n, path in _extra_targets(project_root, cfg)
+                 if p == part and n == name), None)
+
+
+def remove_element(project_root: Path, part: str, name: str,
+                   cfg: dict | None = None) -> dict:
+    """Удалить лишний элемент поставки, сохранив прежнее содержимое в бэкап.
+
+    Удаляется **только лишнее**: имя сверяется со списком лишних, а не с файлом
+    на диске — иначе кнопка сносила бы рабочий скилл. Опустевшая папка скилла
+    убирается вместе с ним: пустой каталог агент показывает как сломанный скилл.
+    """
+    path = _extra_target(project_root, part, name, cfg)
+    if path is None:
+        return {"ok": False, "error": f"Элемент не лишний: {part}/{name}"}
+
+    backup = baseline.backup(project_root, part, name, _read(path) or "", cfg)
+    try:
+        path.unlink()
+        if part == "skills" and not any(path.parent.iterdir()):
+            path.parent.rmdir()
+    except OSError as exc:
+        return {"ok": False, "error": f"Не удалось удалить {part}/{name}: {exc}"}
+    return {"ok": True, "part": part, "name": name, "action": "remove",
+            "conflicts": 0, "backup": backup}
+
+
 # --- Knowledge Vault ---
 
 def _vault_dir(project_root: Path) -> Path:
@@ -1130,6 +1190,16 @@ def agentic_stale_details(project_root: Path, cfg: dict | None = None) -> list[d
                 "base_usable": base["usable"],
                 "path": str(path.relative_to(project_root)).replace("\\", "/"),
             })
+    # Лишнее — не расхождение с эталоном, а его отсутствие: элемент есть,
+    # а поставки под него нет. В том же списке, потому что разбирают их в
+    # одном окне и одним движением
+    for part, name, path in _extra_targets(project_root, cfg):
+        items.append({
+            "part": part, "name": name, "state": EXTRA, "mergeable": False,
+            "base_origin": None, "base_version": None, "base_exact": False,
+            "base_ratio": None, "base_usable": False,
+            "path": str(path.relative_to(project_root)).replace("\\", "/"),
+        })
     return items
 
 
@@ -1152,15 +1222,21 @@ def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = No
     они пусты: разделить нечем.
     """
     target = next((t for t in part_targets(project_root, part, cfg) if t[0] == name), None)
+    # У лишнего элемента эталона нет — поставка его не знает. Сравниваем
+    # с пустотой: diff показывает ровно то, что исчезнет при удалении
+    extra = _extra_target(project_root, part, name, cfg) if target is None else None
     if target is None:
-        return {"ok": False, "error": f"Неизвестный элемент: {part}/{name}"}
+        if extra is None:
+            return {"ok": False, "error": f"Неизвестный элемент: {part}/{name}"}
+        target = (name, extra, "")
 
     _name, path, expected = target
     current = _current_text(part, path)
     resolved = resolved_base(project_root, part, name, current, cfg)
     base = resolved["text"]
     base_label = "было развёрнуто" if resolved["origin"] == "store" else "основа сравнения"
-    state = element_state(project_root, part, name, path, expected, cfg)
+    state = (EXTRA if extra is not None
+             else element_state(project_root, part, name, path, expected, cfg))
 
     diff = _unified(current or "", expected, f"{name} — в проекте", f"{name} — шаблон")
     body = [ln for ln in diff.splitlines() if not ln.startswith(("---", "+++"))]
@@ -1353,9 +1429,11 @@ ENV_PARTS = (
     {"part": "epics", "harness": None, "missing": "no_epics", "outdated": None},
     {"part": "logs", "harness": None, "missing": "no_logs", "outdated": None},
     {"part": "skills", "harness": "any",
-     "missing": "no_skills", "outdated": "outdated_skills"},
+     "missing": "no_skills", "outdated": "outdated_skills",
+     "extra": "extra_skills"},
     {"part": "commands", "harness": "opencode",
-     "missing": "no_commands", "outdated": "outdated_commands"},
+     "missing": "no_commands", "outdated": "outdated_commands",
+     "extra": "extra_commands"},
     {"part": "rules", "harness": "any",
      "missing": "no_rules", "outdated": "outdated_rules"},
     # Волт проверяется только у тех, кто его выбрал: отказ от внешней памяти —
@@ -1472,10 +1550,13 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             _m, _absent, outdated = _targets_state(
                 project_root, part, _rules_targets(project_root, cfg), cfg)
 
-        for state, names in (("missing", missing), ("partial", partial), ("outdated", outdated)):
+        extra = [n for p, n, _path in _extra_targets(project_root, cfg) if p == part]
+
+        for state, names in (("missing", missing), ("partial", partial),
+                             ("outdated", outdated), ("extra", extra)):
             # Недостающие элементы разворачиваются той же кнопкой, что и
             # отсутствующая часть, поэтому код у них общий — различается текст
-            code = spec["missing"] if state == "partial" else spec[state]
+            code = spec["missing"] if state == "partial" else spec.get(state)
             if names and code:
                 issues.append({"part": part, "code": code, "state": state, "names": names})
     return issues

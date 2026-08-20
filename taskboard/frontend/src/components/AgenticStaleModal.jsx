@@ -58,6 +58,11 @@ const STATE_LABEL = {
     cls: 'text-amber-300',
   },
   missing: { text: 'не развёрнут', hint: '', cls: 'text-rose-300' },
+  extra: {
+    text: 'лишний: возможность выключена',
+    hint: 'агент видит его в списке скиллов, пока файл на месте',
+    cls: 'text-amber-300',
+  },
 }
 
 // Ниже этого совпадения слияние состоится, но конфликтов будет много
@@ -130,6 +135,23 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
     }
   }
 
+  const remove = async (item) => {
+    const k = key(item)
+    setBusy(k)
+    setError(null)
+    try {
+      const result = await api.agenticRemove(item.part, item.name)
+      setOutcomes((prev) => ({ ...prev, [k]: result }))
+      setDiffs(({ [k]: _drop, ...rest }) => rest)
+      await load()
+      onUpdated()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const resolve = async (item, action) => {
     const k = key(item)
     setBusy(k)
@@ -192,6 +214,17 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
   const actions = (item) => {
     const k = key(item)
     const disabled = busy === k
+    if (item.state === 'extra') {
+      return (
+        <Button
+          onClick={() => remove(item)}
+          disabled={disabled}
+          title="Файл удаляется, прежнее содержимое остаётся в бэкапе"
+        >
+          {disabled ? '…' : 'Удалить'}
+        </Button>
+      )
+    }
     if (SAFE_STATES.includes(item.state)) {
       return (
         <Button onClick={() => resolve(item, 'template')} disabled={disabled} tone="sky">
@@ -236,6 +269,8 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
       parts.push(result.conflicts
         ? `Слито, конфликтов: ${result.conflicts} — разрешите маркеры <<<<<<< в файле`
         : 'Слито без конфликтов')
+    } else if (result.action === 'remove') {
+      parts.push('Удалено')
     } else if (result.action === 'keep') {
       parts.push('Оставлена ваша версия')
     } else {
@@ -281,7 +316,9 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
             rounded-lg px-4 py-3">
             Элементы, где правок в проекте нет, обновляются одной кнопкой. Там, где
             ваши правки встретились с новым шаблоном, выбор за вами: слить, взять
-            шаблон или оставить свою версию. Прежнее содержимое перед перезаписью
+            шаблон или оставить свою версию. Лишние — скиллы выключенных
+            возможностей — удаляются кнопкой, папка <code className="text-zinc-400">vault/</code>
+            {' '}при этом не трогается. Прежнее содержимое перед перезаписью и удалением
             сохраняется в <code className="text-zinc-400">tasks/.taskboard/backup/</code>.
           </div>
           {!canMerge && (
@@ -333,7 +370,9 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
                       <>
                         <DiffView text={diff.diff} />
                         <div className="text-[11px] text-zinc-600">
-                          «+» — появится после обновления, «−» — исчезнет
+                          {item.state === 'extra'
+                            ? '«−» — исчезнет после удаления'
+                            : '«+» — появится после обновления, «−» — исчезнет'}
                         </div>
                       </>
                     )}
