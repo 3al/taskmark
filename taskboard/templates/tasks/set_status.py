@@ -703,6 +703,9 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             "stage_reminders": stage_reminders(pipeline, from_status, pending, task_id),
             # Что потребует новый этап — сказанное на входе, а не в момент отказа
             "announce": stage_announcement(cfg, pipeline, status, task_file, task_id),
+            # Кто ведёт этот момент маршрута: скилл вызывают вместо скрипта, а не
+            # после него, поэтому имя звучит там, где агент точно окажется
+            "moment_skill": moment_skill(cfg, pipeline, prev, status),
             # Смена статуса — единственный момент, когда файл задачи заведомо
             # открывают: заодно показываем, что в нём разъехалось. Сюда же —
             # записи о требованиях, которых механизм не знает: они выглядят
@@ -2323,6 +2326,77 @@ def work_done_status(cfg: dict, pipeline: list[dict]) -> str | None:
     return keys[-1]
 
 
+# Каждый момент маршрута ведёт свой скилл, и обход скилла прямым вызовом скрипта
+# найден трижды подряд (TASK-189): терялись то оценка, то знание и хвосты, то
+# сверка коммитов и разблокированные. Три одинаковые заплаты означали нехватку
+# общего правила, а не три особых случая, поэтому карта здесь одна.
+#
+# Слова-триггеры в описании скилла этому не противостоят: описание срабатывает,
+# когда человек формулирует запрос его словами, а агент с заученным маршрутом
+# команд идёт коротким путём. Зато скрипт он зовёт неизбежно — там и встречаем.
+MOMENT_SKILL_TEXT = ("{event} ведёт скилл {skill} — прямой перевод статуса "
+                     "проходит мимо остальных его шагов")
+START_SKILL = "start-task"
+HANDOFF_SKILL = "handoff-task"
+FIX_SKILL = "fix-task"
+FINALIZE_SKILL = "finalize-task"
+RELEASE_SKILL = "release"
+
+
+def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
+                 target: str) -> str:
+    """Какой скилл отвечает за этот момент маршрута — строкой для агента.
+
+    Карта выводится из `actions`, а не из имён статусов: у каждого проекта свой
+    маршрут, и зашитое имя неверно для половины пользователей.
+
+    Строка одна и шагов скилла не пересказывает: длинную инструкцию пролистают,
+    и обесценятся заодно соседние строки. Она звучит и у того, кто скилл вызвал,
+    — проверить это скрипт не может, а молчать «на всякий случай» значит молчать
+    ровно там, где нужнее.
+
+    Момент, у которого своего скилла нет (возврат мимо рабочего статуса),
+    остаётся без строки: назвать не тот скилл хуже, чем не назвать никакого.
+    """
+    keys = [s["key"] for s in pipeline]
+    if target not in keys:
+        return ""
+    work = actions_of(cfg, pipeline).get("start")
+    here = keys.index(target)
+    there = keys.index(from_status) if from_status in keys else None
+    offramp = bool(pipeline[here].get("offramp"))
+
+    if target == work and not offramp:
+        # Возврат в работу — это доработка после чужих замечаний, а не старт
+        event, skill = (("возврат в работу", FIX_SKILL)
+                        if there is not None and there > here
+                        else ("взятие в работу", START_SKILL))
+    elif _is_handoff(cfg, pipeline, from_status, target):
+        event, skill = "передача на проверку", HANDOFF_SKILL
+    elif _in_release_tail(cfg, pipeline, target):
+        # За концом работы задачу ведёт уже выпуск, и финализировать там нечего
+        event, skill = "выпуск", RELEASE_SKILL
+    elif offramp or there is None or here > there:
+        # Съезд ведёт та же финализация: причину отмены спрашивает она
+        event, skill = "продвижение по маршруту", FINALIZE_SKILL
+    else:
+        return ""
+    return MOMENT_SKILL_TEXT.format(event=event, skill=skill)
+
+
+def _in_release_tail(cfg: dict, pipeline: list[dict], target: str) -> bool:
+    """Начался ли релизный хвост — то, что ведёт уже выпуск, а не автор задачи.
+
+    Граница та же, по которой считается конец работы (`work_done_status`): цель
+    подготовки текстов и всё за ней. Хвоста в проекте нет — нет и границы.
+    """
+    keys = [s["key"] for s in pipeline if not s.get("offramp")]
+    draft = actions_of(cfg, pipeline).get("release_draft")
+    if draft not in keys or target not in keys:
+        return False
+    return keys.index(target) >= keys.index(draft)
+
+
 def _is_handoff(cfg: dict, pipeline: list[dict], from_status: str | None,
                 target: str) -> bool:
     """Отдаёт ли этот переход задачу на проверку.
@@ -2781,6 +2855,8 @@ def main() -> None:
     if result.get("skipped"):
         # Не запрет, а видимость: пайплайн описывает ожидаемый маршрут
         print(f"[i] минуя {', '.join(result['skipped'])}")
+    if result.get("moment_skill"):
+        print(f"[i] {result['moment_skill']}")
     if result.get("announce"):
         print(f"[i] {result['announce']}")
     for warning in result.get("warnings", []):
