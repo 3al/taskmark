@@ -96,11 +96,13 @@ class SizeReminderTest(Project):
         self.assertIn("--sizes", said)
 
     def test_filled_size_is_silent(self) -> None:
+        """Про оценку молчим; остальные строки входа с ней не связаны."""
         self.make_sized("TASK-002", "M", "todo", "## To Do")
-        self.assertEqual([], self.entry("TASK-002", "development"))
+        said = " ".join(self.entry("TASK-002", "development"))
+        self.assertNotIn("размер", said.lower())
 
     def test_other_status_is_silent(self) -> None:
-        """Оценку спрашивают на входе в работу, а не на каждом переходе."""
+        """Сообщение входа звучит на входе в работу, а не на каждом переходе."""
         self.make_sized("TASK-003", "~", "development", "## Development")
         self.assertEqual([], self.entry("TASK-003", "testing"))
 

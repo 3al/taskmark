@@ -298,11 +298,14 @@ class HandoffReminderTest(Project):
 
         self.assertIn("волт", text.lower())
 
-    def test_no_vault_no_reminder(self) -> None:
-        """Волта в проекте нет — незачем звать к хранилищу, которого нет."""
+    def test_no_vault_no_vault_line(self) -> None:
+        """Волта в проекте нет — про хранилище молчим, но сам момент называем."""
         self.make(status="development", section="## Development")
 
-        self.assertEqual([], self.handoff("TASK-001", "testing"))
+        text = " ".join(self.handoff("TASK-001", "testing"))
+
+        self.assertNotIn("волт", text.lower())
+        self.assertIn("что именно проверять", text)
 
     def test_backward_move_is_not_a_handoff(self) -> None:
         """Возврат в очередь — не передача на проверку: работа не кончилась."""
