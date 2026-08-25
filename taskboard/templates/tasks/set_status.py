@@ -706,6 +706,10 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             # Кто ведёт этот момент маршрута: скилл вызывают вместо скрипта, а не
             # после него, поэтому имя звучит там, где агент точно окажется
             "moment_skill": moment_skill(cfg, pipeline, prev, status),
+            # Незаполненное у задачи, которую только что взяли в работу: свой
+            # канал от `reminders`, потому что момент противоположный — начало
+            "entry_reminders": entry_reminders(task_file, task_id, cfg,
+                                               pipeline, status),
             # Смена статуса — единственный момент, когда файл задачи заведомо
             # открывают: заодно показываем, что в нём разъехалось. Сюда же —
             # записи о требованиях, которых механизм не знает: они выглядят
@@ -2384,6 +2388,35 @@ def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
     return MOMENT_SKILL_TEXT.format(event=event, skill=skill)
 
 
+# Оценка объёма ставится не при заведении задачи (строить её тогда не на чем) и
+# не в конце (там она уже никому не нужна), а при взятии в работу — когда контекст
+# изучен. Момент этот агент проходит вызовом скрипта, поэтому пустое поле называем
+# здесь: проверяемое проверяем, как незакрытые чекбоксы в конце работы.
+SIZE_REMINDER_TEXT = ("размер не оценён — изучите контекст и проставьте: "
+                      "{task} --size <ключ>, каталог с пояснениями — --sizes")
+
+
+def entry_reminders(task_path: Path, task_id: str, cfg: dict,
+                    pipeline: list[dict], target: str) -> list[str]:
+    """Что осталось незаполненным у задачи, которую только что взяли в работу.
+
+    Момент — вход в `actions.start`, любым путём: и первый старт, и возврат на
+    доработку. Поле пустое в обоих случаях одинаково, и повод назвать его тот же.
+
+    Не гейт: оценку ставят, изучив контекст, — то есть уже после перевода. Отказ
+    здесь требовал бы оценки раньше, чем её на чём строить.
+    """
+    if target != actions_of(cfg, pipeline).get("start"):
+        return []
+    try:
+        size = str(_read_meta(Path(task_path)).get("size", "") or "").strip().upper()
+    except OSError:
+        return []
+    if size in TASK_SIZES:
+        return []
+    return [SIZE_REMINDER_TEXT.format(task=task_id)]
+
+
 def _in_release_tail(cfg: dict, pipeline: list[dict], target: str) -> bool:
     """Начался ли релизный хвост — то, что ведёт уже выпуск, а не автор задачи.
 
@@ -2857,6 +2890,8 @@ def main() -> None:
         print(f"[i] минуя {', '.join(result['skipped'])}")
     if result.get("moment_skill"):
         print(f"[i] {result['moment_skill']}")
+    for reminder in result.get("entry_reminders", []):
+        print(f"[i] {reminder}")
     if result.get("announce"):
         print(f"[i] {result['announce']}")
     for warning in result.get("warnings", []):
