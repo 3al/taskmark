@@ -682,7 +682,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # Задача уходит на проверку — знание записывают здесь, пока жив контекст
     # сессии, в которой его добыли. Точка вычисляется из конфига: это статус,
     # в котором идёт работа (`actions.start`), а событие — уход из него вперёд
-    handoff = (handoff_reminders(cfg)
+    handoff = (handoff_reminders(cfg, task_file)
                if _is_handoff(cfg, pipeline, from_status, status) else [])
 
     # Конец работы — время прибрать хвосты в файле задачи: позже, при выпуске,
@@ -2517,7 +2517,14 @@ def waiting_on(tasks_dir: Path, task_id: str) -> list[str]:
             if task_id in t["blocked_by"] and t["id"] != task_id]
 
 
-def handoff_reminders(cfg: dict) -> list[str]:
+def _unclosed_plan_text(boxes: list[str]) -> str:
+    """Незакрытые пункты плана — первые три поимённо, остальные счётом."""
+    shown = ", ".join(f"«{b}»" for b in boxes[:3])
+    tail = f" и ещё {len(boxes) - 3}" if len(boxes) > 3 else ""
+    return f"незакрытых пунктов плана: {len(boxes)} — {shown}{tail}"
+
+
+def handoff_reminders(cfg: dict, task_path: Path | None = None) -> list[str]:
     """Что сделать, отдавая задачу на проверку: пока жив контекст работы.
 
     Отдельный канал от `finish_reminders`, и по единственному критерию —
@@ -2541,6 +2548,13 @@ def handoff_reminders(cfg: dict) -> list[str]:
     # то, чего в ней нет: что именно осталось сделать, раз работа кончилась
     out = ["работа над задачей кончилась — закройте план работы и скажите "
            "человеку, что именно проверять"]
+    try:
+        lines = Path(task_path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        lines = []
+    boxes = _unchecked_boxes(lines)
+    if boxes:
+        out.append(_unclosed_plan_text(boxes))
     if cfg.get("vault"):
         out.append("что выяснилось про проект, сохраните в волт (внутри "
                    "handoff-task — скилл write-vault), пока помните: в следующей "
@@ -2563,12 +2577,8 @@ def finish_reminders(tasks_dir: Path, task_id: str, task_path: Path,
     except OSError:
         lines = []
 
-    boxes = _unchecked_boxes(lines)
-    if boxes:
-        shown = ", ".join(f"«{b}»" for b in boxes[:3])
-        tail = f" и ещё {len(boxes) - 3}" if len(boxes) > 3 else ""
-        out.append(f"незакрытых пунктов плана: {len(boxes)} — {shown}{tail}")
-
+    # Про незакрытый план здесь не говорим: он закрывается вместе с работой, и
+    # момент у него один — уход из рабочего статуса (`handoff_reminders`)
     if _type_has_commits(lines) and not _has_entries(lines, COMMITS_SECTION):
         out.append(f"секция «{COMMITS_SECTION}» пуста: по строке на коммит "
                    f"задачи — `<short-hash>` и сообщение")

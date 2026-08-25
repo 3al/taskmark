@@ -192,15 +192,14 @@ class ReminderScopeTest(Project):
 class ReminderContentTest(Project):
     """Проверяемое — проверяем, а не напоминаем о нём общей фразой."""
 
-    def test_unchecked_boxes_named(self) -> None:
+    def test_unchecked_boxes_belong_to_the_handoff(self) -> None:
+        """План закрывается вместе с работой — конец работы о нём молчит."""
         self.make(status="testing", section="## Testing",
-                  checklist="- [x] Сделать\n- [ ] Написать тест\n- [ ] Обновить справку")
+                  checklist="- [x] Сделать\n- [ ] Написать тест")
 
-        reminders = self.reminders("TASK-001", "ready_for_release")
-        text = "\n".join(reminders)
+        text = "\n".join(self.reminders("TASK-001", "ready_for_release"))
 
-        self.assertIn("Написать тест", text)
-        self.assertIn("Обновить справку", text)
+        self.assertNotIn("Написать тест", text)
 
     def test_closed_checklist_silent(self) -> None:
         self.make(status="testing", section="## Testing",
@@ -366,7 +365,7 @@ class ReminderIsNotAGateTest(Project):
         self.assertIn("status: ready_for_release", path.read_text(encoding="utf-8"))
 
     def test_cli_prints_and_exits_zero(self) -> None:
-        self.make(status="testing", section="## Testing", checklist="- [ ] Не закрыт")
+        self.make(status="testing", section="## Testing", commits="")
         self.write_config(vault=True)
 
         proc = subprocess.run(
@@ -376,7 +375,7 @@ class ReminderIsNotAGateTest(Project):
 
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertIn("[!]", proc.stdout)
-        self.assertIn("Не закрыт", proc.stdout)
+        self.assertIn("История коммитов", proc.stdout)
 
 
 class PlainProjectTest(Project):
@@ -385,12 +384,12 @@ class PlainProjectTest(Project):
     CFG = PLAIN_CFG
 
     def test_terminal_status_reminds(self) -> None:
-        self.make(status="testing", section="## Testing",
-                  checklist="- [ ] Не закрыт")
+        """Хвоста нет — работа кончается в терминальном статусе, там и напоминание."""
+        self.make(status="testing", section="## Testing", commits="")
 
         text = "\n".join(self.reminders("TASK-001", "completed"))
 
-        self.assertIn("Не закрыт", text)
+        self.assertIn("История коммитов", text)
 
     def test_testing_is_silent(self) -> None:
         self.make(status="development", section="## Development",
@@ -422,16 +421,17 @@ class SkillBoundaryTest(unittest.TestCase):
         self.assertIn("write-vault", text,
                       "запись знания — главный шаг передачи на проверку")
 
-    def test_handoff_leaves_verification_checkbox_alone(self) -> None:
-        """Пункт, который закрывает проверка человеком, передача не трогает.
+    def test_handoff_removes_a_requirement_duplicate(self) -> None:
+        """Пункт, который закрывает чужое событие, не отмечают, а удаляют.
 
-        Чеклист стал необязательным планом под работу (TASK-146), поэтому
-        конкретной строки «Локальная проверка» в шаблоне больше нет — правило
-        же осталось: закрывать за человека то, чего он ещё не подтверждал,
-        нельзя.
+        Закрывать за человека неподтверждённое по-прежнему нельзя — но и
+        держать рядом с требованием его копию незачем: галочку поставить
+        нечем, а расходиться они будут всегда.
         """
-        self.assertIn("Пункты, которые закрывает проверка, не трогай",
-                      self.skill("handoff-task"))
+        text = self.skill("handoff-task")
+
+        self.assertNotIn("которые закрывает проверка, не трогай", text)
+        self.assertIn("удали его", text)
 
     def test_finalize_no_longer_writes_the_vault(self) -> None:
         """Финализация про волт только проверяет, что шаг не пропущен."""
