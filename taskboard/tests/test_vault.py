@@ -362,6 +362,35 @@ class VaultTest(unittest.TestCase):
 
         self.assertIs(stored_project_config(self.tasks_dir).get("vault"), True)
 
+    # --- Заголовок заметки ---
+
+    def _spec_texts(self) -> dict[str, str]:
+        """Все места, где описан фронтматтер заметки: шаблоны, скилл, правила."""
+        vault = Path(__file__).resolve().parent.parent / "templates" / "vault"
+        skill = SKILLS_TEMPLATES / "write-vault" / "SKILL.md"
+        return {
+            "business-note.md": (vault / "SYS" / "templates"
+                                 / "business-note.md").read_text(encoding="utf-8"),
+            "code-note.md": (vault / "SYS" / "templates"
+                             / "code-note.md").read_text(encoding="utf-8"),
+            "structure.md": (vault / "SYS" / "structure.md").read_text(encoding="utf-8"),
+            "write-vault": skill.read_text(encoding="utf-8"),
+        }
+
+    def test_title_is_quoted_everywhere(self) -> None:
+        """Заголовок человекочитаемый: двоеточие в нём законно и ломает YAML."""
+        for name, text in self._spec_texts().items():
+            with self.subTest(name):
+                self.assertIn('title: "', text,
+                              f"{name}: title показан без кавычек — "
+                              f"заголовок с двоеточием сломает фронтматтер")
+
+    def test_quoting_is_stated_as_always(self) -> None:
+        """Правило без оговорок: «когда есть двоеточие» проверяют на глаз."""
+        for name in ("structure.md", "write-vault"):
+            with self.subTest(name):
+                self.assertIn("всегда", self._spec_texts()[name].lower())
+
     def test_undeployed_project_keeps_the_question_open(self) -> None:
         """Окружение ещё не разворачивали — ответа нет, и выдумывать его нечем."""
         self.tasks_dir.mkdir(parents=True)
