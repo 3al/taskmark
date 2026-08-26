@@ -105,7 +105,12 @@ CATALOG = {
     # reentry: сюда возвращают с проверки, но новую работу берут не отсюда
     "to_fix": {"label": "To Fix", "section": "To Fix", "reentry": True},
     "development": {"label": "Development", "section": "Development"},
-    "local_testing": {"label": "Local Testing", "section": "Local Testing"},
+    # Ту же рекомендацию несёт `testing`: в простом маршруте проверка автором
+    # и есть тестирование. Там, где этапы разведены, совет остаётся здесь —
+    # у первого по маршруту (см. `_thin_recommendations`)
+    "local_testing": {"label": "Local Testing", "section": "Local Testing",
+                      "recommends": [{"id": "verified", "check": "confirm",
+                                      "ask": "проверку подтвердил человек"}]},
     "review": {"label": "Review", "section": "Review"},
     "to_testing": {"label": "To Testing", "section": "To Testing"},
     # recommends — что этап просит на выходе, пока проект не объявил этого
@@ -187,6 +192,38 @@ def _titleize(key: str) -> str:
     return " ".join(part.capitalize() for part in key.split("_") if part)
 
 
+def _thin_recommendations(statuses: list[dict]) -> None:
+    """Оставить рекомендацию одного смысла только у самого раннего этапа.
+
+    Каталог привязывает совет к **имени** статуса, а имя в разных маршрутах
+    значит разное: там, где локальная проверка и стенд разведены по разным
+    этапам, «проверку подтвердил человек» относится к первому из них — на
+    втором человек подтвердил её этапом раньше.
+
+    Роль принадлежит месту в маршруте, а не ключу, поэтому совет достаётся
+    первому этапу, который его несёт. Это та же половина правила, что уже
+    работает у требований: одно требование не должно звучать дважды.
+
+    Повтором считается **та же рекомендация**, а не тот же предикат: `confirm`
+    носят и подтверждение проверки, и утверждение текстов релиза — это разные
+    события, и схлопывать их по типу проверки нельзя.
+    """
+    seen: set[tuple[str, str]] = set()
+    for meta in statuses:
+        recommends = meta.get("recommends")
+        if not recommends:
+            continue
+        kept = []
+        for req in recommends:
+            same = (str(req.get("id", "")).strip().lower(),
+                    str(req.get("check", "")).strip().lower())
+            if same in seen:
+                continue
+            seen.add(same)
+            kept.append(req)
+        meta["recommends"] = kept
+
+
 def pipeline_of(cfg: dict) -> list[dict]:
     """Статусы проекта по порядку: [{key, label, section, offramp}].
 
@@ -218,6 +255,8 @@ def pipeline_of(cfg: dict) -> list[dict]:
         meta.setdefault("section", _titleize(key))
         meta["key"] = key
         out.append(meta)
+
+    _thin_recommendations(out)
 
     # Этапы, спрашивающие исполнителя: полный набор галочек из настроек.
     # Поставка не включает их нигде — зеркало backend/statuses.py

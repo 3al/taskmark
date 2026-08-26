@@ -36,8 +36,13 @@ CATALOG: dict[str, dict] = {
                "reentry": True},
     "development": {"label": "Development", "section": "Development", "color": "sky"},
     # Проверка автором на локальной сборке — не работа тестировщика на стенде
+    # Ту же рекомендацию несёт `testing`: в простом маршруте проверка автором
+    # и есть тестирование. Там, где этапы разведены, совет остаётся здесь —
+    # у первого по маршруту (см. `_thin_recommendations`)
     "local_testing": {"label": "Local Testing", "section": "Local Testing",
-                      "color": "yellow"},
+                      "color": "yellow",
+                      "recommends": [{"id": "verified", "check": "confirm",
+                                      "ask": "проверку подтвердил человек"}]},
     "review": {"label": "Review", "section": "Review", "color": "violet"},
     "to_testing": {"label": "To Testing", "section": "To Testing", "color": "cyan"},
     # recommends — что этап просит на выходе, пока проект не объявил этого
@@ -274,6 +279,38 @@ def _presentation(cfg: dict) -> dict[str, dict]:
     return overrides
 
 
+def _thin_recommendations(statuses: list[dict]) -> None:
+    """Оставить рекомендацию одного смысла только у самого раннего этапа.
+
+    Каталог привязывает совет к **имени** статуса, а имя в разных маршрутах
+    значит разное: там, где локальная проверка и стенд разведены по разным
+    этапам, «проверку подтвердил человек» относится к первому из них — на
+    втором человек подтвердил её этапом раньше.
+
+    Роль принадлежит месту в маршруте, а не ключу, поэтому совет достаётся
+    первому этапу, который его несёт. Это та же половина правила, что уже
+    работает у требований: одно требование не должно звучать дважды.
+
+    Повтором считается **та же рекомендация**, а не тот же предикат: `confirm`
+    носят и подтверждение проверки, и утверждение текстов релиза — это разные
+    события, и схлопывать их по типу проверки нельзя.
+    """
+    seen: set[tuple[str, str]] = set()
+    for meta in statuses:
+        recommends = meta.get("recommends")
+        if not recommends:
+            continue
+        kept = []
+        for req in recommends:
+            same = (str(req.get("id", "")).strip().lower(),
+                    str(req.get("check", "")).strip().lower())
+            if same in seen:
+                continue
+            seen.add(same)
+            kept.append(req)
+        meta["recommends"] = kept
+
+
 def load_pipeline(cfg: dict) -> Pipeline:
     """Собрать пайплайн из конфига проекта (дефолты → каталог → переопределения)."""
     cfg = cfg or {}
@@ -301,6 +338,8 @@ def load_pipeline(cfg: dict) -> Pipeline:
     else:
         for meta in statuses:
             meta["assignee"] = bool(meta.get("assignee"))
+
+    _thin_recommendations(statuses)
 
     known = {s["key"] for s in statuses}
     # Значение может стать None: пайплайн бывает пустым, и действию некуда вести
