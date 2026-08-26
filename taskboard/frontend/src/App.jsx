@@ -795,6 +795,7 @@ export default function App() {
     // Отсутствие целой части чинится так же, как её устаревание: одной кнопкой
     no_skills: { part: 'skills', label: 'Развернуть', help: 'agentic' },
     no_commands: { part: 'commands', label: 'Развернуть', help: 'agentic' },
+    no_hooks: { part: 'hooks', label: 'Развернуть', help: 'agentic' },
     // Состав поставки зависит от сред, а их знает только пользователь
     no_harness_choice: { modal: 'scaffold', label: 'Настроить', help: 'agentic' },
     // Скилл выключенной возможности остался на диске. В то же окно: удаление
@@ -805,6 +806,7 @@ export default function App() {
     // где видно каждый элемент, его diff и точечное обновление
     outdated_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     outdated_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_hooks: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     outdated_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     // Волт: скиллы уже ссылаются на vault/, поэтому его отсутствие — пробел,
     // а не «ещё не завели»

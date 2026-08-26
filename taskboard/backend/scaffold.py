@@ -18,6 +18,13 @@ TASKS_TEMPLATES = TEMPLATES_DIR / "tasks"
 AGENTIC_TEMPLATES = TEMPLATES_DIR / "agentic"
 SKILLS_TEMPLATES = AGENTIC_TEMPLATES / ".claude" / "skills"
 COMMANDS_TEMPLATES = AGENTIC_TEMPLATES / ".opencode" / "commands"
+# Обработчики хуков среды: имя файла одно, раскладка разная — у Claude Code это
+# скрипт, на который ссылаются настройки проекта, у opencode — плагин, который
+# среда подхватывает из папки сама
+HOOK_TEMPLATES = {
+    "claude": AGENTIC_TEMPLATES / ".claude" / "hooks",
+    "opencode": AGENTIC_TEMPLATES / ".opencode" / "plugin",
+}
 VAULT_TEMPLATES = TEMPLATES_DIR / "vault"
 
 # Опциональные блоки шаблонов: возможность проекта → что исчезает из поставки,
@@ -468,7 +475,7 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
                     created += c
                     replaced += r
                     diverged += d
-        for part in ("skills", "commands", "rules"):
+        for part in ("skills", "commands", "hooks", "rules"):
             if part not in want:
                 continue
             c, r, s, d = refresh_agentic(project_root, part, names=names, cfg=cfg)
@@ -539,6 +546,23 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
                 f"{commands_dir.parent.name}/.gitignore (дописано: {commands_dir.name}/)")
         else:
             skipped.append(f"{commands_dir.parent.name}/.gitignore")
+
+    # Обработчики хуков едут с любой выбранной средой: они ловят то, чего скрипт
+    # не видит вовсе — коммит и push, пока задача числится в работе
+    if opt_skills or opt_commands:
+        c, r, s, d = refresh_agentic(project_root, "hooks", features=opt_features,
+                                     cfg=cfg, overwrite=overwrite)
+        created += c
+        replaced += r
+        skipped += s
+        diverged += d
+        for _harness, hooks_dir in _hook_dirs(project_root, cfg):
+            outcome = _ensure_ignored(hooks_dir.parent, hooks_dir.name)
+            if outcome == "created":
+                created.append(f"{hooks_dir.parent.name}/.gitignore")
+            elif outcome == "appended":
+                replaced.append(
+                    f"{hooks_dir.parent.name}/.gitignore (дописано: {hooks_dir.name}/)")
 
     # Состав файлов правил задаёт выбор сред; отдельные ключи (rules_agents /
     # rules_claude, легаси-«rules» на оба) оставлены как явное «этот не надо»
@@ -730,6 +754,36 @@ def _skill_targets(project_root: Path, features: set[str] | None = None,
         raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
         out.append((skill_dir.name, skills_dir / skill_dir.name / "SKILL.md",
                     strip_optional_blocks(raw, features)))
+    return out
+
+
+def _hook_dirs(project_root: Path, cfg: dict | None = None) -> list[tuple[str, Path]]:
+    """(среда, папка обработчиков) для каждой выбранной среды.
+
+    Раскладок две и обе живут одновременно: у Claude Code и opencode разные
+    механизмы, и общей копией, как у скиллов, тут не обойтись.
+    """
+    active = harnesses(project_root, cfg)
+    out = []
+    if active["claude"]:
+        out.append(("claude", project_root / ".claude" / "hooks"))
+    if active["opencode"]:
+        out.append(("opencode", project_root / ".opencode" / "plugin"))
+    return out
+
+
+def _hook_targets(project_root: Path, features: set[str] | None = None,
+                  cfg: dict | None = None) -> list[tuple[str, Path, str]]:
+    """(имя, путь развёрнутого файла, эталонный текст) для обработчиков хуков.
+
+    Имя — с папкой среды: у одного обработчика может быть тёзка в соседней
+    раскладке, а имена в отчёте валидатора должны различаться.
+    """
+    out: list[tuple[str, Path, str]] = []
+    for harness, target_dir in _hook_dirs(project_root, cfg):
+        for template in sorted(HOOK_TEMPLATES[harness].glob("*.*")):
+            out.append((f"{harness}/{template.name}", target_dir / template.name,
+                        template.read_text(encoding="utf-8")))
     return out
 
 
@@ -1053,6 +1107,8 @@ def part_targets(project_root: Path, part: str,
         return _skill_targets(project_root, cfg=cfg)
     if part == "commands":
         return _command_targets(project_root, cfg=cfg)
+    if part == "hooks":
+        return _hook_targets(project_root, cfg=cfg)
     if part == "vault":
         return _vault_targets(project_root)
     if part == "rules":
@@ -1076,6 +1132,9 @@ def _deployed_parts(project_root: Path,
         parts.append(("skills", _skill_targets(project_root, cfg=cfg)))
     if active["opencode"] and any(_deployed_commands(project_root).glob("*.md")):
         parts.append(("commands", _command_targets(project_root, cfg=cfg)))
+    hooks = _hook_targets(project_root, cfg=cfg)
+    if any(path.is_file() for _name, path, _text in hooks):
+        parts.append(("hooks", hooks))
     if uses_vault(project_root, cfg) and _vault_dir(project_root).is_dir():
         parts.append(("vault", _vault_targets(project_root)))
     rules = _rules_targets(project_root, cfg or {})
@@ -1103,6 +1162,9 @@ def _template_source(part: str, name: str, features: set[str]):
         return SKILLS_TEMPLATES / name / "SKILL.md", lambda t: strip_optional_blocks(t, features)
     if part == "commands":
         return COMMANDS_TEMPLATES / f"{name}.md", None
+    if part == "hooks":
+        harness, _slash, file_name = name.partition("/")
+        return HOOK_TEMPLATES[harness] / file_name, None
     if part == "vault":
         return VAULT_TEMPLATES / name, None
     if part in SINGLE_FILE_PARTS:
@@ -1375,6 +1437,7 @@ def refresh_agentic(project_root: Path, part: str, features: set[str] | None = N
         return created, replaced, skipped, diverged
 
     targets = (_skill_targets(project_root, features, cfg) if part == "skills"
+               else _hook_targets(project_root, features, cfg) if part == "hooks"
                else _command_targets(project_root, features, cfg))
     if names is not None:
         wanted = set(names)
@@ -1436,6 +1499,10 @@ ENV_PARTS = (
      "extra": "extra_commands"},
     {"part": "rules", "harness": "any",
      "missing": "no_rules", "outdated": "outdated_rules"},
+    # Обработчики хуков: они ловят то, чего скрипт не видит вовсе — коммит и
+    # push при задаче в работе. Часть общая для сред, но раскладка у каждой своя
+    {"part": "hooks", "harness": "any",
+     "missing": "no_hooks", "outdated": "outdated_hooks"},
     # Волт проверяется только у тех, кто его выбрал: отказ от внешней памяти —
     # решение пользователя, а не пробел поставки
     {"part": "vault", "harness": None, "vault_only": True,
@@ -1542,7 +1609,7 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             name = cfg.get("logs_dir", "logs")
             missing = [] if (tasks_dir / name).is_dir() else [f"{name}/"]
             outdated = []
-        elif part in ("skills", "commands", "vault"):
+        elif part in ("skills", "commands", "hooks", "vault"):
             missing, partial, outdated = _targets_state(
                 project_root, part, part_targets(project_root, part, cfg), cfg)
         else:  # rules

@@ -2497,6 +2497,43 @@ def entry_reminders(task_path: Path, task_id: str, cfg: dict,
     return out
 
 
+# Скрипт видит только собственные вызовы, а коммит, push и запрос на слияние
+# проходят мимо него — именно там работа и уезжает наружу, пока задача числится
+# в разработке. Заметить это может хук среды; решение принимает скрипт, иначе
+# одно правило пришлось бы писать дважды, на JSON и на JS
+WORK_HINT_TEXT = ("{tasks} в рабочем статусе. Коммит, push и запрос на слияние — "
+                  "признак того, что работа кончилась: передачу ведёт скилл "
+                  "handoff-task")
+
+
+def work_hint(tasks_dir: Path) -> dict:
+    """Задачи в рабочем статусе и готовая подсказка для хука среды.
+
+    Пусто — говорить не о чем: работа не идёт, и коммит к ней не относится.
+
+    Подсказка, а не запрет: коммит в середине работы законен, а блокировка учила
+    бы её обходить. Дело хука — сказать вслух в момент действия, и только.
+    """
+    tasks_dir = Path(tasks_dir)
+    cfg = load_config(tasks_dir)
+    pipeline = pipeline_of(cfg)
+    work = actions_of(cfg, pipeline).get("start")
+    if not work:
+        return {"in_work": [], "hint": ""}
+
+    found = []
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        meta = _read_meta(path)
+        if str(meta.get("status", "") or "").strip().lower() == work:
+            task_id = str(meta.get("id", "") or path.name.split("-")[0]).strip()
+            if task_id:
+                found.append(task_id.upper())
+    if not found:
+        return {"in_work": [], "hint": ""}
+    return {"in_work": found,
+            "hint": WORK_HINT_TEXT.format(tasks=", ".join(found))}
+
+
 def transition_gate(tasks_dir: Path, task_id: str, target: str,
                     via: str | None, manual: str | None) -> str:
     """Текст отказа, если переход требует назвать источник. Пусто — можно идти.
@@ -2753,6 +2790,8 @@ def main() -> None:
                              "(без значения — утверждённый состав выпуска)")
     parser.add_argument("--limit", type=int, default=5,
                         help="Сколько задач очереди показать, 0 — все (default: 5)")
+    parser.add_argument("--work-hint", action="store_true",
+                        help="Задачи в рабочем статусе и подсказка для хука среды (JSON)")
     parser.add_argument("--via", metavar="СКИЛЛ", default=None,
                         help="Чем делается переход: имя скилла, который ведёт этот момент")
     parser.add_argument("--manual", metavar="ПРИЧИНА", default=None,
@@ -2847,6 +2886,10 @@ def main() -> None:
 
     if args.assignees:
         print(json.dumps(assignees(), ensure_ascii=False, indent=2))
+        return
+
+    if args.work_hint:
+        print(json.dumps(work_hint(tasks_dir), ensure_ascii=False, indent=2))
         return
 
     if args.stalled:
