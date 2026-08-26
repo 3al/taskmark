@@ -796,6 +796,9 @@ export default function App() {
     no_skills: { part: 'skills', label: 'Развернуть', help: 'agentic' },
     no_commands: { part: 'commands', label: 'Развернуть', help: 'agentic' },
     no_hooks: { part: 'hooks', label: 'Развернуть', help: 'agentic' },
+    // Ссылка на обработчик в настройках проекта: правится только наша запись
+    no_hook_registration: { part: 'hook_registration', label: 'Подключить',
+                            help: 'agentic' },
     // Состав поставки зависит от сред, а их знает только пользователь
     no_harness_choice: { modal: 'scaffold', label: 'Настроить', help: 'agentic' },
     // Скилл выключенной возможности остался на диске. В то же окно: удаление

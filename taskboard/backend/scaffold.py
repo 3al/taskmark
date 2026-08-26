@@ -6,6 +6,8 @@ import difflib
 import re
 import shutil
 from datetime import date
+import json
+import os
 from pathlib import Path, PurePosixPath
 
 from backend import baseline, template_history
@@ -475,6 +477,8 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
                     created += c
                     replaced += r
                     diverged += d
+        if "hook_registration" in want and register_hook(project_root, cfg):
+            replaced.append(CLAUDE_SETTINGS)
         for part in ("skills", "commands", "hooks", "rules"):
             if part not in want:
                 continue
@@ -556,6 +560,10 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         replaced += r
         skipped += s
         diverged += d
+        # Ссылка на обработчик в настройках проекта: файл пользователя, поэтому
+        # правится только своя запись
+        if register_hook(project_root, cfg):
+            replaced.append(CLAUDE_SETTINGS)
         for _harness, hooks_dir in _hook_dirs(project_root, cfg):
             outcome = _ensure_ignored(hooks_dir.parent, hooks_dir.name)
             if outcome == "created":
@@ -755,6 +763,134 @@ def _skill_targets(project_root: Path, features: set[str] | None = None,
         out.append((skill_dir.name, skills_dir / skill_dir.name / "SKILL.md",
                     strip_optional_blocks(raw, features)))
     return out
+
+
+# Настройки проекта Claude Code — **файл пользователя**: там его разрешения,
+# переменные окружения и, возможно, собственные хуки. Модель поставки «файл равен
+# эталону» к нему неприменима: сверять чужое значит показывать баннер устаревания
+# на каждую его запись. Приём тот же, что у секции правил внутри CLAUDE.md —
+# правим только свою запись, остальное остаётся владельцу дословно.
+CLAUDE_SETTINGS = ".claude/settings.json"
+HOOK_EVENT = "PostToolUse"
+# По этому куску пути своя запись и опознаётся: имя обработчика — константа
+# поставки, и совпасть с чужим хуком случайно оно не может
+HOOK_MARK = "work-hint"
+
+
+def _settings_path(project_root: Path) -> Path:
+    return Path(project_root) / ".claude" / "settings.json"
+
+
+def _hook_command() -> str:
+    """Чем звать обработчик. Лаунчер `py` есть только на Windows."""
+    python = "py" if os.name == "nt" else "python3"
+    return f'{python} "${{CLAUDE_PROJECT_DIR}}/.claude/hooks/work-hint.py"'
+
+
+def _hook_entry() -> dict:
+    return {"matcher": "Bash",
+            "hooks": [{"type": "command", "command": _hook_command()}]}
+
+
+def _read_settings(project_root: Path) -> dict | None:
+    """Настройки проекта или None, если файла нет либо он не читается.
+
+    Битый JSON — не повод переписывать чужой файл начисто: молчим и не трогаем.
+    """
+    path = _settings_path(project_root)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _is_ours(entry) -> bool:
+    return isinstance(entry, dict) and HOOK_MARK in json.dumps(entry, ensure_ascii=False)
+
+
+def _is_dead(entry) -> bool:
+    """Запись без единой команды: среда её пропускает, держать незачем.
+
+    Так выглядит наша же запись, из которой вынули команду руками. Опознать её
+    своей уже нельзя — имени обработчика в ней нет, — но и добавлять свою рядом
+    незачем: получится дубль, где один из двух мёртв. Занимаем мёртвую.
+    """
+    return (isinstance(entry, dict) and entry.get("matcher") == _hook_entry()["matcher"]
+            and not (entry.get("hooks") or []))
+
+
+def hook_registered(project_root: Path) -> bool:
+    """Сослались ли настройки проекта на наш обработчик."""
+    data = _read_settings(project_root)
+    if data is None:
+        return False
+    entries = ((data.get("hooks") or {}).get(HOOK_EVENT) or [])
+    return any(_is_ours(entry) for entry in entries)
+
+
+def register_hook(project_root: Path, cfg: dict | None = None) -> bool:
+    """Добавить свою запись в настройки проекта. True — файл изменился.
+
+    Нужна только Claude Code: opencode подхватывает плагин из папки сам.
+    """
+    project_root = Path(project_root)
+    if not harnesses(project_root, cfg)["claude"]:
+        return False
+    path = _settings_path(project_root)
+    data = _read_settings(project_root)
+    if data is None and path.is_file():
+        return False  # чужой файл сломан — молча не трогаем
+    if data is None:
+        data = {}
+
+    entries = list((data.get("hooks") or {}).get(HOOK_EVENT) or [])
+    entry = _hook_entry()
+
+    # Своё — наша запись и мёртвые оболочки от неё: команду из записи вынимают
+    # руками, и опознать её потом можно только по пустому списку. Раз мы готовы
+    # такую занять, значит признаём своей — и лишние обязаны убрать, иначе они
+    # копятся в чужом файле нашим мусором
+    mine = [i for i, item in enumerate(entries) if _is_ours(item) or _is_dead(item)]
+    if mine:
+        keep = mine[0]
+        unchanged = entries[keep] == entry and len(mine) == 1
+        if unchanged:
+            return False
+        entries[keep] = entry
+        entries = [item for i, item in enumerate(entries) if i == keep or i not in mine]
+    else:
+        entries.append(entry)
+
+    hooks = dict(data.get("hooks") or {})
+    hooks[HOOK_EVENT] = entries
+    data["hooks"] = hooks
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
+    return True
+
+
+def unregister_hook(project_root: Path) -> bool:
+    """Убрать свою запись, ничего чужого не задев. True — файл изменился."""
+    data = _read_settings(project_root)
+    if data is None:
+        return False
+    entries = list((data.get("hooks") or {}).get(HOOK_EVENT) or [])
+    kept = [item for item in entries if not _is_ours(item)]
+    if len(kept) == len(entries):
+        return False
+    hooks = dict(data.get("hooks") or {})
+    if kept:
+        hooks[HOOK_EVENT] = kept
+    else:
+        hooks.pop(HOOK_EVENT, None)
+    data["hooks"] = hooks
+    _settings_path(project_root).write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return True
 
 
 def _hook_dirs(project_root: Path, cfg: dict | None = None) -> list[tuple[str, Path]]:
@@ -1503,6 +1639,11 @@ ENV_PARTS = (
     # push при задаче в работе. Часть общая для сред, но раскладка у каждой своя
     {"part": "hooks", "harness": "any",
      "missing": "no_hooks", "outdated": "outdated_hooks"},
+    # Ссылка на обработчик в настройках проекта. Нужна только Claude Code:
+    # opencode подхватывает плагин из папки сам. Устаревания нет — запись либо
+    # наша и актуальная, либо её нет: сверять чужой файл с эталоном нельзя
+    {"part": "hook_registration", "harness": "claude",
+     "missing": "no_hook_registration", "outdated": None},
     # Волт проверяется только у тех, кто его выбрал: отказ от внешней памяти —
     # решение пользователя, а не пробел поставки
     {"part": "vault", "harness": None, "vault_only": True,
@@ -1608,6 +1749,9 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
         elif part == "logs":
             name = cfg.get("logs_dir", "logs")
             missing = [] if (tasks_dir / name).is_dir() else [f"{name}/"]
+            outdated = []
+        elif part == "hook_registration":
+            missing = [] if hook_registered(project_root) else [CLAUDE_SETTINGS]
             outdated = []
         elif part in ("skills", "commands", "hooks", "vault"):
             missing, partial, outdated = _targets_state(
