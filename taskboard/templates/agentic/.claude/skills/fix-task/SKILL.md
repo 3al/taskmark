@@ -101,8 +101,8 @@ argument-hint: "<TASK-NNN | commit-hash>"
 возвращает `_(нет)_` в опустевший раздел):
 
 ```
-py tasks/set_status.py TASK-NNN <actions.return> --agent "<АГЕНТ>"     (Windows)
-python3 tasks/set_status.py TASK-NNN <actions.return> --agent "<АГЕНТ>"
+py tasks/set_status.py TASK-NNN <actions.return> --agent "<АГЕНТ>" --via fix-task     (Windows)
+python3 tasks/set_status.py TASK-NNN <actions.return> --agent "<АГЕНТ>" --via fix-task
 ```
 
 Лаунчера `py` может не быть (Python из Microsoft Store его не ставит) —

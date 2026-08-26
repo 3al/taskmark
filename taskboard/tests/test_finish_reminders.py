@@ -344,7 +344,7 @@ class HandoffReminderTest(Project):
 
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "TASK-001", "testing",
-             "--agent", "Тест", "--tasks-dir", str(self.tasks)],
+             "--agent", "Тест", "--via", "тест", "--tasks-dir", str(self.tasks)],
             capture_output=True, text=True, encoding="utf-8")
 
         self.assertEqual(0, proc.returncode, proc.stderr)
@@ -370,7 +370,7 @@ class ReminderIsNotAGateTest(Project):
 
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "TASK-001", "ready_for_release",
-             "--agent", "Тест", "--tasks-dir", str(self.tasks)],
+             "--agent", "Тест", "--via", "тест", "--tasks-dir", str(self.tasks)],
             capture_output=True, text=True, encoding="utf-8")
 
         self.assertEqual(0, proc.returncode, proc.stderr)

@@ -183,8 +183,8 @@ python3 tasks/set_status.py --assignees
 пишет комментарий с системным временем:
 
 ```
-py tasks/set_status.py TASK-NNN <next> --agent "<АГЕНТ (модель)>" --note "передана на проверку: <суть сделанного>"
-python3 tasks/set_status.py TASK-NNN <next> --agent "<АГЕНТ (модель)>" --note "…"
+py tasks/set_status.py TASK-NNN <next> --agent "<АГЕНТ (модель)>" --note "передана на проверку: <суть сделанного>" --via handoff-task
+python3 tasks/set_status.py TASK-NNN <next> --agent "<АГЕНТ (модель)>" --note "…" --via handoff-task
 ```
 
 Этап спрашивает исполнителя — добавь `--assignee "Имя"` (Шаг 4.5): без имени

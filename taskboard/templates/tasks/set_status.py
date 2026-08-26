@@ -526,7 +526,8 @@ def _tidy_section(lines: list[str], name: str) -> None:
 
 def set_status(tasks_dir: Path, task_id: str, status: str,
                agent: str | None = None, position: str = "start",
-               force: bool = False, reason: str | None = None) -> dict:
+               force: bool = False, reason: str | None = None,
+               via: str | None = None, manual: str | None = None) -> dict:
     """
     Перевести задачу в новый статус: frontmatter + раздел board.md.
 
@@ -538,6 +539,12 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
 
     reason — причина съезда с маршрута (отмены). Обязательна: из отмены не
     возвращаются, и «почему» должно остаться в файле.
+
+    via / manual — источник перехода: `via` называет скилл, который его делает,
+    `manual` — причину ручного хода. На запись влияет только `manual`: он меняет
+    подпись строки перевода и добавляет причину в «Комментарии». Требует ли
+    момент назвать источник — решает вызывающий (`transition_gate`): доска
+    двигает задачи всегда, и правило это про агентский путь, а не про данные.
     """
     tasks_dir = Path(tasks_dir)
     cfg = load_config(tasks_dir)
@@ -597,6 +604,9 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # у агента нет. Пересечение считаем от статуса из файла: раздел доски мог
     # разъехаться с ним, а источник правды — файл
     from_status = current_status(tasks_dir, task_id) or ""
+    via, manual = _one_line(via), _one_line(manual)
+    owner = moment_skill(cfg, pipeline, from_status, status)
+
     pending = unmet(move_requirements(cfg, pipeline, from_status, status), task_file)
     blocked = [r for r in pending if r.get("mandatory")]
     if blocked:
@@ -695,7 +705,13 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # источник, а не модель: модель уточняет его в скобках, но и без неё видно,
     # что переход прошёл через инструмент
     add_transition(tasks_dir, task_id, _label_of(pipeline, from_status),
-                   _label_of(pipeline, status), agent)
+                   _label_of(pipeline, status), agent, manual=bool(manual))
+
+    # Причина ручного хода — отдельной строкой: подпись говорит, что переход
+    # прошёл мимо скилла, а «почему» знает только тот, кто так решил
+    if manual and owner:
+        note_event(tasks_dir, task_id,
+                   MANUAL_TEXT.format(skill=owner, reason=manual), agent)
 
     # Возврат назад: этапы правее цели задача пройдёт заново, и подтверждения
     # прошлой итерации к новой не относятся
@@ -797,6 +813,8 @@ NOTE_RE = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\*\* · [^·]+ · .
 # расходиться форматам нельзя — историю читают разбором и рисуют одинаково.
 TRANSITION_TEXT = "{was} → {now}"
 SCRIPT_SOURCE = "скрипт"
+# Тот же источник, но мимо скилла момента. Зеркало `backend/notes.py`
+MANUAL_SOURCE = "скрипт вручную"
 
 # Остальные действия жизненного цикла: простой, тип, название. Строку пишет тот
 # же вызов, что правит поля, — иначе событие остаётся только во frontmatter, где
@@ -985,7 +1003,7 @@ def add_note(tasks_dir: Path, task_id: str, text: str,
 
 
 def add_transition(tasks_dir: Path, task_id: str, was: str, now: str,
-                   agent: str | None = None) -> dict | None:
+                   agent: str | None = None, manual: bool = False) -> dict | None:
     """Записать перевод статуса строкой в «Комментарии».
 
     Пишется **всегда**, а не только когда на этапе объявлены требования:
@@ -1000,7 +1018,10 @@ def add_transition(tasks_dir: Path, task_id: str, was: str, now: str,
     if not was or not now or was == now:
         return None
     agent = _one_line(agent)
-    source = f"{SCRIPT_SOURCE} ({agent})" if agent else SCRIPT_SOURCE
+    # Ручной ход подписан отдельно: иначе он неотличим от прохода через скилл,
+    # и заметить его можно только вычитав историю глазами
+    kind = MANUAL_SOURCE if manual else SCRIPT_SOURCE
+    source = f"{kind} ({agent})" if agent else kind
     return add_note(tasks_dir, task_id,
                     TRANSITION_TEXT.format(was=was, now=now), agent=source)
 
@@ -2377,8 +2398,14 @@ def work_done_status(cfg: dict, pipeline: list[dict]) -> str | None:
 # Слова-триггеры в описании скилла этому не противостоят: описание срабатывает,
 # когда человек формулирует запрос его словами, а агент с заученным маршрутом
 # команд идёт коротким путём. Зато скрипт он зовёт неизбежно — там и встречаем.
-MOMENT_SKILL_TEXT = ("{event} ведёт скилл {skill} — прямой перевод статуса "
-                     "проходит мимо остальных его шагов")
+# Отказ на переходе, у которого есть свой скилл. Обойти можно (`--manual`), но
+# громко и с причиной — тем же приёмом, что отмена требует `--reason`, а
+# требование этапа списывается через `--waive`. Смысл не в защите: подделать
+# `--via` ничего не стоит, — а в том, что молчаливый пропуск становится выбором
+GATE_TEXT = ("этот переход делает скилл {skill}: позовите его — или, если "
+             "двигаете вручную, назовите причину: {task} {target} "
+             "--manual \"почему\"")
+MANUAL_TEXT = "перевод вручную, мимо скилла {skill}: {reason}"
 START_SKILL = "start-task"
 HANDOFF_SKILL = "handoff-task"
 FIX_SKILL = "fix-task"
@@ -2399,7 +2426,7 @@ def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
     ровно там, где нужнее.
 
     Момент, у которого своего скилла нет (возврат мимо рабочего статуса),
-    остаётся без строки: назвать не тот скилл хуже, чем не назвать никакого.
+    остаётся без имени: назвать не тот скилл хуже, чем не назвать никакого.
     """
     keys = [s["key"] for s in pipeline]
     if target not in keys:
@@ -2411,20 +2438,16 @@ def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
 
     if target == work and not offramp:
         # Возврат в работу — это доработка после чужих замечаний, а не старт
-        event, skill = (("возврат в работу", FIX_SKILL)
-                        if there is not None and there > here
-                        else ("взятие в работу", START_SKILL))
-    elif _is_handoff(cfg, pipeline, from_status, target):
-        event, skill = "передача на проверку", HANDOFF_SKILL
-    elif _in_release_tail(cfg, pipeline, target):
+        return (FIX_SKILL if there is not None and there > here else START_SKILL)
+    if _is_handoff(cfg, pipeline, from_status, target):
+        return HANDOFF_SKILL
+    if _in_release_tail(cfg, pipeline, target):
         # За концом работы задачу ведёт уже выпуск, и финализировать там нечего
-        event, skill = "выпуск", RELEASE_SKILL
-    elif offramp or there is None or here > there:
+        return RELEASE_SKILL
+    if offramp or there is None or here > there:
         # Съезд ведёт та же финализация: причину отмены спрашивает она
-        event, skill = "продвижение по маршруту", FINALIZE_SKILL
-    else:
-        return ""
-    return MOMENT_SKILL_TEXT.format(event=event, skill=skill)
+        return FINALIZE_SKILL
+    return ""
 
 
 # Оценка объёма ставится не при заведении задачи (строить её тогда не на чем) и
@@ -2472,6 +2495,46 @@ def entry_reminders(task_path: Path, task_id: str, cfg: dict,
         out.append(SIZE_REMINDER_TEXT.format(task=task_id))
     out.append(EXIT_RULE_TEXT)
     return out
+
+
+def transition_gate(tasks_dir: Path, task_id: str, target: str,
+                    via: str | None, manual: str | None) -> str:
+    """Текст отказа, если переход требует назвать источник. Пусто — можно идти.
+
+    **Стоит на агентском пути, а не в данных.** У требований этапа есть
+    эквивалент на стороне доски (долг карточки), а здесь его нет и быть не
+    может: человек двигает карточки мышью и объяснять это не обязан. Правило
+    про то, чем агент зовёт инструмент, — значит его место у интерфейса.
+
+    Гейт молчит там, где скилла нет: момент без своего скилла (возврат мимо
+    рабочего статуса) и проект, где окружение не развёрнуто.
+    """
+    if _one_line(via) or _one_line(manual):
+        return ""
+    tasks_dir = Path(tasks_dir)
+    cfg = load_config(tasks_dir)
+    pipeline = pipeline_of(cfg)
+    from_status = current_status(tasks_dir, task_id) or ""
+    owner = moment_skill(cfg, pipeline, from_status, target)
+    if not owner or not skill_deployed(tasks_dir, owner):
+        return ""
+    return GATE_TEXT.format(skill=owner, task=task_id.upper(), target=target)
+
+
+def skill_deployed(tasks_dir: Path, name: str) -> bool:
+    """Лежит ли скилл рядом с проектом.
+
+    Структура задач разворачивается **отдельно** от агентского окружения: папку
+    `tasks/` со скриптом копируют в другие репозитории, окружение разворачивают
+    кнопкой позже, а скилл можно удалить руками. Требовать вызова того, чего в
+    проекте нет, — значит упираться на каждом переходе.
+
+    Раскладок две: одна копия в `.claude/skills`, а в `.opencode/skills` скиллы
+    попадают только у проекта без Claude Code.
+    """
+    root = Path(tasks_dir).parent
+    return any((root / harness / "skills" / name / "SKILL.md").is_file()
+               for harness in (".claude", ".opencode"))
 
 
 def _in_release_tail(cfg: dict, pipeline: list[dict], target: str) -> bool:
@@ -2690,6 +2753,10 @@ def main() -> None:
                              "(без значения — утверждённый состав выпуска)")
     parser.add_argument("--limit", type=int, default=5,
                         help="Сколько задач очереди показать, 0 — все (default: 5)")
+    parser.add_argument("--via", metavar="СКИЛЛ", default=None,
+                        help="Чем делается переход: имя скилла, который ведёт этот момент")
+    parser.add_argument("--manual", metavar="ПРИЧИНА", default=None,
+                        help="Перевод вручную, мимо скилла: причина остаётся в задаче")
     parser.add_argument("--epic", metavar="КЛЮЧ", default=None,
                         help="Состав эпика: задачи в порядке маршрута (JSON)")
     parser.add_argument("--block", metavar="TASK-NNN", default=None,
@@ -2940,9 +3007,15 @@ def main() -> None:
         parser.error("нужны TASK-NNN и статус "
                      "(либо --list / --targets / --queue / --stalled / --block / --pause)")
 
+    refusal = transition_gate(tasks_dir, args.task_id, args.status,
+                              args.via, args.manual)
+    if refusal:
+        print(f"[ERROR] {refusal}", file=sys.stderr)
+        sys.exit(1)
+
     result = set_status(tasks_dir, args.task_id, args.status,
                         agent=args.agent, position=args.position, force=args.force,
-                        reason=args.reason)
+                        reason=args.reason, via=args.via, manual=args.manual)
 
     if not result.get("ok"):
         print(f"[ERROR] {result.get('error')}", file=sys.stderr)
@@ -2967,8 +3040,6 @@ def main() -> None:
     if result.get("skipped"):
         # Не запрет, а видимость: пайплайн описывает ожидаемый маршрут
         print(f"[i] минуя {', '.join(result['skipped'])}")
-    if result.get("moment_skill"):
-        print(f"[i] {result['moment_skill']}")
     for reminder in result.get("entry_reminders", []):
         print(f"[i] {reminder}")
     if result.get("announce"):

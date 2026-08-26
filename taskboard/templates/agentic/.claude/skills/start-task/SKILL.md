@@ -175,8 +175,8 @@ python3 tasks/set_status.py --stalled
 и возвращает заглушку `_(нет)_` в опустевший раздел:
 
 ```
-py tasks/set_status.py TASK-NNN <actions.start> --agent "<АГЕНТ (модель)>"     (Windows)
-python3 tasks/set_status.py TASK-NNN <actions.start> --agent "<АГЕНТ (модель)>"
+py tasks/set_status.py TASK-NNN <actions.start> --agent "<АГЕНТ (модель)>" --via start-task     (Windows)
+python3 tasks/set_status.py TASK-NNN <actions.start> --agent "<АГЕНТ (модель)>" --via start-task
 ```
 
 Задача стоит, а пользователь всё равно велел её взять — добавь `--force`: без

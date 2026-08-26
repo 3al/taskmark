@@ -98,7 +98,7 @@ python3 tasks/set_status.py --list
 и frontmatter, и доску:
 
 ```
-py tasks/set_status.py TASK-NNN <actions.release_draft> --agent "<АГЕНТ (модель)>"
+py tasks/set_status.py TASK-NNN <actions.release_draft> --agent "<АГЕНТ (модель)>" --via release
 ```
 
 Задачи, которые уже лежали в подготовке или в утверждённом, переносить **не
@@ -161,7 +161,7 @@ py tasks/set_status.py TASK-NNN <actions.release_draft> --agent "<АГЕНТ (м
 утверждены» — сделать его раньше нечем оправдать:
 
 ```
-py tasks/set_status.py TASK-NNN <actions.release_lock> --agent "<АГЕНТ (модель)>"
+py tasks/set_status.py TASK-NNN <actions.release_lock> --agent "<АГЕНТ (модель)>" --via release
 ```
 
 Теперь в этом статусе лежит ровно то, что поедет ближайшим выпуском.

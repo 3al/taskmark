@@ -21,6 +21,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+def _with_source(args: tuple[str, ...]) -> list[str]:
+    """Дописать источник перехода: гейт CLI требует назвать, чем двигают статус.
+
+    Тесты про другое, поэтому источник добавляется молча — как его добавит
+    скилл поставки. Вызов, который статус не двигает (срезы, комментарии), и
+    вызов, где источник назван явно, остаются как есть.
+    """
+    listed = list(args)
+    if any(a in ("--via", "--manual") for a in listed):
+        return listed
+    moves = len(listed) >= 2 and not listed[1].startswith("-")
+    return listed + ["--via", "тест"] if moves else listed
+
+
 from backend.config import DEFAULTS  # noqa: E402
 from backend.queue_ops import move_task  # noqa: E402
 from backend.scaffold import scaffold_project  # noqa: E402
@@ -129,7 +143,7 @@ class ScriptRequiresReasonTest(Project):
     def run_script(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, str(self.tasks / "set_status.py"),
-             "--tasks-dir", str(self.tasks), *args],
+             "--tasks-dir", str(self.tasks), *_with_source(args)],
             capture_output=True, text=True, encoding="utf-8", timeout=30)
 
     def test_cancel_without_reason_refused(self) -> None:

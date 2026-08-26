@@ -177,8 +177,8 @@ git log --all --pretty=format:"%h|%ci|%s" --grep="<JIRA-KEY>" --no-merges | sort
 возвращает `_(нет)_` в опустевший раздел):
 
 ```
-py tasks/set_status.py TASK-NNN <целевой статус> --agent "<АГЕНТ (модель)>" --note "переведена в <подпись статуса>"   (Windows)
-python3 tasks/set_status.py TASK-NNN <целевой статус> --agent "<АГЕНТ (модель)>" --note "…"
+py tasks/set_status.py TASK-NNN <целевой статус> --agent "<АГЕНТ (модель)>" --note "переведена в <подпись статуса>" --via finalize-task   (Windows)
+python3 tasks/set_status.py TASK-NNN <целевой статус> --agent "<АГЕНТ (модель)>" --note "…" --via finalize-task
 ```
 
 Этап может спрашивать **исполнителя** — тогда без имени перевод не выполнится.
@@ -203,7 +203,7 @@ python3 tasks/set_status.py TASK-NNN <целевой статус> --agent "<А�
 Отмена (съезд) — с причиной, иначе отказ:
 
 ```
-py tasks/set_status.py TASK-NNN <съезд> --agent "<АГЕНТ (модель)>" --reason "дублирует TASK-002"
+py tasks/set_status.py TASK-NNN <съезд> --agent "<АГЕНТ (модель)>" --reason "дублирует TASK-002" --via finalize-task
 ```
 
 Если скрипта в проекте нет — правь вручную оба места: `status:` во frontmatter и

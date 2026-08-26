@@ -170,9 +170,15 @@ py tasks/set_status.py --targets TASK-NNN # куда можно двинуть �
 **Меняй его только скриптом** — он правит оба места за один вызов, и они не разойдутся:
 
 ```
-py tasks/set_status.py TASK-004 development --agent "АГЕНТ (модель)"     (Windows)
-python3 tasks/set_status.py TASK-004 development --agent "АГЕНТ (модель)"
+py tasks/set_status.py TASK-004 development --agent "АГЕНТ (модель)" --via start-task     (Windows)
+python3 tasks/set_status.py TASK-004 development --agent "АГЕНТ (модель)" --via start-task
 ```
+
+**У перехода называют источник.** У большинства моментов маршрута есть свой
+скилл, и без `--via` скрипт такой переход не выполнит — в отказе он сам назовёт,
+какой скилл этот момент ведёт. Двигаете вручную, мимо скилла, — скажите почему:
+`--manual "причина"`. Причина останется в задаче, а строка перевода будет
+подписана «скрипт вручную»: ручной ход видно, и это его единственная цена.
 
 - Статусы проекта: backlog | todo | development | testing | ready_for_release | release_notes | to_release | done | cancelled (актуальный список — `set_status.py --list`)
 - `--agent` попадает в хвост строки доски вместе с датой; без него сохраняется прежний исполнитель

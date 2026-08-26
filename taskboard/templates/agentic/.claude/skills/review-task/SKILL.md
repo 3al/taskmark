@@ -120,7 +120,7 @@ py tasks/create_task.py --type review -t "<заголовок>" -d "<предм�
 Затем переведи в рабочий статус и оставь стартовый комментарий:
 
 ```
-py tasks/set_status.py TASK-NNN <actions.start> --agent "<АГЕНТ (модель)>"
+py tasks/set_status.py TASK-NNN <actions.start> --agent "<АГЕНТ (модель)>" --via review-task
 py tasks/set_status.py TASK-NNN --note "старт ревью: <предмет>" --agent "<своя модель>"
 ```
 

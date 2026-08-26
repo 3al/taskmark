@@ -21,6 +21,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+def _with_source(args: tuple[str, ...]) -> list[str]:
+    """Дописать источник перехода: гейт CLI требует назвать, чем двигают статус.
+
+    Тесты про другое, поэтому источник добавляется молча — как его добавит
+    скилл поставки. Вызов, который статус не двигает (срезы, комментарии), и
+    вызов, где источник назван явно, остаются как есть.
+    """
+    listed = list(args)
+    if any(a in ("--via", "--manual") for a in listed):
+        return listed
+    moves = len(listed) >= 2 and not listed[1].startswith("-")
+    return listed + ["--via", "тест"] if moves else listed
+
+
 from fastapi import HTTPException  # noqa: E402
 
 from backend import config as config_mod  # noqa: E402
@@ -337,7 +351,7 @@ class AssigneeScriptTest(unittest.TestCase):
                               cwd=str(self.root), env=env)
 
     def _status(self, *args: str) -> subprocess.CompletedProcess:
-        return self._run(self.tasks / "set_status.py", *args)
+        return self._run(self.tasks / "set_status.py", *_with_source(args))
 
     def _meta(self) -> dict:
         from backend.task_parser import parse_frontmatter
