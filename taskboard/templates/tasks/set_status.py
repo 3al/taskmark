@@ -1574,6 +1574,47 @@ def types() -> dict:
     return {"types": [{"key": key, **meta} for key, meta in TASK_TYPES.items()]}
 
 
+# Размеры, при которых план окупается. Список не выдуман здесь: каталог размеров
+# сам говорит про `L` — «несколько сессий, лучше с планом»
+PLAN_SIZES = ("L", "XL")
+PLAN_HINT_TEXT = ("работа на несколько сессий — заведите план: пункты в секции "
+                  "«## {section}» файла задачи. Их состояние переживёт сессию, "
+                  "а прогресс виден на карточке")
+
+
+def _plan_hint(path: Path, size: str) -> str:
+    """Позвать к плану, если работа крупная, а плана нет.
+
+    Момент выбран не случайно: «многошаговая ли работа» — суждение, и правило,
+    которое его требует, не срабатывает. Но к этой минуте суждение уже вынесено
+    самим агентом — он назвал размер. Остаётся сказать вслух.
+
+    Ничего не требует: план необязателен, и молчание в ответ — законный исход.
+    Секция уже есть — говорить не о чем.
+    """
+    if size not in PLAN_SIZES:
+        return ""
+    try:
+        lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return ""
+    # План — это пункты, а не заголовок: пустая секция досталась задаче от
+    # прежнего шаблона и ничего о работе не говорит
+    if _plan_items(lines):
+        return ""
+    return PLAN_HINT_TEXT.format(section=CHECKLIST_SECTION)
+
+
+def _plan_items(lines: list[str]) -> list[str]:
+    """Пункты плана — закрытые и открытые."""
+    bounds = _section_bounds(lines, CHECKLIST_SECTION)
+    if not bounds:
+        return []
+    start, end = bounds
+    return [lines[i] for i in range(start + 1, end)
+            if re.match(r"^\s*-\s*\[[ xX]\]", lines[i])]
+
+
 def set_size(tasks_dir: Path, task_id: str, value: str,
              agent: str | None = None) -> dict:
     """Проставить или снять размер задачи. Как и тип, по маршруту не двигает.
@@ -1600,7 +1641,9 @@ def set_size(tasks_dir: Path, task_id: str, value: str,
                    SIZE_TEXT.format(now=value or "не указан",
                                     was=was or "не указан"), agent)
     return {"ok": True, "task": task_id.strip().upper(), "size": value,
-            "label": TASK_SIZES[value]["label"] if value else "не указан"}
+            "label": TASK_SIZES[value]["label"] if value else "не указан",
+            # Крупная работа без плана — повод позвать к нему, а не требование
+            "hint": _plan_hint(path, value)}
 
 
 def sizes() -> dict:
@@ -2977,6 +3020,8 @@ def main() -> None:
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
         print(f"[OK] {result['task']}: размер — {result['label']}")
+        if result.get("hint"):
+            print(f"[i] {result['hint']}")
         if not args.status and args.note is None:
             return
 
