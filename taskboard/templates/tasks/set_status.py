@@ -2600,8 +2600,12 @@ def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
     cfg = load_config(Path(tasks_dir))
     pipeline = pipeline_of(cfg)
     out: dict = {
+        # `assignee` — спрашивает ли этап исполнителя. Условие «если этап его
+        # спрашивает» скиллы проверяют здесь: собранный без признака пайплайн
+        # делал его непроверяемым, и агент спрашивал имя там, где оно не нужно
         "pipeline": [{"key": s["key"], "label": s["label"], "section": s["section"],
-                      "offramp": bool(s.get("offramp"))} for s in pipeline],
+                      "offramp": bool(s.get("offramp")),
+                      "assignee": bool(s.get("assignee"))} for s in pipeline],
         "actions": actions_of(cfg, pipeline),
         # Чем проект выпускает версии. Пусто — своего механизма нет, скилл
         # выпуска доводит подготовку и останавливается, а не гадает
