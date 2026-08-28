@@ -140,6 +140,24 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     return () => clearInterval(timer)
   }, [tab])
 
+  // Автозапуск: состояние читается с диска, а не из конфига — запись живёт в
+  // папке автозагрузки, и её могли убрать мимо Taskmark
+  const [autostart, setAutostart] = useState(null)
+
+  useEffect(() => {
+    if (tab !== 'tool' && tab !== 'telegram') return
+    api.autostart().then(setAutostart).catch(() => { /* не отвечает — не покажем */ })
+  }, [tab])
+
+  const toggleAutostart = async (enabled) => {
+    setError(null)
+    try {
+      setAutostart(await api.setAutostart(enabled))
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
   const checkTelegram = async () => {
     setBotName(null)
     setBotError(null)
@@ -777,6 +795,29 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     Заводить задачи из чата
                   </label>
 
+                  {config.telegram && autostart && !autostart.enabled && (
+                    <div className="text-[11px] text-amber-400/90 border border-amber-900/40 bg-amber-950/20 rounded-lg px-3 py-2">
+                      Taskmark не запускается при входе в систему. Пока он выключен,
+                      задачи из чата не заводятся, а телеграм хранит непрочитанное
+                      около суток
+                      {autostart.supported ? (
+                        <button
+                          onClick={() => toggleAutostart(true)}
+                          className="ml-1 text-sky-400 hover:text-sky-300"
+                        >
+                          Включить автозапуск
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => openTab('tool')}
+                          className="ml-1 text-sky-400 hover:text-sky-300"
+                        >
+                          Как включить
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {config.telegram && (
                     <>
                       <div className="border-t border-zinc-800 pt-4">
@@ -928,6 +969,43 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                       onChange={(e) => set('port', e.target.value)}
                     />
                   </div>
+
+                  {autostart && (
+                    <div className="border-t border-zinc-800 pt-4">
+                      <span className={label}>Автозапуск</span>
+                      {autostart.supported ? (
+                        <>
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              className="accent-sky-500"
+                              checked={!!autostart.enabled}
+                              onChange={(e) => toggleAutostart(e.target.checked)}
+                            />
+                            Запускать при входе в систему
+                          </label>
+                          <div className="text-[11px] text-zinc-600 mt-1">
+                            Пока Taskmark не запущен, фоновое не работает: ни проверка
+                            обновлений, ни задачи из чата
+                          </div>
+                          {autostart.stale && (
+                            <div className="text-[11px] text-amber-400 mt-2">
+                              Запись автозагрузки ведёт в другую папку — при входе в
+                              систему запустится не этот Taskmark
+                              <button
+                                onClick={() => toggleAutostart(true)}
+                                className="ml-1 text-sky-500 hover:text-sky-400"
+                              >
+                                Обновить запись
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="text-[11px] text-zinc-600">{autostart.hint}</div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="border-t border-zinc-800 pt-4">
                     <span className={label}>Сервер</span>

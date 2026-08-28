@@ -20,7 +20,7 @@
 не привязывал.
 
 Имя вне списка — **ошибка в ответ с перечнем доступных**, а не догадка:
-переноса задачи между проектами в таскборде нет, и ошибка чинится руками
+переноса задачи между проектами в Taskmark нет, и ошибка чинится руками
 вместе с конфликтом номеров.
 """
 
@@ -171,7 +171,7 @@ def resolve_project(parsed: dict, message: dict, cfg: dict,
     allowed = bound_projects(cfg, message.get("chat_id"))
     if not allowed:
         return None, ("Этот чат не привязан к проекту — откройте настройки "
-                      "таскборда и выберите, куда складывать задачи.")
+                      "Taskmark и выберите, куда складывать задачи.")
     names = ", ".join(allowed)
 
     wanted = parsed.get("project") or allowed[0]
@@ -182,7 +182,7 @@ def resolve_project(parsed: dict, message: dict, cfg: dict,
     found = _find_project(wanted, projects)
     if not found:
         return None, (f"Чат привязан к проекту «{wanted}», а его больше нет — "
-                      "поправьте привязку в настройках таскборда.")
+                      "поправьте привязку в настройках Taskmark.")
     return found, ""
 
 

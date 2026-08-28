@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend import (baseline, changelog, help_docs, lifecycle, registry,
+from backend import (autostart, baseline, changelog, help_docs, lifecycle, registry,
                      telegram_intake, telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
@@ -68,7 +68,7 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "board_repair": True, "stall": True, "update": True,
                 "epic_tasks": True, "agentic_merge": True, "task_copy": True,
                 "board_sections": True, "agentic_remove": True,
-                "telegram": True}
+                "telegram": True, "autostart": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -160,6 +160,10 @@ class TelegramCheckIn(BaseModel):
     # Токен приходит из формы, а не из конфига: человек проверяет то, что
     # только что вставил, ещё до сохранения
     token: str
+
+
+class AutostartIn(BaseModel):
+    enabled: bool
 
 
 class CriteriaPresetIn(BaseModel):
@@ -472,6 +476,25 @@ def api_telegram_chats() -> dict:
         except (TypeError, ValueError):
             continue  # мусор в привязке — показывать нечего
     return {"ok": True, "chats": chats}
+
+
+@app.get("/api/autostart")
+def api_autostart_status() -> dict:
+    """Запускается ли Taskmark при входе в систему."""
+    return {"ok": True, **autostart.status(ROOT_DIR)}
+
+
+@app.post("/api/autostart")
+def api_autostart_set(body: AutostartIn) -> dict:
+    """Включить или выключить автозапуск.
+
+    Отказ платформы — не ошибка сервера, а сведения для человека: на macOS и
+    Linux автозагрузка заводится руками, и текст с командами возвращается ему.
+    """
+    result = autostart.enable(ROOT_DIR) if body.enabled else autostart.disable()
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Не удалось изменить автозапуск"))
+    return result
 
 
 @app.get("/api/health")

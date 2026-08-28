@@ -117,6 +117,10 @@ export const api = {
     request('/api/criteria-presets', { method: 'POST', body: JSON.stringify({ text }) }),
   deleteCriteriaPreset: (text) =>
     request('/api/criteria-presets', { method: 'DELETE', body: JSON.stringify({ text }) }),
+  // Автозапуск при входе в систему: состояние и переключение
+  autostart: () => request('/api/autostart'),
+  setAutostart: (enabled) =>
+    request('/api/autostart', { method: 'POST', body: JSON.stringify({ enabled }) }),
   // Проверка токена бота: человек видит имя своего бота до сохранения
   telegramCheck: (token) =>
     request('/api/telegram/check', { method: 'POST', body: JSON.stringify({ token }) }),
