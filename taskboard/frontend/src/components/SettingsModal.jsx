@@ -13,6 +13,7 @@ const TABS = [
   { key: 'board', title: 'Вид доски', scope: 'global' },
   { key: 'lifecycle', title: 'Жизненный цикл', scope: 'project' },
   { key: 'release', title: 'Выпуск', scope: 'project' },
+  { key: 'telegram', title: 'Telegram', scope: 'global' },
 ]
 
 // Выбранная вкладка живёт в localStorage: это привычка человека, а не свойство
@@ -115,6 +116,85 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
 
   const set = (key, value) => setConfig({ ...config, [key]: value })
 
+  // Телеграм: чаты и проекты нужны только на своей вкладке — грузим при заходе,
+  // а не при открытии окна. Имя бота живёт до закрытия окна: это ответ на
+  // нажатие «Проверить», а не сохранённая настройка
+  const [botName, setBotName] = useState(null)
+  const [botError, setBotError] = useState(null)
+  const [telegramChats, setTelegramChats] = useState([])
+  const [projectNames, setProjectNames] = useState([])
+
+  useEffect(() => {
+    if (tab !== 'telegram') return
+    // Список чатов спрашиваем повторно, пока вкладка открыта: человеку сказано
+    // «напишите в чат — он появится здесь», и появиться он должен сам, а не
+    // после закрытия и открытия окна
+    const load = () => api.telegramChats()
+      .then((data) => setTelegramChats(data.chats || []))
+      .catch(() => { /* возможность выключена — список просто пуст */ })
+    load()
+    const timer = setInterval(load, 3000)
+    api.projects()
+      .then((data) => setProjectNames((data.projects || []).map((p) => p.name)))
+      .catch(() => { /* без реестра выбирать не из чего */ })
+    return () => clearInterval(timer)
+  }, [tab])
+
+  const checkTelegram = async () => {
+    setBotName(null)
+    setBotError(null)
+    try {
+      const result = await api.telegramCheck(config.telegram_token || '')
+      setBotName(result.username)
+    } catch (e) {
+      setBotError(e.message)
+    }
+  }
+
+  // Привязка хранится строкой или списком: у большинства чат ведёт в один
+  // проект, и заставлять их видеть список незачем. Первый — тот, куда задача
+  // идёт без уточнения; остальные достаются суффиксом хэштега
+  const chatBinding = (id) => {
+    const value = (config.telegram_chats || {})[String(id)]
+    if (!value) return []
+    return Array.isArray(value) ? value.filter(Boolean) : [value]
+  }
+
+  const writeBinding = (id, names) => {
+    const chats = { ...(config.telegram_chats || {}) }
+    if (!names.length) delete chats[String(id)]
+    else chats[String(id)] = names.length === 1 ? names[0] : names
+    set('telegram_chats', chats)
+  }
+
+  // Показываем и те чаты, которых бот в этой сессии не видел, но которые уже
+  // настроены: иначе сохранённая привязка невидима и нередактируема, а человек
+  // решает, что настройки пропали
+  const visibleChats = () => {
+    const seen = telegramChats.map((chat) => ({ ...chat, id: String(chat.id) }))
+    const known = new Set(seen.map((chat) => chat.id))
+    const configured = Object.keys(config.telegram_chats || {})
+      .filter((id) => !known.has(id))
+      .map((id) => ({ id, title: '' }))
+    return [...seen, ...configured]
+  }
+
+  // Основной проект: в него задача идёт, когда в сообщении ничего не уточнили
+  const bindChat = (id, name) => {
+    const rest = chatBinding(id).filter((item) => item !== name).slice(1)
+    writeBinding(id, name ? [name, ...rest] : [])
+  }
+
+  // Дополнительные: доступны из этого чата суффиксом `#задача-Имя`
+  const toggleExtraProject = (id, name) => {
+    const [main, ...rest] = chatBinding(id)
+    if (!main) return
+    const next = rest.includes(name)
+      ? rest.filter((item) => item !== name)
+      : [...rest, name]
+    writeBinding(id, [main, ...next])
+  }
+
   // Выключение статуса с задачами: куда их девать — решает пользователь
   const [removals, setRemovals] = useState(null)
   const [moves, setMoves] = useState({})
@@ -139,6 +219,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
     review_sources: !!config.review_sources,
+    telegram: !!config.telegram,
+    telegram_token: (config.telegram_token || '').trim(),
+    telegram_username: (config.telegram_username || '').trim().replace(/^@/, ''),
+    telegram_chats: config.telegram_chats || {},
     ...(pipeline ? {
       pipeline: pipeline.pipeline.map((s) => s.key),
       actions: pipeline.actions,
@@ -201,6 +285,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   }
 
   const field = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500'
+  // То же поле, но без ширины: приписать к `field` свою `w-44` нельзя —
+  // конфликт разрешается порядком правил в CSS, а не в строке класса,
+  // и `w-full` побеждает, схлопывая соседей в ноль
+  const narrowField = 'bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500'
   const label = 'block text-xs text-zinc-500 mb-1'
 
   return (
@@ -673,6 +761,154 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     )}
                   </div>
                 </div>
+              )}
+
+              {tab === 'telegram' && (
+                <>
+                  {/* Три шага, а не инструкция простынёй: каждый говорит, что
+                      сделать, и отвечает, сделано ли. Длинный текст — в справке */}
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="accent-sky-500"
+                      checked={!!config.telegram}
+                      onChange={(e) => set('telegram', e.target.checked)}
+                    />
+                    Заводить задачи из чата
+                  </label>
+
+                  {config.telegram && (
+                    <>
+                      <div className="border-t border-zinc-800 pt-4">
+                        <span className={label}>1. Бот</span>
+                        <div className="flex gap-2">
+                          <input
+                            className={field}
+                            type="password"
+                            placeholder="токен от @BotFather"
+                            value={config.telegram_token || ''}
+                            onChange={(e) => set('telegram_token', e.target.value)}
+                          />
+                          <button
+                            onClick={checkTelegram}
+                            className="px-3 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg shrink-0"
+                          >
+                            Проверить
+                          </button>
+                        </div>
+                        {botName && (
+                          <div className="text-[11px] text-emerald-400 mt-1">@{botName} на связи</div>
+                        )}
+                        {botError && (
+                          <div className="text-[11px] text-rose-400 mt-1">{botError}</div>
+                        )}
+                        <div className="text-[11px] text-zinc-600 mt-1">
+                          У @BotFather: /newbot → выключить Group Privacy → добавить бота в чат
+                          {onOpenHelp && (
+                            <button
+                              onClick={() => onOpenHelp('telegram')}
+                              className="ml-1 text-sky-500 hover:text-sky-400"
+                            >
+                              Подробнее
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-zinc-800 pt-4">
+                        <span className={label}>2. Ваш ник в телеграме</span>
+                        <input
+                          className={field}
+                          placeholder="ivanov"
+                          value={config.telegram_username || ''}
+                          onChange={(e) => set('telegram_username', e.target.value)}
+                        />
+                        <div className="text-[11px] text-zinc-600 mt-1">
+                          Задача заводится, только если тегнули вас
+                        </div>
+                      </div>
+
+                      <div className="border-t border-zinc-800 pt-4">
+                        <span className={label}>3. Из какого чата — в какой проект</span>
+                        {visibleChats().length === 0 ? (
+                          <div className="text-[11px] text-zinc-600">
+                            Чатов пока не видно. Бот узнаёт о чате, когда в нём пишут, —
+                            отправьте туда любое сообщение, и чат появится в списке
+                          </div>
+                        ) : (
+                          <>
+                          {/* Карточка на чат, а не таблица из двух колонок: в широком
+                              окне колонки разъезжаются к краям, и без линеек строка
+                              перестаёт читаться как одно целое */}
+                          <div className="space-y-2">
+                            {visibleChats().map((chat) => {
+                              const [main, ...extra] = chatBinding(chat.id)
+                              return (
+                                <div
+                                  key={chat.id}
+                                  className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3"
+                                >
+                                  <div className="text-sm text-zinc-200 truncate">
+                                    {chat.title || `Чат ${chat.id}`}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <span className="text-[11px] text-zinc-500 shrink-0">
+                                      задачи отсюда →
+                                    </span>
+                                    <select
+                                      className={`${narrowField} flex-1 min-w-0`}
+                                      value={main || ''}
+                                      onChange={(e) => bindChat(chat.id, e.target.value)}
+                                    >
+                                      <option value="">не заводить</option>
+                                      {projectNames.map((name) => (
+                                        <option key={name} value={name}>{name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  {/* Ещё проекты — только когда есть из чего выбирать:
+                                      у большинства чат ведёт в один, и лишний ряд
+                                      кнопок им ни о чём не говорит */}
+                                  {main && projectNames.length > 1 && (
+                                    <div className="flex flex-wrap items-center gap-1 mt-2">
+                                      <span className="text-[11px] text-zinc-500 mr-1">
+                                        и по суффиксу:
+                                      </span>
+                                      {projectNames.filter((name) => name !== main).map((name) => (
+                                        <button
+                                          key={name}
+                                          onClick={() => toggleExtraProject(chat.id, name)}
+                                          className={`px-2 py-0.5 text-[11px] rounded-full border ${
+                                            extra.includes(name)
+                                              ? 'bg-sky-900/40 border-sky-700 text-sky-200'
+                                              : 'border-zinc-700 text-zinc-500 hover:text-zinc-300'
+                                          }`}
+                                        >
+                                          {name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                          {visibleChats().some((chat) => chatBinding(chat.id).length > 1) && (
+                            <div className="text-[11px] text-zinc-600 mt-2">
+                              В основной проект задача идёт без уточнения, в остальные — через
+                              #{config.telegram_tag || 'задача'}-Имя
+                            </div>
+                          )}
+                          </>
+                        )}
+                        <div className="text-[11px] text-zinc-600 mt-2">
+                          Сообщение в чате: #{config.telegram_tag || 'задача'} Текст задачи @
+                          {config.telegram_username || 'ваш_ник'}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
               )}
 
               {tab === 'tool' && (

@@ -212,6 +212,34 @@ class TestSeenChats(Base):
         ts.poll_once(self.cfg(), handle=lambda m: None, fetch=fake)
         self.assertEqual(ts.seen_chats(), [{"id": -77, "title": "Разработка"}])
 
+    def test_чат_переживает_перезапуск(self):
+        """Иначе сохранённая привязка становится невидимой: человек открывает
+        настройки и видит пустой шаг, будто ничего не настраивал."""
+        fake = Fake({"ok": True, "result": [update(5, chat_id=-77,
+                                                   chat_title="Разработка")]})
+        ts.poll_once(self.cfg(), handle=lambda m: None, fetch=fake)
+        _SEEN_CHATS = ts._SEEN_CHATS
+        _SEEN_CHATS.clear()  # как после перезапуска сервера
+        self.assertEqual(ts.seen_chats(), [{"id": -77, "title": "Разработка"}])
+
+    def test_имя_чата_спрашивается_у_api_и_запоминается(self):
+        """У чата, привязанного до появления сохранения имён, взять имя больше
+        неоткуда — иначе в настройках останется голый id."""
+        fake = Fake({"ok": True, "result": {"id": -77, "title": "Разработка"}})
+        self.assertEqual(ts.chat_title(self.cfg(), -77, fetch=fake), "Разработка")
+        self.assertEqual(fake.methods, ["getChat"])
+        self.assertEqual(ts.read_state()["chats"]["-77"], "Разработка")
+
+    def test_известное_имя_в_сеть_не_ходит(self):
+        ts.write_state({"chats": {"-77": "Разработка"}})
+        fake = Fake()
+        self.assertEqual(ts.chat_title(self.cfg(), -77, fetch=fake), "Разработка")
+        self.assertEqual(fake.calls, [])
+
+    def test_отказ_api_оставляет_строку_с_id(self):
+        fake = Fake({"ok": False, "description": "chat not found"})
+        self.assertEqual(ts.chat_title(self.cfg(), -77, fetch=fake), "")
+
     def test_чат_не_дублируется(self):
         fake = Fake({"ok": True, "result": [update(5, chat_id=-77),
                                             update(6, chat_id=-77)]})

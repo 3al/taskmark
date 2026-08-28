@@ -192,14 +192,12 @@ def _same(name: str, allowed: list[str]) -> bool:
 
 
 def _remember(update_id, done: dict) -> None:
-    state = telegram_source.read_state()
-    handled = state.get("handled") or {}
+    handled = telegram_source.read_state().get("handled") or {}
     handled[str(update_id)] = done
     if len(handled) > MEMORY:
         for key in list(handled)[:-MEMORY]:
             handled.pop(key, None)
-    state["handled"] = handled
-    telegram_source.write_state(state)
+    telegram_source.patch_state(handled=handled)
 
 
 def _recall(update_id) -> dict | None:

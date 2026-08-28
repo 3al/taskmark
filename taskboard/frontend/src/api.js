@@ -117,6 +117,11 @@ export const api = {
     request('/api/criteria-presets', { method: 'POST', body: JSON.stringify({ text }) }),
   deleteCriteriaPreset: (text) =>
     request('/api/criteria-presets', { method: 'DELETE', body: JSON.stringify({ text }) }),
+  // Проверка токена бота: человек видит имя своего бота до сохранения
+  telegramCheck: (token) =>
+    request('/api/telegram/check', { method: 'POST', body: JSON.stringify({ token }) }),
+  // Чаты, которые бот увидел: выбор по имени вместо охоты за отрицательным id
+  telegramChats: () => request('/api/telegram/chats'),
   saveConfig: (updates, moves) =>
     request('/api/config', { method: 'POST', body: JSON.stringify({ updates, moves }) }),
   previewConfig: (updates) =>

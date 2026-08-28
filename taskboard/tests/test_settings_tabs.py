@@ -73,7 +73,9 @@ class SettingsSurviveTest(unittest.TestCase):
     def test_saved_payload_keeps_every_key(self) -> None:
         """Вкладки не должны отправлять только «свою» часть конфига."""
         src = source()
-        payload = src[src.index("const updates = ()"):src.index("const check")]
+        # Маркер конца — точный: «const check» ловил бы любое соседнее имя,
+        # начинающееся на check, и срез молча становился пустым
+        payload = src[src.index("const updates = ()"):src.index("const check = async")]
         for key in ("port", "dnd_full_board", "release_script", "harnesses",
                     "vault", "review_sources", "pipeline", "actions"):
             self.assertIn(key, payload, f"{key} не уходит в сохранение")

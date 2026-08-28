@@ -83,9 +83,28 @@ def write_state(data: dict) -> None:
         pass
 
 
+def patch_state(**changes) -> None:
+    """Дописать ключи в состояние, перечитав файл.
+
+    Писать снимок, снятый раньше, нельзя: за это время в тот же файл могли
+    добавить чаты или отметку об обработанном сообщении, и запись курсора
+    стёрла бы их.
+    """
+    state = read_state()
+    state.update(changes)
+    write_state(state)
+
+
 def seen_chats() -> list[dict]:
-    """Чаты, замеченные с момента запуска: id и имя для выбора в настройках."""
-    return [{"id": chat_id, "title": title} for chat_id, title in _SEEN_CHATS.items()]
+    """Чаты, которые бот видел: id и имя для выбора в настройках.
+
+    Читается из файла состояния, а не только из памяти процесса: перезапуск
+    сервера иначе очищал список, и **сохранённая привязка становилась
+    невидимой** — человек видел пустой шаг настройки и решал, что настройки
+    пропали.
+    """
+    known = {**(read_state().get("chats") or {}), **{str(k): v for k, v in _SEEN_CHATS.items()}}
+    return [{"id": int(chat_id), "title": title} for chat_id, title in known.items()]
 
 
 # --- Клиент Bot API ---------------------------------------------------------
@@ -157,8 +176,40 @@ def get_updates(tok: str, offset: int = 0, fetch: Callable | None = None) -> lis
 def _remember_chat(raw: dict) -> None:
     chat = ((raw.get("message") or raw.get("edited_message") or {}).get("chat")) or {}
     chat_id = chat.get("id")
-    if chat_id is not None:
-        _SEEN_CHATS[chat_id] = chat.get("title") or chat.get("username") or ""
+    if chat_id is None:
+        return
+    title = chat.get("title") or chat.get("username") or ""
+    if _SEEN_CHATS.get(chat_id) == title:
+        return
+    _SEEN_CHATS[chat_id] = title
+    # На диск — только на новом или переименованном чате: иначе состояние
+    # переписывалось бы на каждом опросе очереди
+    chats = read_state().get("chats") or {}
+    chats[str(chat_id)] = title
+    patch_state(chats=chats)
+
+
+def chat_title(cfg: dict, chat_id, fetch: Callable | None = None) -> str:
+    """Имя чата по id: спрашиваем у Bot API один раз и запоминаем.
+
+    Нужно для настроек: привязка чата хранит id, и у чата, настроенного до
+    того, как имена начали сохраняться, взять имя больше неоткуда — человек
+    видел бы в списке голое число. Неудача не страшна: строка останется с id.
+    """
+    known = read_state().get("chats") or {}
+    if known.get(str(chat_id)):
+        return known[str(chat_id)]
+    if not enabled(cfg):
+        return ""
+    try:
+        chat = _call(token(cfg), "getChat", {"chat_id": chat_id}, fetch) or {}
+    except Exception:  # noqa: BLE001 — бота выкинули из чата, сеть, битый токен
+        return ""
+    title = chat.get("title") or chat.get("username") or ""
+    if title:
+        known[str(chat_id)] = title
+        patch_state(chats=known)
+    return title
 
 
 def send_message(tok: str, chat_id: int, text: str, reply_to: int | None = None,
@@ -202,8 +253,7 @@ def poll_once(cfg: dict, handle: Callable | None = None,
             pass          # навсегда закрыть вход, поэтому курсор всё равно двигаем
         update_id = message.get("update_id")
         if isinstance(update_id, int):
-            state["offset"] = update_id + 1
-            write_state(state)
+            patch_state(offset=update_id + 1)
         done += 1
     return done
 

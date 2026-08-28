@@ -43,8 +43,8 @@ class ParseTest(unittest.TestCase):
         return base
 
     def test_хэштег_текст_и_исполнитель(self):
-        parsed = intake.parse("#задача Сделать стоп-фильтр @kostya", self.cfg())
-        self.assertEqual(parsed["title"], "Сделать стоп-фильтр")
+        parsed = intake.parse("#задача Обновить документацию @kostya", self.cfg())
+        self.assertEqual(parsed["title"], "Обновить документацию")
         self.assertEqual(parsed["mentions"], ["kostya"])
         self.assertIsNone(parsed["project"])
 
@@ -72,14 +72,14 @@ class ParseTest(unittest.TestCase):
 
     def test_первое_предложение_становится_заголовком(self):
         parsed = intake.parse(
-            "#задача Разработать стоп-фильтр. Снимать котировки на быстром рынке @kostya",
+            "#задача Обновить документацию. Начать с раздела про фильтры @kostya",
             self.cfg())
-        self.assertEqual(parsed["title"], "Разработать стоп-фильтр")
-        self.assertEqual(parsed["description"], "Снимать котировки на быстром рынке")
+        self.assertEqual(parsed["title"], "Обновить документацию")
+        self.assertEqual(parsed["description"], "Начать с раздела про фильтры")
 
     def test_точка_в_конце_строки_в_заголовок_не_идёт(self):
-        parsed = intake.parse("#задача Разработать стоп-фильтр. @kostya", self.cfg())
-        self.assertEqual(parsed["title"], "Разработать стоп-фильтр")
+        parsed = intake.parse("#задача Обновить документацию. @kostya", self.cfg())
+        self.assertEqual(parsed["title"], "Обновить документацию")
         self.assertEqual(parsed["description"], "")
 
     def test_номер_версии_строку_не_режет(self):
@@ -96,10 +96,10 @@ class ParseTest(unittest.TestCase):
 
     def test_предложение_и_перенос_строки_работают_вместе(self):
         parsed = intake.parse(
-            "#задача Сделать стоп-фильтр. Пороги согласовать @kostya\nи ещё строка",
+            "#задача Обновить документацию. Начать с фильтров @kostya\nи ещё строка",
             self.cfg())
-        self.assertEqual(parsed["title"], "Сделать стоп-фильтр")
-        self.assertEqual(parsed["description"], "Пороги согласовать\nи ещё строка")
+        self.assertEqual(parsed["title"], "Обновить документацию")
+        self.assertEqual(parsed["description"], "Начать с фильтров\nи ещё строка")
 
     def test_длинный_заголовок_уезжает_в_описание(self):
         """Заголовок идёт в имя файла — простыню туда класть нельзя."""
@@ -165,7 +165,7 @@ class HandleTest(unittest.TestCase):
         self.other = root / "other" / "tasks"
         self.other.mkdir(parents=True)
         (self.other / "create_task.py").write_text(STUB, encoding="utf-8")
-        self.projects = [{"name": "Прогрессор", "tasks_dir": str(self.tasks)},
+        self.projects = [{"name": "Первый", "tasks_dir": str(self.tasks)},
                          {"name": "Второй", "tasks_dir": str(self.other)}]
 
         state = root / "state"
@@ -186,7 +186,7 @@ class HandleTest(unittest.TestCase):
     def cfg(self, **over) -> dict:
         base = {"telegram": True, "telegram_token": "t",
                 "telegram_tag": "задача", "telegram_username": "kostya",
-                "telegram_chats": {"-100": "Прогрессор"}}
+                "telegram_chats": {"-100": "Первый"}}
         base.update(over)
         return base
 
@@ -198,11 +198,11 @@ class HandleTest(unittest.TestCase):
                              projects=self.projects, send=self.send)
 
     def test_задача_создаётся_в_привязанном_проекте(self):
-        result = self.handle(message("#задача Сделать стоп-фильтр @kostya"))
+        result = self.handle(message("#задача Обновить документацию @kostya"))
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["id"], "TASK-042")
         argv = self.argv()
-        self.assertEqual(argv[argv.index("-t") + 1], "Сделать стоп-фильтр")
+        self.assertEqual(argv[argv.index("-t") + 1], "Обновить документацию")
 
     def test_критерии_из_чата_не_выдумываются(self):
         """Скрипт без -c подставляет TDD — но в чате про него никто не говорил."""
@@ -227,13 +227,13 @@ class HandleTest(unittest.TestCase):
         self.assertEqual(argv[argv.index("--type") + 1], "")
 
     def test_в_ответе_номер_заголовок_и_проект(self):
-        self.handle(message("#задача Сделать стоп-фильтр @kostya"))
+        self.handle(message("#задача Обновить документацию @kostya"))
         chat_id, text, reply_to = self.sent[0]
         self.assertEqual(chat_id, -100)
         self.assertEqual(reply_to, 5)
         self.assertIn("TASK-042", text)
-        self.assertIn("Сделать стоп-фильтр", text)
-        self.assertIn("Прогрессор", text)
+        self.assertIn("Обновить документацию", text)
+        self.assertIn("Первый", text)
         self.assertIn("бэклог", text.lower())
 
     def test_чужой_тег_проходит_молча(self):
@@ -256,20 +256,27 @@ class HandleTest(unittest.TestCase):
     def test_суффикс_выбирает_среди_привязанных(self):
         """Чат ведёт в два проекта: первый по умолчанию, суффикс берёт второй."""
         result = self.handle(message("#задача-Второй Сделать X @kostya"),
-                             telegram_chats={"-100": ["Прогрессор", "Второй"]})
+                             telegram_chats={"-100": ["Первый", "Второй"]})
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["project"], "Второй")
 
+    def test_суффиксом_можно_назвать_и_основной_проект(self):
+        """Он в списке привязанных первым — запрещать его незачем."""
+        result = self.handle(message("#задача-Первый Сделать X @kostya"),
+                             telegram_chats={"-100": ["Первый", "Второй"]})
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["project"], "Первый")
+
     def test_привязка_строкой_работает_как_прежде(self):
         result = self.handle(message("#задача Сделать X @kostya"),
-                             telegram_chats={"-100": "Прогрессор"})
+                             telegram_chats={"-100": "Первый"})
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["project"], "Прогрессор")
+        self.assertEqual(result["project"], "Первый")
 
     def test_суффикс_не_достаёт_проект_мимо_привязки(self):
         """Право писать в проект даёт привязка чата, а не реестр."""
         result = self.handle(message("#задача-Второй Сделать X @kostya"),
-                             telegram_chats={"-100": "Прогрессор"})
+                             telegram_chats={"-100": "Первый"})
         self.assertFalse(result["ok"])
         self.assertFalse((self.tasks / "argv.json").exists())
         self.assertIn("нельзя писать", self.sent[0][1].lower())
@@ -278,7 +285,7 @@ class HandleTest(unittest.TestCase):
         result = self.handle(message("#задача-нетакого Сделать X @kostya"))
         self.assertFalse(result["ok"])
         self.assertFalse((self.tasks / "argv.json").exists())
-        self.assertIn("Прогрессор", self.sent[0][1])
+        self.assertIn("Первый", self.sent[0][1])
 
     def test_повторная_обработка_дубля_не_создаёт(self):
         """Падение между созданием и ответом не должно родить вторую задачу."""

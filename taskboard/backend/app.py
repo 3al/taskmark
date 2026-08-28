@@ -16,7 +16,7 @@ from backend import (baseline, changelog, help_docs, lifecycle, registry,
                      telegram_intake, telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
-from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
+from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, TELEGRAM_KEYS,
                             PROJECT_KEYS,
                             add_assignee, add_criteria_preset, assignees,
                             card_style, criteria_presets,
@@ -67,7 +67,8 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "harnesses": True, "pipeline_sources": True, "help": True,
                 "board_repair": True, "stall": True, "update": True,
                 "epic_tasks": True, "agentic_merge": True, "task_copy": True,
-                "board_sections": True, "agentic_remove": True}
+                "board_sections": True, "agentic_remove": True,
+                "telegram": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -153,6 +154,12 @@ class ConfigIn(BaseModel):
     updates: dict
     # Куда переносить задачи выключаемых статусов: {статус: новый статус}
     moves: dict | None = None
+
+
+class TelegramCheckIn(BaseModel):
+    # Токен приходит из формы, а не из конфига: человек проверяет то, что
+    # только что вставил, ещё до сохранения
+    token: str
 
 
 class CriteriaPresetIn(BaseModel):
@@ -370,7 +377,7 @@ def api_save_config(body: ConfigIn) -> dict:
     # (TASK-053) — переименование не доезжало до текстов скиллов и правил
     allowed = {"port", "theme", "tasks_dir", "update_check",
                "release_manifest_url", "hide_empty_columns",
-               *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS}
+               *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS, *TELEGRAM_KEYS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
     # Размеры превью проверяет бэкенд, а не только форма: за границами диапазона
@@ -393,6 +400,11 @@ def api_save_config(body: ConfigIn) -> dict:
         save_global_config(global_updates or updates)
     cfg = (save_project_config(tasks_dir, project_updates) if tasks_dir and project_updates
            else (load_project_config(tasks_dir) if tasks_dir else load_global_config()))
+
+    # Включённая возможность должна заработать по кнопке «Сохранить», а не
+    # после перезапуска сервера: поллер стартует с конфигом, снятым при старте
+    if updates.keys() & TELEGRAM_KEYS:
+        restart_telegram_poller()
 
     # Переименования мигрируют данные активного проекта вслед за конфигом
     migrations: list[str] = []
@@ -423,6 +435,44 @@ def api_preview_config(body: ConfigIn) -> dict:
 
 
 # --- Доска и задачи ---
+
+@app.post("/api/telegram/check")
+def api_telegram_check(body: TelegramCheckIn) -> dict:
+    """Живой ли токен. Имя бота человек должен увидеть своими глазами."""
+    token = (body.token or "").strip()
+    if not token:
+        raise HTTPException(400, "Токен не введён")
+    try:
+        me = telegram_source.get_me(token)
+    except Exception as exc:  # noqa: BLE001 — сеть или отказ API: скажем как есть
+        raise HTTPException(400, f"Бот не отозвался: {exc}")
+    return {"ok": True, "username": me.get("username", "")}
+
+
+@app.get("/api/telegram/chats")
+def api_telegram_chats() -> dict:
+    """Чаты, которые бот видел с момента запуска.
+
+    Так человек выбирает чат по имени: у групп id — отрицательное число вида
+    -1001234567890, и искать его руками мучительно.
+
+    Уже привязанные чаты в списке есть всегда, даже если бот их в этой сессии
+    не встречал: иначе настроенная привязка невидима и нередактируема. Имя
+    такого чата спрашивается у Bot API один раз и запоминается.
+    """
+    cfg = load_global_config()
+    chats = telegram_source.seen_chats()
+    known = {str(chat["id"]) for chat in chats}
+    for chat_id in (cfg.get("telegram_chats") or {}):
+        if str(chat_id) in known:
+            continue
+        try:
+            chats.append({"id": int(chat_id),
+                          "title": telegram_source.chat_title(cfg, chat_id)})
+        except (TypeError, ValueError):
+            continue  # мусор в привязке — показывать нечего
+    return {"ok": True, "chats": chats}
+
 
 @app.get("/api/health")
 def api_health() -> dict:
@@ -1171,6 +1221,20 @@ else:
         }
 
 
+def restart_telegram_poller() -> None:
+    """Поднять поллер заново по текущему конфигу.
+
+    Зовётся и при старте, и при сохранении настроек: поллер снимает конфиг
+    один раз, поэтому включение возможности иначе ждало бы перезапуска сервера.
+    Выключенная возможность потока не создаёт — «перезапуск» её просто гасит.
+    """
+    global _stop_telegram_loop
+    if _stop_telegram_loop is not None:
+        _stop_telegram_loop()
+    _stop_telegram_loop = telegram_source.start_polling(
+        load_global_config(), handle=lambda message: telegram_intake.handle(message))
+
+
 def start_watcher() -> None:
     """Навесить watcher на активный проект (вызывается при старте сервера)."""
     proj = registry.get_active()
@@ -1218,9 +1282,7 @@ def _startup() -> None:
     # потоком-демоном внутри уже работающего сервера. Конфиг обработчик читает
     # сам на каждом сообщении: привязку чатов и свой ник человек правит в
     # настройках, и ждать перезапуска ради них незачем
-    global _stop_telegram_loop
-    _stop_telegram_loop = telegram_source.start_polling(
-        cfg, handle=lambda message: telegram_intake.handle(message))
+    restart_telegram_poller()
 
 
 @app.on_event("shutdown")
