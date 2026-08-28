@@ -61,6 +61,45 @@ class ProjectCase(unittest.TestCase):
         return next(self.tasks_dir.glob("TASK-*.md"))
 
 
+class TypelessTaskTest(ProjectCase):
+    """Задача без типа: вид работы называет тот, кто её знает."""
+
+    def test_пустой_тип_даёт_прочерк_во_frontmatter(self):
+        result = self.create("--type", "")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(_frontmatter(self.created_task())["type"], "~")
+
+    def test_задача_без_типа_ложится_в_раздел_приёма(self):
+        """Рубрики у неё нет — заводить пустую «### » нельзя."""
+        self.create("--type", "")
+        board = (self.tasks_dir / "board.md").read_text(encoding="utf-8")
+        self.assertNotIn("### " + chr(10), board)
+        self.assertIn("Проверка типа", board)
+
+    def test_рубрика_источника_заводится_и_держит_задачу(self):
+        """Задача без типа, но с явной рубрикой, ложится именно в неё."""
+        board_before = (self.tasks_dir / "board.md").read_text(encoding="utf-8")
+        self.assertNotIn("Из Telegram", board_before,
+                         "пустой рубрики в поставке быть не должно")
+
+        self.create("--type", "", "--section", "Из Telegram")
+        board = (self.tasks_dir / "board.md").read_text(encoding="utf-8")
+        self.assertIn("### Из Telegram", board)
+
+        after = board.split("### Из Telegram", 1)[1]
+        own_block = after.split("###")[0]
+        self.assertIn("Проверка типа", own_block,
+                      "задача ушла мимо своей рубрики — в соседнюю")
+
+        self.assertLess(board.index("### Из Telegram"),
+                        board.index("### Новый функционал"),
+                        "рубрика источника должна быть первой: её надо увидеть")
+
+    def test_без_флага_тип_прежний(self):
+        self.create()
+        self.assertEqual(_frontmatter(self.created_task())["type"], "feature")
+
+
 class TaskTypeStoredTest(ProjectCase):
     """Тип обязан остаться в файле: иначе о нём никто не узнает."""
 
@@ -402,10 +441,21 @@ class BacklogSectionFieldGoneTest(unittest.TestCase):
         model = text[text.index("class TaskIn"):text.index("class TaskUpdateIn")]
         self.assertNotIn("section", model, "API создания задачи всё ещё принимает раздел")
 
-    def test_runner_does_not_pass_section(self) -> None:
-        text = (Path(__file__).resolve().parent.parent / "backend"
-                / "create_task_runner.py").read_text(encoding="utf-8")
-        self.assertNotIn("--section", text, "раннер всё ещё передаёт раздел скрипту")
+    def test_section_comes_only_from_a_source_without_type(self) -> None:
+        """Раздел человек не выбирает — но источник без типа называет его сам.
+
+        Форма и API раздел передать не могут: поля нет ни в окне, ни в `TaskIn`
+        (это проверяют соседние тесты). Явный раздел остался ровно для тех, у
+        кого типа не бывает: задача из чата ложится в свою рубрику, потому что
+        «в конец раздела приёма» означает «внутрь последней рубрики».
+        """
+        backend = Path(__file__).resolve().parent.parent / "backend"
+        runner = (backend / "create_task_runner.py").read_text(encoding="utf-8")
+        self.assertIn('payload.get("section")', runner,
+                      "раннер разучился принимать раздел от источника")
+        intake = (backend / "telegram_intake.py").read_text(encoding="utf-8")
+        self.assertIn('"section": CHAT_SECTION', intake,
+                      "задача из чата перестала называть свою рубрику")
 
 
 class TypeUiTest(unittest.TestCase):

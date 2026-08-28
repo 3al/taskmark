@@ -28,11 +28,25 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
         args += ["-d", payload["description"]]
     if payload.get("criteria"):
         args += ["-c", payload["criteria"]]
+    elif "criteria" in payload:
+        # Ключ передан пустым — это «критериев нет», а не «подставь дефолт».
+        # Скрипт без -c пишет TDD-критерий сам, и задача, заведённая из чата
+        # одной строкой, начинала утверждать то, чего никто не говорил
+        args += ["-c", ""]
     if payload.get("blocked_by"):
         args += ["-b", payload["blocked_by"]]
-    # Раздел скрипту не передаём: рубрику бэклога он выводит из типа задачи
+    # Рубрику бэклога скрипт выводит из типа задачи, поэтому форма её не
+    # передаёт. Явный раздел нужен источникам, у которых типа нет: задача из
+    # чата ложится в свою рубрику, и она же служит сигналом «пришло, разбери»
+    if payload.get("section"):
+        args += ["--section", payload["section"]]
     if payload.get("task_type"):
         args += ["--type", payload["task_type"]]
+    elif "task_type" in payload:
+        # Как и с критериями: пустой ключ значит «типа нет», а не «поставь
+        # feature». Задача из чата — одна строка от человека, и вид работы
+        # в ней никто не называл; тип поставит тот, кто возьмёт её в работу
+        args += ["--type", ""]
     if payload.get("epic"):
         args += ["-e", payload["epic"]]
 

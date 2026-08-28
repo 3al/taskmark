@@ -53,6 +53,37 @@ class CreateTaskRunnerTest(unittest.TestCase):
         create_task(self.tasks, self.cfg, {"title": "Задача", "epic": ""})
         self.assertNotIn("-e", self._argv())
 
+    def test_criteria_key_absent_leaves_default(self) -> None:
+        """Нет ключа — критерии выбирает скрипт (дефолт формы)."""
+        create_task(self.tasks, self.cfg, {"title": "Задача"})
+        self.assertNotIn("-c", self._argv())
+
+    def test_empty_criteria_is_a_choice(self) -> None:
+        """Пустой ключ — «критериев нет»: задача не должна их выдумывать."""
+        create_task(self.tasks, self.cfg, {"title": "Задача", "criteria": ""})
+        argv = self._argv()
+        self.assertIn("-c", argv)
+        self.assertEqual("", argv[argv.index("-c") + 1])
+
+    def test_empty_task_type_is_a_choice(self) -> None:
+        """Пустой ключ — «типа нет»: скрипт не должен подставлять feature."""
+        create_task(self.tasks, self.cfg, {"title": "Задача", "task_type": ""})
+        argv = self._argv()
+        self.assertIn("--type", argv)
+        self.assertEqual("", argv[argv.index("--type") + 1])
+
+    def test_explicit_section_is_passed(self) -> None:
+        """Источник без типа задаёт рубрику сам."""
+        create_task(self.tasks, self.cfg,
+                    {"title": "Задача", "section": "Из Telegram"})
+        argv = self._argv()
+        self.assertEqual("Из Telegram", argv[argv.index("--section") + 1])
+
+    def test_section_absent_by_default(self) -> None:
+        """Форма рубрику не передаёт: её выводит тип задачи."""
+        create_task(self.tasks, self.cfg, {"title": "Задача"})
+        self.assertNotIn("--section", self._argv())
+
     def test_title_required(self) -> None:
         result = create_task(self.tasks, self.cfg, {"title": "   "})
         self.assertFalse(result["ok"])

@@ -291,8 +291,13 @@ def _append_to_block(board_content: str, heading: str, new_entry: str) -> str | 
 
 
 def _add_rubric(board_content: str, heading: str, new_entry: str,
-                intake_section: str) -> str | None:
-    """Завести рубрику в конце раздела приёма и положить в неё запись.
+                intake_section: str, first: bool = False) -> str | None:
+    """Завести рубрику в разделе приёма и положить в неё запись.
+
+    `first` — поставить её перед остальными рубриками, а не в конец. Так
+    заводятся рубрики источников (задачи из чата): их смысл в том, чтобы их
+    увидели и разобрали, а в конец длинного бэклога никто не смотрит. Рубрика
+    типа встаёт в конец по-прежнему: её место ничего не значит.
 
     None — если раздела приёма нет или человек убрал подразделы вовсе: пустая
     доска без рубрик это его выбор, и наводить их за него мы не станем.
@@ -304,8 +309,17 @@ def _add_rubric(board_content: str, heading: str, new_entry: str,
     rest = board_content[marker.end():]
     nxt = re.search(r"^##\s+", rest, flags=re.MULTILINE)
     intake = rest[:nxt.start()] if nxt else rest
-    if not re.search(r"^### ", intake, flags=re.MULTILINE):
+    head = re.search(r"^### ", intake, flags=re.MULTILINE)
+    if not head:
         return None
+
+    if first:
+        # Перед первой рубрикой, а не в самом верху раздела: записи, лежащие
+        # без рубрики, должны такими и остаться, а не въехать в нашу
+        at = marker.end() + head.start()
+        return (board_content[:at]
+                + f"{heading}\n\n{new_entry}\n\n"
+                + board_content[at:])
 
     at = marker.end() + (nxt.start() if nxt else len(rest))
     return (board_content[:at].rstrip()
@@ -326,15 +340,23 @@ def insert_into_board(board_content: str, new_entry: str, section: str,
     означает «внутрь последнего подраздела» — обсуждения так падали в «Дизайн».
     Доска без подразделов вовсе — решение человека: там рубрики не наводим.
     Fallback → в конец раздела приёма (его имя задаёт пайплайн проекта).
-    """
-    rubric = section_of_type(section)
-    heading = f"### {rubric or section}"
-    updated = _append_to_block(board_content, heading, new_entry)
-    if updated is not None:
-        return updated
 
-    if rubric:
-        created = _add_rubric(board_content, heading, new_entry, intake_section)
+    Пустой `section` — задача без типа: рубрики у неё нет по построению, и
+    заводить её не из чего. Такая задача сразу идёт в конец раздела приёма.
+    """
+    rubric = section_of_type(section) if section else None
+    if section:
+        heading = f"### {rubric or section}"
+        updated = _append_to_block(board_content, heading, new_entry)
+        if updated is not None:
+            return updated
+
+        # Рубрику заводим и для явного `--section`, а не только для рубрики
+        # типа: источник без типа (задача из чата) называет её сам, и без этого
+        # запись уезжала в общий fallback — то есть внутрь последней рубрики
+        # Такая рубрика встаёт первой: её задача — попасться на глаза
+        created = _add_rubric(board_content, heading, new_entry, intake_section,
+                              first=rubric is None)
         if created is not None:
             return created
 
@@ -411,7 +433,7 @@ def create_task(
 id: TASK-{task_num:03d}
 title: {title}
 epic: {epic_value}
-type: {task_type}
+type: {task_type or "~"}
 size: ~
 status: {status_key}
 created: {created_date}{blocked_by_line}
@@ -494,7 +516,7 @@ created: {created_date}{blocked_by_line}
     print(f"\n[OK] Задача успешно создана!\n")
     print(f"  ID: TASK-{task_num:03d}")
     print(f"  Файл: tasks/{filename}")
-    print(f"  Тип: {task_type} | Секция: {section}")
+    print(f"  Тип: {task_type or 'не указан'} | Секция: {section or intake_section}")
     if epic:
         print(f"  Эпик: {epic}")
     print(f"  Статус: {status_key}\n")
@@ -510,9 +532,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--type",
         dest="task_type",
-        choices=list(TASK_TYPES),
+        choices=[*TASK_TYPES, ""],
         default=DEFAULT_TASK_TYPE,
-        help="Тип задачи (влияет на чеклист и остаётся в поле type)",
+        help="Тип задачи; пустое значение — тип не указан",
     )
     # Рубрику задаёт тип задачи; флаг остаётся ради нестандартных досок,
     # где подразделы названы по-своему
