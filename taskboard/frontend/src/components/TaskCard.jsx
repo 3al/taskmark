@@ -159,7 +159,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             onClick={askDelete}
             onPointerDown={(e) => e.stopPropagation()}
             className="absolute top-0 right-0 z-10 w-4 h-4 flex items-center justify-center
-              text-[10px] leading-none text-zinc-600 opacity-0 group-hover/card:opacity-40
+              text-[10px] leading-none text-zinc-400 opacity-0 group-hover/card:opacity-40
               hover:!opacity-100 hover:text-rose-300 focus-visible:opacity-100 transition"
             title="Удалить задачу">
             ✕
@@ -170,7 +170,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             заголовка. У блокировки номер важнее значка — сразу видно, чего
             ждём; у паузы номера нет, а слово «пауза» рядом со значком ничего
             не добавляет */}
-        <div className="flex items-center gap-1.5 font-mono text-zinc-500"
+        <div className="flex items-center gap-1.5 font-mono text-zinc-400"
              style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
           {/* Кто и когда последним двигал задачу — в подсказке номера: строку
               она больше не занимает, но и не пропадает. Номер есть у каждой
@@ -183,13 +183,13 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
                   .filter(Boolean).join(' · ') || undefined}>
             {task.id}
           </span>
-          {task.struck && <span className="text-zinc-600 normal-case shrink-0">superseded</span>}
+          {task.struck && <span className="text-zinc-500 normal-case shrink-0">superseded</span>}
           {/* Значок — эмодзи: его цвет рисует шрифт, и text-* на него не
               действует. Чтобы приглушённая пометка выглядела приглушённой
               целиком, обесцвечиваем фильтром */}
           {task.blocked_by?.length > 0 && (
             <span className={`shrink-0 normal-case ${task.stall_stale
-              ? 'text-zinc-500 grayscale opacity-80' : 'text-rose-400/90'}`}
+              ? 'text-zinc-400 grayscale opacity-80' : 'text-rose-400/90'}`}
                   title={task.stall_stale
                     ? `Блокеры завершены, пометку можно снять: ${task.blocked_by.join(', ')}`
                     : `Ждёт: ${task.blocked_by.join(', ')}`}>
@@ -256,7 +256,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
                   (у обсуждения тот же жёлтый) */}
               {task.paused && (
                 <span className={`${SLOT} rounded-full ring-1 normal-case ${task.stall_stale
-                  ? 'text-zinc-500 ring-zinc-600/60 grayscale opacity-80'
+                  ? 'text-zinc-400 ring-zinc-600/60 grayscale opacity-80'
                   : 'text-amber-300 ring-amber-400/40'}`}
                       style={GLYPH}
                       title={task.stall_stale
@@ -318,7 +318,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
         {/* Нашлось в теле задачи — показываем, где именно: иначе непонятно,
             почему карточка попала в выдачу */}
         {match && !match.in_title && match.excerpt && (
-          <div className="text-[11px] text-zinc-500 mt-1 line-clamp-2 leading-snug"
+          <div className="text-[11px] text-zinc-400 mt-1 line-clamp-2 leading-snug"
                title={match.excerpt}>
             {highlight(match.excerpt, query)}
           </div>
@@ -336,7 +336,7 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             потоке она уезжала бы вслед за соседями, и колонка превращалась
             в лесенку */}
         {(task.stale_days || task.epic || task.progress) && (
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1 text-zinc-500"
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1 text-zinc-400"
                style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
             <span className="min-w-0 truncate">
               {task.stale_days > 0 && (

@@ -10,7 +10,7 @@ function Group({ title, hint, tone, items, render }) {
     <div className="border border-zinc-800 rounded-xl">
       <div className="px-3 py-2 border-b border-zinc-800">
         <div className={`text-sm font-medium ${tone}`}>{title} · {items.length}</div>
-        <div className="text-[11px] text-zinc-500">{hint}</div>
+        <div className="text-[11px] text-zinc-400">{hint}</div>
       </div>
       <div className="divide-y divide-zinc-800/60">
         {/* Ключ по одному id не годится: у блокировок одна задача может
@@ -96,7 +96,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             подстраивается под них. Ничего не удаляется.
           </div>
           {error && <div className="text-sm text-rose-400">{error}</div>}
-          {plan === null && <div className="text-sm text-zinc-500">Загружаю…</div>}
+          {plan === null && <div className="text-sm text-zinc-400">Загружаю…</div>}
           {done && (
             <div className="text-sm text-emerald-300">
               Готово: на доску возвращено {done.added}, строк перенесено {done.moved ?? 0},
@@ -120,9 +120,9 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             items={plan?.add}
             render={(i) => (
               <>
-                <span className="text-zinc-500">{i.id}</span> · {i.title}
-                <span className="text-zinc-500"> → {i.section}</span>
-                {i.restore && <span className="text-zinc-600"> (из потерянных)</span>}
+                <span className="text-zinc-400">{i.id}</span> · {i.title}
+                <span className="text-zinc-400"> → {i.section}</span>
+                {i.restore && <span className="text-zinc-500"> (из потерянных)</span>}
               </>
             )}
           />
@@ -134,10 +134,10 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             items={plan?.move}
             render={(i) => (
               <>
-                <span className="text-zinc-500">{i.id}</span> · {i.file}
-                <span className="text-zinc-500"> : </span>
+                <span className="text-zinc-400">{i.id}</span> · {i.file}
+                <span className="text-zinc-400"> : </span>
                 <span className="text-rose-300/80">{i.from}</span>
-                <span className="text-zinc-500"> → </span>
+                <span className="text-zinc-400"> → </span>
                 <span className="text-emerald-300/80">{i.to}</span>
               </>
             )}
@@ -150,10 +150,10 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             items={plan?.retitle}
             render={(i) => (
               <>
-                <span className="text-zinc-500">{i.id}</span>
-                <span className="text-zinc-500"> : </span>
+                <span className="text-zinc-400">{i.id}</span>
+                <span className="text-zinc-400"> : </span>
                 <span className="text-rose-300/80">{i.from}</span>
-                <span className="text-zinc-500"> → </span>
+                <span className="text-zinc-400"> → </span>
                 <span className="text-emerald-300/80">{i.to}</span>
               </>
             )}
@@ -166,10 +166,10 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             items={plan?.relink}
             render={(i) => (
               <>
-                <span className="text-zinc-500">{i.id}</span>
-                <span className="text-zinc-500"> : </span>
+                <span className="text-zinc-400">{i.id}</span>
+                <span className="text-zinc-400"> : </span>
                 <span className="text-rose-300/80">{i.from}</span>
-                <span className="text-zinc-500"> → </span>
+                <span className="text-zinc-400"> → </span>
                 <span className="text-emerald-300/80">{i.to}</span>
               </>
             )}
@@ -182,8 +182,8 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             items={plan?.blocks}
             render={(i) => (
               <>
-                <span className="text-zinc-500">{i.id}</span>
-                <span className="text-zinc-500">
+                <span className="text-zinc-400">{i.id}</span>
+                <span className="text-zinc-400">
                   {i.action === 'add' ? ' → blocks: ' : ' : убрать blocks '}
                 </span>
                 <span className={i.action === 'add' ? 'text-emerald-300/80' : 'text-rose-300/80'}>
@@ -200,8 +200,8 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             items={plan?.lost}
             render={(i) => (
               <>
-                <span className="text-zinc-500">{i.id}</span> · {i.title || i.file}
-                <span className="text-zinc-500"> (из «{i.section}»)</span>
+                <span className="text-zinc-400">{i.id}</span> · {i.title || i.file}
+                <span className="text-zinc-400"> (из «{i.section}»)</span>
               </>
             )}
           />

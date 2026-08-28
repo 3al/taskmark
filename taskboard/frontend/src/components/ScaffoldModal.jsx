@@ -40,7 +40,7 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
 
   const checkbox = 'accent-sky-500'
   const row = 'flex items-start gap-2 text-sm cursor-pointer select-none'
-  const hint = 'text-[11px] text-zinc-500 pl-6'
+  const hint = 'text-[11px] text-zinc-400 pl-6'
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -105,7 +105,7 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
                 <div>
                   <div className="text-zinc-400 mb-1">Пропущено (уже существует):</div>
                   {result.skipped.map((f, i) => (
-                    <div key={i} className="text-zinc-500">· {f}</div>
+                    <div key={i} className="text-zinc-400">· {f}</div>
                   ))}
                 </div>
               )}
@@ -126,12 +126,12 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
                 Всегда создаётся: board.md со всеми разделами, create_task.py,
                 set_status.py, epics.md, .gitignore, папка логов.
               </div>
-              <div className="text-xs text-zinc-500 font-mono break-all">{tasksDir}</div>
+              <div className="text-xs text-zinc-400 font-mono break-all">{tasksDir}</div>
 
               <div className="border-t border-zinc-800 pt-3 space-y-3">
                 <div className="text-sm text-zinc-300">
                   В каких средах вы работаете с этим проектом?
-                  <div className="text-[11px] text-zinc-500 mt-1">
+                  <div className="text-[11px] text-zinc-400 mt-1">
                     Отсутствие папки ни о чём не говорит — проект мог просто ни разу
                     не открываться в этой среде. Ответ запомнится: дальше Taskmark
                     следит, чтобы окружение выбранных сред было полным и актуальным.
@@ -164,7 +164,7 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
                   </span>
                 </label>
 
-                <div className="text-[11px] text-zinc-500 pl-6">
+                <div className="text-[11px] text-zinc-400 pl-6">
                   Скиллы разворачиваются один раз: opencode читает и .claude/skills,
                   поэтому вторая копия нужна только проекту без Claude Code.
                 </div>
@@ -187,7 +187,7 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
                 </label>
               </div>
 
-              <div className="text-[11px] text-zinc-600">
+              <div className="text-[11px] text-zinc-400">
                 Существующие файлы не перезаписываются: развёртывание только создаёт
                 недостающее. Скиллы и скрипты с вашими правками останутся как есть —
                 их отличия покажем отдельно, обновить можно будет по одному, посмотрев diff.

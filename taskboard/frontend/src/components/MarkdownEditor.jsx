@@ -15,7 +15,7 @@ import { FORM_FIELD } from '../fields'
 
 const MARKUP_BUTTON =
   'w-6 h-6 flex items-center justify-center rounded border border-transparent ' +
-  'text-zinc-500 hover:text-zinc-200 hover:border-zinc-700 hover:bg-zinc-800/60 transition'
+  'text-zinc-400 hover:text-zinc-200 hover:border-zinc-700 hover:bg-zinc-800/60 transition'
 
 const TOGGLE = 'hover:text-zinc-300 transition'
 
@@ -163,7 +163,7 @@ export default function MarkdownEditor({
 
   return (
     <>
-      <div className="flex items-center gap-3 mb-1 text-[11px] text-zinc-500">
+      <div className="flex items-center gap-3 mb-1 text-[11px] text-zinc-400">
         {/* Набор намеренно короткий: панель нужна, чтобы не вспоминать синтаксис,
             а не чтобы заменить markdown интерфейсом */}
         {!preview && (
@@ -231,19 +231,19 @@ export default function MarkdownEditor({
       <div className="flex items-center gap-2 mt-2">
         {error
           ? <span className="text-xs text-rose-400">{error}</span>
-          : <span className="text-[11px] text-zinc-600">{hint}</span>}
+          : <span className="text-[11px] text-zinc-400">{hint}</span>}
         {actions && (
           <>
             <button
               onClick={onSave}
               disabled={saving}
-              className="ml-auto w-6 h-6 flex items-center justify-center text-base text-zinc-500
+              className="ml-auto w-6 h-6 flex items-center justify-center text-base text-zinc-400
                 hover:text-emerald-400 disabled:opacity-40"
               title="Сохранить (Ctrl+Enter)"
             >✓</button>
             <button
               onClick={onCancel}
-              className="w-6 h-6 flex items-center justify-center text-base text-zinc-500 hover:text-rose-400"
+              className="w-6 h-6 flex items-center justify-center text-base text-zinc-400 hover:text-rose-400"
               title="Отменить (Esc)"
             >✕</button>
           </>

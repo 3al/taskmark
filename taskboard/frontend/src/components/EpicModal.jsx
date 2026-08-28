@@ -44,18 +44,18 @@ export default function EpicModal({ epicKey, onOpenTask, onClose }) {
             <div className="font-mono text-sm text-zinc-300">{epicKey}</div>
             {/* Имя живёт только в реестре: нет записи — так и пишем, потому что
                 молчание тут неотличимо от эпика без имени */}
-            <div className="mt-0.5 text-sm text-zinc-500">
+            <div className="mt-0.5 text-sm text-zinc-400">
               {data ? (data.name || 'нет записи в реестре эпиков') : '…'}
             </div>
           </div>
           <button onClick={onClose} title="Закрыть (Esc)"
-                  className="text-zinc-500 hover:text-zinc-200 transition">✕</button>
+                  className="text-zinc-400 hover:text-zinc-200 transition">✕</button>
         </div>
 
         <div className="max-h-[70vh] overflow-y-auto p-2">
           {error && <div className="px-3 py-6 text-sm text-rose-400">{error}</div>}
           {!error && data && tasks.length === 0 && (
-            <div className="px-3 py-6 text-sm text-zinc-500">
+            <div className="px-3 py-6 text-sm text-zinc-400">
               В этом эпике пока нет задач.
             </div>
           )}
@@ -71,11 +71,11 @@ export default function EpicModal({ epicKey, onOpenTask, onClose }) {
                 className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left
                   transition ${style ? `${style.card} ${style.cardHover}`
                                      : 'border-zinc-800 bg-zinc-900 hover:bg-zinc-800/70'}`}>
-                <span className="shrink-0 font-mono text-xs text-zinc-500">{task.id}</span>
+                <span className="shrink-0 font-mono text-xs text-zinc-400">{task.id}</span>
                 <span className="min-w-0 flex-1 truncate text-sm text-zinc-300">
                   {task.title}
                 </span>
-                <span className={`shrink-0 text-xs ${style ? style.header : 'text-zinc-500'}`}>
+                <span className={`shrink-0 text-xs ${style ? style.header : 'text-zinc-400'}`}>
                   {task.label}
                 </span>
               </button>

@@ -5,10 +5,10 @@ import { api } from '../api'
 // Внешние diff-библиотеки намеренно не подключаются — dist/ коммитится
 function DiffView({ text }) {
   if (!text) {
-    return <div className="px-3 py-2 text-xs text-zinc-500">Файлы совпадают</div>
+    return <div className="px-3 py-2 text-xs text-zinc-400">Файлы совпадают</div>
   }
   const lineClass = (line) => {
-    if (line.startsWith('+++') || line.startsWith('---')) return 'text-zinc-500'
+    if (line.startsWith('+++') || line.startsWith('---')) return 'text-zinc-400'
     if (line.startsWith('@@')) return 'text-sky-300 bg-sky-950/40'
     if (line.startsWith('+')) return 'text-emerald-200 bg-emerald-950/40'
     if (line.startsWith('-')) return 'text-rose-200 bg-rose-950/40'
@@ -327,7 +327,7 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
             </div>
           )}
           {error && <div className="text-sm text-rose-400">{error}</div>}
-          {items === null && <div className="text-sm text-zinc-500">Загружаю…</div>}
+          {items === null && <div className="text-sm text-zinc-400">Загружаю…</div>}
           {items?.length === 0 && (
             <div className="text-sm text-emerald-300">Всё актуально</div>
           )}
@@ -341,14 +341,14 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
                 <div className="flex items-center gap-2 px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm">
-                      <span className="text-zinc-500 text-xs mr-2">{PART_LABEL[item.part]}</span>
+                      <span className="text-zinc-400 text-xs mr-2">{PART_LABEL[item.part]}</span>
                       <span className="font-medium">{item.name}</span>
                     </div>
                     <div className={`text-[11px] ${state.cls}`}>
                       {state.text}
                       {diff && ` · +${diff.added} / −${diff.removed}`}
-                      {state.hint && <span className="text-zinc-500"> · {state.hint}</span>}
-                      <span className="text-zinc-500">{baseHint(item)}</span>
+                      {state.hint && <span className="text-zinc-400"> · {state.hint}</span>}
+                      <span className="text-zinc-400">{baseHint(item)}</span>
                     </div>
                   </div>
                   <Button onClick={() => toggleDiff(item)} disabled={busy === k}>
@@ -358,7 +358,7 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
                 </div>
                 {diff && (
                   <div className="px-3 pb-3 space-y-2">
-                    <div className="text-[11px] text-zinc-500 font-mono">{item.path}</div>
+                    <div className="text-[11px] text-zinc-400 font-mono">{item.path}</div>
                     {item.state === 'conflict' ? (
                       <>
                         <div className="text-[11px] text-zinc-400">Что нового в шаблоне</div>
@@ -369,7 +369,7 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
                     ) : (
                       <>
                         <DiffView text={diff.diff} />
-                        <div className="text-[11px] text-zinc-600">
+                        <div className="text-[11px] text-zinc-400">
                           {item.state === 'extra'
                             ? '«−» — исчезнет после удаления'
                             : '«+» — появится после обновления, «−» — исчезнет'}

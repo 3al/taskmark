@@ -11,11 +11,11 @@
 export const TASK_SIZES = {
   S: {
     label: 'S', hint: 'мелкая правка, один заход',
-    mark: 'text-zinc-600', badge: 'border-zinc-700/60 text-zinc-400',
+    mark: 'text-zinc-500', badge: 'border-zinc-700/60 text-zinc-400',
   },
   M: {
     label: 'M', hint: 'обычная задача на сессию',
-    mark: 'text-zinc-500', badge: 'border-zinc-600/60 text-zinc-300',
+    mark: 'text-zinc-400', badge: 'border-zinc-600/60 text-zinc-300',
   },
   L: {
     label: 'L', hint: 'несколько сессий, лучше с планом',

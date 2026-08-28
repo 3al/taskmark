@@ -17,4 +17,4 @@ export const FORM_FIELD =
 
 export const INLINE_FIELD =
   'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs ' +
-  'focus:outline-none focus:border-zinc-400 placeholder:text-zinc-600'
+  'focus:outline-none focus:border-zinc-400 placeholder:text-zinc-500'

@@ -64,7 +64,7 @@ function TypeExceptions({ value, onChange }) {
                   : `Исключить задачи «${meta.label}» из этого требования`}
                 className={`text-[10px] rounded px-1.5 py-0.5 border ${chosen.includes(key)
                   ? 'border-amber-600/70 bg-amber-500/10 text-amber-300'
-                  : 'border-zinc-600/60 text-zinc-500 hover:text-zinc-200'}`}>
+                  : 'border-zinc-600/60 text-zinc-400 hover:text-zinc-200'}`}>
           {meta.label}
         </button>
       ))}
@@ -308,7 +308,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
   // превращают список в простыню, а правят их по одному
   const [openExcept, setOpenExcept] = useState('')
 
-  const label = 'block text-xs text-zinc-500 mb-1'
+  const label = 'block text-xs text-zinc-400 mb-1'
   const field = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-sky-500'
 
   const presets = (sources || []).filter((s) => s.kind === 'preset')
@@ -341,7 +341,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
               </optgroup>
             )}
           </select>
-          <div className="text-[11px] text-zinc-600 mt-1">
+          <div className="text-[11px] text-zinc-400 mt-1">
             Подставит статусы, действия и требования этапов в форму — сохранение
             по кнопке ниже
           </div>
@@ -366,9 +366,9 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                 <div className="flex items-center gap-2">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${style.dot}`} />
                   <span className="text-sm truncate">{status.label}</span>
-                  <span className="text-[11px] text-zinc-600 truncate">{status.key}</span>
+                  <span className="text-[11px] text-zinc-400 truncate">{status.key}</span>
                   {status.offramp && (
-                    <span className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1">
+                    <span className="text-[10px] text-zinc-400 border border-zinc-700 rounded px-1">
                       вне маршрута
                     </span>
                   )}
@@ -390,7 +390,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                               className={`px-1.5 mr-1 text-[10px] rounded border ${
                                 status.assignee
                                   ? 'border-zinc-600 bg-zinc-700/40 text-zinc-300'
-                                  : 'border-dashed border-zinc-700 text-zinc-600'
+                                  : 'border-dashed border-zinc-700 text-zinc-500'
                               } hover:text-zinc-200`}>
                         исполнитель
                       </button>
@@ -401,7 +401,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                               title="Что должно быть выполнено, чтобы уйти с этапа"
                               className={`px-1.5 mr-2 text-xs rounded ${
                                 open ? 'bg-zinc-700/60 text-zinc-100' :
-                                declared.length ? 'text-amber-300' : 'text-zinc-500'
+                                declared.length ? 'text-amber-300' : 'text-zinc-400'
                               } hover:text-zinc-200`}>
                         ✓{declared.length || ''}
                         {recommended.length > 0 && <span className="text-sky-400">•</span>}
@@ -409,13 +409,13 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     )}
                     <button onClick={() => move(i, -1)} disabled={i === 0}
                             title="Выше"
-                            className="px-1.5 text-zinc-500 hover:text-zinc-200 disabled:opacity-30">↑</button>
+                            className="px-1.5 text-zinc-400 hover:text-zinc-200 disabled:opacity-30">↑</button>
                     <button onClick={() => move(i, 1)} disabled={i === pipeline.length - 1}
                             title="Ниже"
-                            className="px-1.5 text-zinc-500 hover:text-zinc-200 disabled:opacity-30">↓</button>
+                            className="px-1.5 text-zinc-400 hover:text-zinc-200 disabled:opacity-30">↓</button>
                     <button onClick={() => remove(i)}
                             title={`Убрать «${status.label}» из маршрута — это не сворачивание, статус исчезнет из пайплайна`}
-                            className="px-1.5 text-zinc-500 hover:text-rose-400">✕</button>
+                            className="px-1.5 text-zinc-400 hover:text-rose-400">✕</button>
                   </div>
                 </div>
 
@@ -471,12 +471,12 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                                   title="Типы задач, к которым требование не относится"
                                   className={`text-[10px] rounded px-1 shrink-0 border hover:border-sky-500 ${
                                     skip.length ? 'border-amber-700/70 text-amber-300/90'
-                                                : 'border-zinc-700 text-zinc-500'}`}>
+                                                : 'border-zinc-700 text-zinc-400'}`}>
                             {skip.length ? `кроме: ${skip.map(typeLabel).join(', ')}` : 'все типы'}
                           </button>
                           <button onClick={() => dropRequirement(status.key, req.id)}
                                   title="Убрать требование"
-                                  className="ml-auto px-1 text-zinc-500 hover:text-rose-400 shrink-0">✕</button>
+                                  className="ml-auto px-1 text-zinc-400 hover:text-rose-400 shrink-0">✕</button>
                         </div>
                         {editing && (
                           <div className="mt-1 mb-1.5 pl-5">
@@ -509,7 +509,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                             релизного хвоста это «кроме: Обсуждение», и знать об
                             этом лучше заранее, а не по отсутствию долга */}
                         {req.except_types?.length > 0 && (
-                          <span className="text-[10px] text-zinc-500 border border-zinc-700 rounded px-1 shrink-0"
+                          <span className="text-[10px] text-zinc-400 border border-zinc-700 rounded px-1 shrink-0"
                                 title="К задачам этих типов требование не относится">
                             кроме: {req.except_types.map(typeLabel).join(', ')}
                           </span>
@@ -565,7 +565,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
         ))}
       </div>
 
-      <div className="text-[11px] text-zinc-600 space-y-1">
+      <div className="text-[11px] text-zinc-400 space-y-1">
         <div>
           Порядок — ожидаемый маршрут задачи, а не запрет: шаг через статус и возврат
           назад законны. Скиллы берут цели отсюда, поэтому выключенный статус исчезает

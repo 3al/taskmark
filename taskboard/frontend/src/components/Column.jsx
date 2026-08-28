@@ -85,7 +85,7 @@ export function CollapsedColumn({ column, count, activeFrom, dndFullBoard,
         className="flex w-full flex-col items-center gap-2 py-2.5 rounded-xl
           cursor-grab touch-none select-none hover:bg-zinc-800/50 transition">
         <span className={`w-2 h-2 shrink-0 rounded-full ${highlight ? 'bg-sky-400' : style.dot}`} />
-        <span className={`shrink-0 text-sm ${highlight ? 'text-sky-300' : 'text-zinc-500'}`}>
+        <span className={`shrink-0 text-sm ${highlight ? 'text-sky-300' : 'text-zinc-400'}`}>
           {count}
         </span>
         {/* Подпись лежит на боку, как корешок книги: слово остаётся словом и
@@ -157,7 +157,7 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
             живая очередь
           </span>
         )}
-        <span className="ml-auto text-sm text-zinc-500">{count}</span>
+        <span className="ml-auto text-sm text-zinc-400">{count}</span>
       </div>
 
       <div
@@ -168,7 +168,7 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
         {column.groups.map((group, gi) => (
           <div key={gi} className="space-y-1.5">
             {group.title && (
-              <div className="text-xs uppercase tracking-wide text-zinc-500 px-1 pt-1">
+              <div className="text-xs uppercase tracking-wide text-zinc-400 px-1 pt-1">
                 {group.title}
               </div>
             )}
@@ -198,12 +198,12 @@ export default function Column({ column, onOpenTask, activeFrom, dndFullBoard, c
               />
             )}
             {!group.tasks.length && (
-              <div className="text-xs text-zinc-600 italic px-1">пусто</div>
+              <div className="text-xs text-zinc-500 italic px-1">пусто</div>
             )}
           </div>
         ))}
         {!column.groups.length && (
-          <div className="text-xs text-zinc-600 italic px-1">
+          <div className="text-xs text-zinc-500 italic px-1">
             {filtered ? 'нет совпадений' : 'пусто'}
           </div>
         )}

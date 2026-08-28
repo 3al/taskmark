@@ -167,11 +167,11 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
         <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800">
           <div className="text-lg font-semibold text-zinc-300">Обновление</div>
           {status?.version && (
-            <div className="text-xs text-zinc-600">установлена версия {status.version}</div>
+            <div className="text-xs text-zinc-500">установлена версия {status.version}</div>
           )}
           <button
             onClick={onClose}
-            className="ml-auto text-zinc-500 hover:text-zinc-200 text-xl leading-none px-2"
+            className="ml-auto text-zinc-400 hover:text-zinc-200 text-xl leading-none px-2"
             title="Закрыть (Esc)"
           >
             ×
@@ -180,7 +180,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
 
         <div className="flex-1 overflow-y-auto px-5 py-4 text-sm text-zinc-300">
           {error && <div className="text-rose-400 mb-3">{error}</div>}
-          {!status && !error && <div className="text-zinc-500">Загрузка…</div>}
+          {!status && !error && <div className="text-zinc-400">Загрузка…</div>}
 
           {/* Чем кончилось обновление: сервер к этому моменту уже перезапущен,
               и человек иначе не узнает ни об успехе, ни о провале с откатом */}
@@ -212,7 +212,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
                       <div key={s.version}>
                         <div className="text-zinc-300">
                           {s.version}
-                          {s.date && <span className="text-zinc-600 text-xs ml-2">{s.date}</span>}
+                          {s.date && <span className="text-zinc-500 text-xs ml-2">{s.date}</span>}
                         </div>
                         <div className="md-body md-tint-zinc text-sm mt-1">
                           <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
@@ -289,7 +289,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-zinc-600 mt-2">
+              <p className="text-xs text-zinc-500 mt-2">
                 {MODES.find((m) => m.id === status.mode)?.hint
                   || 'Режим не выбран — фоновых запросов нет.'}
               </p>
@@ -310,7 +310,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
                   копирования, amber — как маркер стоящих задач на доске */}
               <div className="text-base text-amber-300 mb-1">
                 Доступна версия {latest.version}
-                {latest.date && <span className="text-zinc-500 text-sm ml-2">от {latest.date}</span>}
+                {latest.date && <span className="text-zinc-400 text-sm ml-2">от {latest.date}</span>}
               </div>
 
               {/* Кнопка — только когда обновление действительно возможно.
@@ -326,7 +326,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
                   >
                     {applying ? 'Обновляю…' : 'Обновить и перезапустить'}
                   </button>
-                  <p className="text-xs text-zinc-500 mt-2">
+                  <p className="text-xs text-zinc-400 mt-2">
                     Сервер остановится, обновление применит отдельный процесс, затем
                     страница перезагрузится сама. Займёт до минуты.
                   </p>
@@ -351,7 +351,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
                     <code className="flex-1 text-xs text-zinc-300 break-all">{status.command}</code>
                     <CopyButton text={status.command} title="Скопировать команду" />
                   </div>
-                  <p className="text-xs text-zinc-500 mt-2">
+                  <p className="text-xs text-zinc-400 mt-2">
                     Выполните её в папке инструмента и перезапустите сервер:
                     Настройки → «Сервер». Если git откажет — значит в копии есть
                     свои правки или коммиты; тогда обновляйтесь вручную, чтобы их не потерять.
@@ -380,9 +380,9 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
               {/* Адрес обязателен рядом с ошибкой: без него «404» неотличимо
                   от поломки инструмента, а адрес настраиваемый */}
               {status.url && (
-                <div className="text-zinc-600 mt-1 break-all">Адрес проверки: {status.url}</div>
+                <div className="text-zinc-500 mt-1 break-all">Адрес проверки: {status.url}</div>
               )}
-              <div className="text-zinc-600 mt-1">
+              <div className="text-zinc-500 mt-1">
                 Не беспокойтесь, с доской всё в порядке — проверка обновлений
                 независимая функция.
               </div>
@@ -394,7 +394,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
           <button className={btn} onClick={check} disabled={busy || status?.mode === 'off'}>
             {busy ? 'Проверяю…' : 'Проверить сейчас'}
           </button>
-          {checked && <div className="text-xs text-zinc-600">последняя проверка: {checked}</div>}
+          {checked && <div className="text-xs text-zinc-500">последняя проверка: {checked}</div>}
         </div>
       </div>
     </div>

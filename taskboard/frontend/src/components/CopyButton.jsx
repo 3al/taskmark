@@ -28,7 +28,7 @@ export default function CopyButton({ text, title = 'Скопировать', siz
       onClick={copy}
       title={copied ? 'Скопировано!' : title}
       className={`inline-flex items-center justify-center ${box} shrink-0 rounded transition
-        ${copied ? 'text-emerald-400' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/60'}
+        ${copied ? 'text-emerald-400' : 'text-zinc-400 hover:text-zinc-300 hover:bg-zinc-700/60'}
         ${className}`}
     >
       {copied ? (

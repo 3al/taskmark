@@ -104,9 +104,9 @@ export default function TaskPicker({
               onMouseEnter={() => list.setActive(i)}
             >
               <span className="font-mono text-zinc-300">{t.id}</span>
-              {t.title && <span className="text-zinc-500"> · {t.title}</span>}
+              {t.title && <span className="text-zinc-400"> · {t.title}</span>}
               {/* Статус кандидата: по нему видно, стоит ли вообще ждать */}
-              {t.label && <span className="text-zinc-600"> · {t.label}</span>}
+              {t.label && <span className="text-zinc-500"> · {t.label}</span>}
             </button>
           ))}
         </div>

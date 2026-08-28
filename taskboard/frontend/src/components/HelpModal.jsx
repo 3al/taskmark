@@ -61,10 +61,10 @@ export default function HelpModal({ section, onClose }) {
       >
         <div className="flex items-center gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-900/80">
           <div className="text-lg font-semibold text-zinc-300">Помощь</div>
-          <div className="text-xs text-zinc-600">как работать с доской, задачами и пайплайнами</div>
+          <div className="text-xs text-zinc-500">как работать с доской, задачами и пайплайнами</div>
           <button
             onClick={onClose}
-            className="ml-auto text-zinc-500 hover:text-zinc-200 text-xl leading-none px-2"
+            className="ml-auto text-zinc-400 hover:text-zinc-200 text-xl leading-none px-2"
             title="Закрыть (Esc)"
           >
             ×
@@ -74,7 +74,7 @@ export default function HelpModal({ section, onClose }) {
         <div className="flex-1 flex min-h-0">
           <nav className="w-56 shrink-0 border-r border-zinc-800 overflow-y-auto py-2">
             {!items.length && !error && (
-              <div className="px-3 py-2 text-sm text-zinc-600">Загрузка…</div>
+              <div className="px-3 py-2 text-sm text-zinc-500">Загрузка…</div>
             )}
             {items.map((item) => (
               <button
@@ -92,7 +92,7 @@ export default function HelpModal({ section, onClose }) {
 
           <div ref={bodyRef} className="flex-1 overflow-y-auto px-6 py-4 md-body md-tint-zinc text-sm">
             {error && <div className="text-rose-400">{error}</div>}
-            {!doc && !error && <div className="text-zinc-500">Загрузка…</div>}
+            {!doc && !error && <div className="text-zinc-400">Загрузка…</div>}
             {doc && (
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}

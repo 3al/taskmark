@@ -997,18 +997,18 @@ export default function App() {
                 ? 'В этом проекте ещё нет структуры tasks/'
                 : 'В папке tasks нет файла доски'}
             </div>
-            <div className="text-xs text-zinc-500 font-mono">{health?.project?.tasks_dir}</div>
+            <div className="text-xs text-zinc-400 font-mono">{health?.project?.tasks_dir}</div>
             <button
               className="mt-1 px-4 py-2 text-sm rounded-lg bg-sky-600 hover:bg-sky-500 font-medium"
               onClick={() => setShowScaffold(true)}
             >
               Развернуть структуру
             </button>
-            <div className="text-xs text-zinc-600">
+            <div className="text-xs text-zinc-500">
               board.md со всеми разделами · create_task.py · set_status.py · epics.md ·
               окружение выбранных сред агентов
             </div>
-            <button className="text-xs underline text-zinc-500 hover:text-zinc-300"
+            <button className="text-xs underline text-zinc-400 hover:text-zinc-300"
                     onClick={() => openHelp('start')}>
               Что это создаст и зачем
             </button>
@@ -1074,7 +1074,7 @@ export default function App() {
                 <div className="w-72 cursor-grabbing">
                   <div className="bg-zinc-800 border border-sky-500/70 rounded-lg px-3 py-2
                     shadow-2xl shadow-black/70 scale-[1.04] rotate-1">
-                    <div className="text-[11px] font-mono text-zinc-500">{activeDrag.task.id}</div>
+                    <div className="text-[11px] font-mono text-zinc-400">{activeDrag.task.id}</div>
                      <div className="text-base text-zinc-300 leading-snug mt-0.5 line-clamp-2">
                       {activeDrag.task.title}
                     </div>
@@ -1093,7 +1093,7 @@ export default function App() {
             </DragOverlay>
           </DndContext>
         ) : (
-          <div className="h-full flex items-center justify-center text-zinc-500 text-sm">
+          <div className="h-full flex items-center justify-center text-zinc-400 text-sm">
             {health && !health.project
               ? 'Нет активного проекта — добавьте проект кнопкой «+ проект»'
               : 'Доска недоступна'}
@@ -1131,7 +1131,7 @@ export default function App() {
                     {pendingDebt.confirmable.map((d) => (
                       <li key={d.id}>
                         — {d.text}
-                        {d.stage && <span className="text-zinc-500"> · этап «{d.stage}»</span>}
+                        {d.stage && <span className="text-zinc-400"> · этап «{d.stage}»</span>}
                       </li>
                     ))}
                   </ul>
@@ -1156,7 +1156,7 @@ export default function App() {
                   поля. Здесь их можно только увидеть */}
               {pendingDebt.blocking.length > 0 && (
                 <div className="space-y-1">
-                  <div className="text-zinc-500">
+                  <div className="text-zinc-400">
                     {pendingDebt.terminal
                       ? 'Останутся невыполненными: это конец маршрута, спросить их будет негде'
                       : pendingDebt.confirmable.length > 0
@@ -1167,7 +1167,7 @@ export default function App() {
                     {pendingDebt.blocking.map((d) => (
                       <li key={d.id}>
                         — {d.text}
-                        {d.stage && <span className="text-zinc-600"> · этап «{d.stage}»</span>}
+                        {d.stage && <span className="text-zinc-500"> · этап «{d.stage}»</span>}
                       </li>
                     ))}
                   </ul>
@@ -1236,7 +1236,7 @@ export default function App() {
                 )}
               </div>
               )}
-              <div className="text-zinc-500">
+              <div className="text-zinc-400">
                 Всё равно взять в работу — перенести в «{pendingMove.toTitle}»?
               </div>
             </div>

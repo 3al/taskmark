@@ -61,7 +61,7 @@ export default function ContextMenu({ x, y, items, onClose }) {
     >
       {items.map((item) => (item.group ? (
         <div key={item.key}
-             className="px-2.5 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-zinc-500">
+             className="px-2.5 pt-1.5 pb-0.5 text-[10px] uppercase tracking-wide text-zinc-400">
           {item.group}
         </div>
       ) : (
@@ -72,11 +72,11 @@ export default function ContextMenu({ x, y, items, onClose }) {
           disabled={item.disabled}
           onClick={() => { onClose(); item.onSelect?.() }}
           className="w-full flex items-center gap-1.5 px-2.5 py-1 text-left transition
-            text-zinc-200 hover:bg-zinc-800 disabled:text-zinc-600 disabled:hover:bg-transparent"
+            text-zinc-200 hover:bg-zinc-800 disabled:text-zinc-500 disabled:hover:bg-transparent"
         >
           {item.dot && <span className={`w-1.5 h-1.5 shrink-0 rounded-full ${item.dot}`} />}
           <span className="truncate">{item.label}</span>
-          {item.hint && <span className="ml-auto pl-2 text-[10px] text-zinc-500">{item.hint}</span>}
+          {item.hint && <span className="ml-auto pl-2 text-[10px] text-zinc-400">{item.hint}</span>}
         </button>
       )))}
     </div>

@@ -37,12 +37,12 @@ function ProjectSelect({ projects, active, onSwitch }) {
         title="Переключить проект"
       >
         <span className="truncate">{active || '— проект не выбран —'}</span>
-        <span className={`ml-auto text-zinc-500 text-xs transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
+        <span className={`ml-auto text-zinc-400 text-xs transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
       </button>
       {open && (
         <div className="absolute top-full left-0 mt-1 min-w-48 w-full bg-zinc-900 border border-zinc-700
           rounded-lg shadow-2xl shadow-black/60 py-1 z-40 max-h-72 overflow-y-auto">
-          {!projects.length && <div className="px-3 py-1.5 text-sm text-zinc-500 italic">пусто</div>}
+          {!projects.length && <div className="px-3 py-1.5 text-sm text-zinc-400 italic">пусто</div>}
           {projects.map((p, i) => (
             <button
               key={p.name}
@@ -127,7 +127,7 @@ export default function Header({
       <div className="shrink-0 font-bold text-lg tracking-tight flex items-baseline gap-1.5">
         {/* Сдвиг вверх: скобки моноширинного шрифта уходят ниже базовой линии
             заметно глубже букв, и по базовой линии знак кажется съехавшим */}
-        <span className="font-mono text-zinc-500 text-base leading-none relative -top-[2px]">[<span className="text-sky-400">x</span>]</span>
+        <span className="font-mono text-zinc-400 text-base leading-none relative -top-[2px]">[<span className="text-sky-400">x</span>]</span>
         <span>task<span className="text-sky-400">mark</span></span>
       </div>
 
@@ -148,7 +148,7 @@ export default function Header({
               </button>
               <button
                 onClick={() => setConfirmingRemove(false)}
-                className="px-1.5 py-1.5 text-xs rounded-lg text-zinc-500 hover:text-zinc-300 transition"
+                className="px-1.5 py-1.5 text-xs rounded-lg text-zinc-400 hover:text-zinc-300 transition"
                 title="Отмена"
               >
                 ✕
@@ -157,7 +157,7 @@ export default function Header({
           ) : (
             <button
               onClick={() => setConfirmingRemove(true)}
-              className="shrink-0 px-2 py-1.5 text-sm rounded-lg border border-zinc-700 text-zinc-500
+              className="shrink-0 px-2 py-1.5 text-sm rounded-lg border border-zinc-700 text-zinc-400
                 hover:text-rose-300 hover:border-rose-800 hover:bg-rose-950/40 transition"
               title={`Забыть проект «${active}» (файлы не удаляются)`}
             >
@@ -169,7 +169,7 @@ export default function Header({
           <div className="flex items-center gap-1 pl-3">
             <CopyButton text={projectDir(activeProject.tasks_dir)} title="Копировать путь проекта" />
             <div
-              className="text-[11px] leading-tight text-zinc-500 truncate"
+              className="text-[11px] leading-tight text-zinc-400 truncate"
               title={activeProject.tasks_dir}
             >
               {projectDir(activeProject.tasks_dir)}
@@ -205,16 +205,16 @@ export default function Header({
           placeholder="Поиск по задачам…"
           title="Ищет по номеру, заголовку и содержанию задач (Esc — сбросить)"
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-2.5 pr-16 py-1.5 text-sm
-            focus:outline-none focus:border-sky-500 placeholder:text-zinc-600"
+            focus:outline-none focus:border-sky-500 placeholder:text-zinc-500"
         />
         {query && (
           <span className="absolute right-2 flex items-center gap-1.5">
-            <span className={`text-[11px] ${matches ? 'text-zinc-500' : 'text-rose-400'}`}>
+            <span className={`text-[11px] ${matches ? 'text-zinc-400' : 'text-rose-400'}`}>
               {matches ?? 0}
             </span>
             <button
               onClick={() => onQuery('')}
-              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none"
+              className="text-zinc-400 hover:text-zinc-200 text-sm leading-none"
               title="Сбросить поиск (Esc)"
             >
               ✕
@@ -234,7 +234,7 @@ export default function Header({
             : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800'}`}
       >
         ⛔ стоят
-        {stalledCount > 0 && <span className="ml-1.5 text-xs text-zinc-500">{stalledCount}</span>}
+        {stalledCount > 0 && <span className="ml-1.5 text-xs text-zinc-400">{stalledCount}</span>}
       </button>
 
       {/* Отбор по размеру: чипы, а не строка поиска. Размер живёт во
@@ -253,7 +253,7 @@ export default function Header({
               className={`px-2 py-1.5 text-xs rounded-lg border transition tabular-nums
                 ${on
                   ? 'border-sky-600 bg-sky-950/50 text-sky-200'
-                  : 'border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:bg-zinc-800'}`}
+                  : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:bg-zinc-800'}`}
             >
               {key}
             </button>

@@ -307,7 +307,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   // конфликт разрешается порядком правил в CSS, а не в строке класса,
   // и `w-full` побеждает, схлопывая соседей в ноль
   const narrowField = 'bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500'
-  const label = 'block text-xs text-zinc-500 mb-1'
+  const label = 'block text-xs text-zinc-400 mb-1'
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -334,7 +334,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
         ) : serverAction === 'stop' ? (
           <div className="px-5 py-8 space-y-2 text-center">
             <div className="text-sm text-zinc-300">Сервер остановлен. Эту вкладку можно закрыть.</div>
-            <div className="text-xs text-zinc-600">Запуск: py taskboard.py</div>
+            <div className="text-xs text-zinc-500">Запуск: py taskboard.py</div>
           </div>
         ) : removals ? (
           <>
@@ -345,7 +345,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
               </div>
               {removals.map((r) => (
                 <div key={r.section} className="space-y-1">
-                  <span className="block text-xs text-zinc-500">
+                  <span className="block text-xs text-zinc-400">
                     {r.label} — задач: {r.count}
                   </span>
                   <select
@@ -398,10 +398,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     {/* Когда именно требование их коснётся: у прошедших этап
                         значок долга появится сразу, у стоящих на нём — при уходе.
                         Иначе предупреждение и доска показывают разные числа */}
-                    <span className="ml-auto shrink-0 text-[10px] text-zinc-500 border border-zinc-700 rounded px-1">
+                    <span className="ml-auto shrink-0 text-[10px] text-zinc-400 border border-zinc-700 rounded px-1">
                       {t.when === 'now' ? 'долг сразу' : 'при уходе с этапа'}
                     </span>
-                    <span className="text-zinc-500 shrink-0">
+                    <span className="text-zinc-400 shrink-0">
                       {t.requirements.join('; ')}
                     </span>
                   </div>
@@ -467,7 +467,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                   }`}
                 >
                   {t.title}
-                  <span className="block text-[10px] text-zinc-600">
+                  <span className="block text-[10px] text-zinc-400">
                     {t.scope === 'project' ? 'проект' : 'глобально'}
                   </span>
                 </button>
@@ -476,13 +476,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
 
             <div className="flex min-w-0 flex-1 flex-col">
         <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
-          {!config && !error && <div className="text-sm text-zinc-500">Загрузка…</div>}
+          {!config && !error && <div className="text-sm text-zinc-400">Загрузка…</div>}
 
           {config && (
             <>
               {/* Уровень влияния — словами, а не только подписью во вкладке:
                   «где это сохранится» пользователь спрашивает именно тут */}
-              <div className="text-[11px] text-zinc-600">
+              <div className="text-[11px] text-zinc-400">
                 {SCOPE_NOTE[TABS.find((t) => t.key === tab)?.scope]}
               </div>
 
@@ -511,7 +511,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                               value={value ?? ''}
                               onChange={(e) => set(key, e.target.value)}
                             />
-                            <span className="block text-[11px] text-zinc-600 mt-1">
+                            <span className="block text-[11px] text-zinc-400 mt-1">
                               от {low} до {high}
                             </span>
                           </div>
@@ -539,7 +539,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             value={value ?? ''}
                             onChange={(e) => set('card_stale_days', e.target.value)}
                           />
-                          <span className="block text-[11px] text-zinc-500 mt-1">
+                          <span className="block text-[11px] text-zinc-400 mt-1">
                             возраст показывается нижней строкой превью; от {low} до {high}
                           </span>
                         </div>
@@ -565,7 +565,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             value={value ?? ''}
                             onChange={(e) => set('card_fresh_minutes', e.target.value)}
                           />
-                          <span className="block text-[11px] text-zinc-500 mt-1">
+                          <span className="block text-[11px] text-zinc-400 mt-1">
                             видно, над чем работают прямо сейчас; 0 — не подсвечивать
                           </span>
                         </div>
@@ -582,7 +582,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                       />
                       <span>
                         Метка типа задачи
-                        <div className="text-[11px] text-zinc-500">
+                        <div className="text-[11px] text-zinc-400">
                           кружок с буквой в правом верхнем углу превью; в открытой
                           задаче тип виден всегда
                         </div>
@@ -600,7 +600,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                       />
                       <span>
                         Прогресс плана работы
-                        <div className="text-[11px] text-zinc-500">
+                        <div className="text-[11px] text-zinc-400">
                           полоска в середине нижней строки превью — у задач,
                           где агент завёл чеклист
                         </div>
@@ -618,7 +618,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                       />
                       <span>
                         Сворачивать пустые колонки
-                        <div className="text-[11px] text-zinc-500">
+                        <div className="text-[11px] text-zinc-400">
                           колонка без задач становится узкой полосой и разворачивается
                           сама, когда в ней появляется задача; любую другую сворачивает
                           клик по её шапке
@@ -649,7 +649,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                           />
                           <span>
                             {title}
-                            <div className="text-[11px] text-zinc-500">{where}</div>
+                            <div className="text-[11px] text-zinc-400">{where}</div>
                           </span>
                         </label>
                       ))}
@@ -665,7 +665,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     />
                     <span>
                       Knowledge Vault
-                      <div className="text-[11px] text-zinc-500">
+                      <div className="text-[11px] text-zinc-400">
                         vault/ — внешняя память проекта: скилл write-vault, шаблоны заметок,
                         блоки про волт в скиллах и правилах
                       </div>
@@ -682,13 +682,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     />
                     <span>
                       Внешние источники ревью
-                      <div className="text-[11px] text-zinc-500">
+                      <div className="text-[11px] text-zinc-400">
                         скилл review-task берёт предмет из merge request через
                         MCP-инструменты окружения; выключено — этих шагов в скилле нет
                       </div>
                     </span>
                   </label>
-                  <div className="text-[11px] text-zinc-600 mt-1">
+                  <div className="text-[11px] text-zinc-400 mt-1">
                     Недостающее развернётся кнопками на баннере. Скиллы лежат в одном
                     месте: opencode читает и .claude/skills
                     {onOpenHelp && (
@@ -724,7 +724,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     />
                     <span>
                       Удаление задач крестиком
-                      <div className="text-[11px] text-zinc-500">
+                      <div className="text-[11px] text-zinc-400">
                         крестик в углу превью убирает задачу с доски и удаляет её файл;
                         спрашивает подтверждение
                       </div>
@@ -766,7 +766,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     value={config.release_script || ''}
                     onChange={(e) => set('release_script', e.target.value)}
                   />
-                  <div className="text-[11px] text-zinc-600 mt-1">
+                  <div className="text-[11px] text-zinc-400 mt-1">
                     Путь к вашему скрипту в проекте, например <code>tools/release.py</code>.
                     Пусто — подготовка выпуска доводится до changelog, а выпускаете вы сами.
                     {onOpenHelp && (
@@ -843,7 +843,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         {botError && (
                           <div className="text-[11px] text-rose-400 mt-1">{botError}</div>
                         )}
-                        <div className="text-[11px] text-zinc-600 mt-1">
+                        <div className="text-[11px] text-zinc-400 mt-1">
                           У @BotFather: /newbot → выключить Group Privacy → добавить бота в чат
                           {onOpenHelp && (
                             <button
@@ -864,7 +864,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                           value={config.telegram_username || ''}
                           onChange={(e) => set('telegram_username', e.target.value)}
                         />
-                        <div className="text-[11px] text-zinc-600 mt-1">
+                        <div className="text-[11px] text-zinc-400 mt-1">
                           Задача заводится, только если тегнули вас
                         </div>
                       </div>
@@ -872,7 +872,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                       <div className="border-t border-zinc-800 pt-4">
                         <span className={label}>3. Из какого чата — в какой проект</span>
                         {visibleChats().length === 0 ? (
-                          <div className="text-[11px] text-zinc-600">
+                          <div className="text-[11px] text-zinc-400">
                             Чатов пока не видно. Бот узнаёт о чате, когда в нём пишут, —
                             отправьте туда любое сообщение, и чат появится в списке
                           </div>
@@ -893,7 +893,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                                     {chat.title || `Чат ${chat.id}`}
                                   </div>
                                   <div className="flex items-center gap-2 mt-2">
-                                    <span className="text-[11px] text-zinc-500 shrink-0">
+                                    <span className="text-[11px] text-zinc-400 shrink-0">
                                       задачи отсюда →
                                     </span>
                                     <select
@@ -912,7 +912,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                                       кнопок им ни о чём не говорит */}
                                   {main && projectNames.length > 1 && (
                                     <div className="flex flex-wrap items-center gap-1 mt-2">
-                                      <span className="text-[11px] text-zinc-500 mr-1">
+                                      <span className="text-[11px] text-zinc-400 mr-1">
                                         и по суффиксу:
                                       </span>
                                       {projectNames.filter((name) => name !== main).map((name) => (
@@ -922,7 +922,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                                           className={`px-2 py-0.5 text-[11px] rounded-full border ${
                                             extra.includes(name)
                                               ? 'bg-sky-900/40 border-sky-700 text-sky-200'
-                                              : 'border-zinc-700 text-zinc-500 hover:text-zinc-300'
+                                              : 'border-zinc-700 text-zinc-400 hover:text-zinc-300'
                                           }`}
                                         >
                                           {name}
@@ -935,14 +935,14 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             })}
                           </div>
                           {visibleChats().some((chat) => chatBinding(chat.id).length > 1) && (
-                            <div className="text-[11px] text-zinc-600 mt-2">
+                            <div className="text-[11px] text-zinc-400 mt-2">
                               В основной проект задача идёт без уточнения, в остальные — через
                               #{config.telegram_tag || 'задача'}-Имя
                             </div>
                           )}
                           </>
                         )}
-                        <div className="text-[11px] text-zinc-600 mt-2">
+                        <div className="text-[11px] text-zinc-400 mt-2">
                           Сообщение в чате: #{config.telegram_tag || 'задача'} Текст задачи @
                           {config.telegram_username || 'ваш_ник'}
                         </div>
@@ -984,7 +984,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             />
                             Запускать при входе в систему
                           </label>
-                          <div className="text-[11px] text-zinc-600 mt-1">
+                          <div className="text-[11px] text-zinc-400 mt-1">
                             Пока Taskmark не запущен, фоновое не работает: ни проверка
                             обновлений, ни задачи из чата
                           </div>
@@ -1002,7 +1002,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                           )}
                         </>
                       ) : (
-                        <div className="text-[11px] text-zinc-600">{autostart.hint}</div>
+                        <div className="text-[11px] text-zinc-400">{autostart.hint}</div>
                       )}
                     </div>
                   )}
@@ -1023,7 +1023,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         Остановить
                       </button>
                     </div>
-                    <div className="text-[11px] text-zinc-600 mt-1">
+                    <div className="text-[11px] text-zinc-400 mt-1">
                       Перезапуск применяет смену порта и перечитывает конфиги
                     </div>
                   </div>

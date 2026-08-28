@@ -49,7 +49,7 @@ export default function AddProjectModal({ startPath = '', onAdded, onClose }) {
         max-h-[85vh] flex flex-col">
         <div className="px-5 py-4 border-b border-zinc-800">
           <div className="text-lg font-semibold">Добавить проект</div>
-          <div className="text-[11px] text-zinc-500">
+          <div className="text-[11px] text-zinc-400">
             Путь к <strong>корню</strong> проекта — папка <code>tasks/</code> берётся
             внутри него, создавать её заранее не нужно
           </div>

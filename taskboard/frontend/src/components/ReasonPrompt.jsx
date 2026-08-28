@@ -24,7 +24,7 @@ export default function ReasonPrompt({
 
   return (
     <div className="flex items-center gap-2">
-      {label && <span className="text-xs text-zinc-500 shrink-0">{label}</span>}
+      {label && <span className="text-xs text-zinc-400 shrink-0">{label}</span>}
       <input
         ref={ref}
         value={text}
@@ -49,7 +49,7 @@ export default function ReasonPrompt({
       </button>
       <button
         onClick={onCancel}
-        className="shrink-0 px-1.5 py-1 text-xs text-zinc-500 hover:text-zinc-200 transition"
+        className="shrink-0 px-1.5 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition"
         title="Отменить (Esc)"
       >
         ✕

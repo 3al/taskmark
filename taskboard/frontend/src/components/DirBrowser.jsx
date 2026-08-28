@@ -58,7 +58,7 @@ export default function DirBrowser({ path, onPath, onError }) {
         )}
         {view?.entries?.map((entry) => (
           <button key={entry.path} className={row} onClick={() => onPath(entry.path)}>
-            <span className="shrink-0 text-zinc-600">📁</span>
+            <span className="shrink-0 text-zinc-500">📁</span>
             <span className="truncate text-zinc-300">{entry.name}</span>
             {/* Папка с задачами внутри — то, что человек и ищет: без метки он
                 открывает наугад каждую вторую */}
@@ -68,9 +68,9 @@ export default function DirBrowser({ path, onPath, onError }) {
           </button>
         ))}
         {view?.ok && view.entries.length === 0 && (
-          <div className="px-3 py-2 text-sm text-zinc-500">Вложенных папок нет</div>
+          <div className="px-3 py-2 text-sm text-zinc-400">Вложенных папок нет</div>
         )}
-        {view === null && <div className="px-3 py-2 text-sm text-zinc-500">Загружаю…</div>}
+        {view === null && <div className="px-3 py-2 text-sm text-zinc-400">Загружаю…</div>}
       </div>
     </div>
   )

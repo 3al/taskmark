@@ -51,7 +51,7 @@ export default function LogsPanel({ onClose }) {
                 {f.name}
               </button>
             ))}
-            {!files.length && <div className="px-4 py-3 text-xs text-zinc-500">Нет файлов</div>}
+            {!files.length && <div className="px-4 py-3 text-xs text-zinc-400">Нет файлов</div>}
           </div>
         </div>
 
@@ -61,7 +61,7 @@ export default function LogsPanel({ onClose }) {
             {current && content && !content.startsWith('Ошибка') && content !== 'Загрузка…' && (
               <CopyButton className="ml-auto" text={content} title="Копировать содержимое лога" />
             )}
-            <button onClick={onClose} className={`${current ? '' : 'ml-auto'} text-zinc-500 hover:text-zinc-200 text-xl px-2`}>×</button>
+            <button onClick={onClose} className={`${current ? '' : 'ml-auto'} text-zinc-400 hover:text-zinc-200 text-xl px-2`}>×</button>
           </div>
           <pre className="flex-1 overflow-auto px-4 py-3 text-xs text-zinc-300 whitespace-pre-wrap font-mono">
             {content}

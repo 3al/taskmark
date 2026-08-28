@@ -91,7 +91,7 @@ export default function EpicField({
                 onMouseEnter={() => list.setActive(i)}
               >
                 <span className="font-mono text-zinc-300">{e.key}</span>
-                {e.name && <span className="text-zinc-500"> · {e.name}</span>}
+                {e.name && <span className="text-zinc-400"> · {e.name}</span>}
               </button>
             ))}
           </div>

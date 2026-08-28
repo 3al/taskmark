@@ -59,7 +59,7 @@ export default function AssigneeField({ value = '', busy = false, onPick }) {
           hover:brightness-125 disabled:opacity-60
           ${value
             ? 'border-zinc-600 bg-zinc-700/40 text-zinc-300'
-            : 'border-dashed border-zinc-700 text-zinc-500'}`}>
+            : 'border-dashed border-zinc-700 text-zinc-400'}`}>
         {value || 'без исполнителя'}
       </button>
       {open && (
@@ -106,7 +106,7 @@ export default function AssigneeField({ value = '', busy = false, onPick }) {
               type="button"
               onClick={() => save('')}
               className="mt-1 w-full text-left px-2 py-1 text-[10px] rounded
-                border border-dashed border-zinc-700 text-zinc-500 hover:text-zinc-300">
+                border border-dashed border-zinc-700 text-zinc-400 hover:text-zinc-300">
               снять назначение
             </button>
           )}

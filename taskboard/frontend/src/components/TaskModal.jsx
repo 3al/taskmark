@@ -458,14 +458,14 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
             {/* Рамка правки рисуется вплотную над строкой номера — на время
                 правки уводим её на пару пикселей вверх. Это transform: в поток
                 он не попадает, поэтому высота шапки не меняется */}
-            <div className={`flex items-center gap-2 text-xs font-mono text-zinc-500
+            <div className={`flex items-center gap-2 text-xs font-mono text-zinc-400
               transition-transform ${editing ? '-translate-y-0.5' : ''}`}>
               {/* Ушли по номеру блокера — должен быть путь обратно: иначе
                   переход в один конец, и открытую задачу приходится искать заново */}
               {onBack && (
                 <button
                   onClick={onBack}
-                  className="text-zinc-500 hover:text-zinc-200 transition"
+                  className="text-zinc-400 hover:text-zinc-200 transition"
                   title={backTo ? `Назад к ${backTo}` : 'Назад'}
                 >
                   ←
@@ -492,7 +492,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     <button
                       type="button"
                       onClick={() => onOpenEpic?.(task.meta.epic)}
-                      className="flex min-w-0 items-baseline gap-1.5 text-zinc-500
+                      className="flex min-w-0 items-baseline gap-1.5 text-zinc-400
                         transition hover:text-zinc-300"
                       title={`Задачи эпика ${task.meta.epic}`}>
                       <span className="font-mono">{task.meta.epic}</span>
@@ -501,7 +501,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     <button
                       type="button"
                       onClick={openEpicForm}
-                      className="shrink-0 text-zinc-600 transition hover:text-zinc-300"
+                      className="shrink-0 text-zinc-500 transition hover:text-zinc-300"
                       title="Изменить эпик"
                     >✎</button>
                   </>
@@ -509,7 +509,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                   <button
                     type="button"
                     onClick={openEpicForm}
-                    className="text-zinc-600 transition hover:text-zinc-400"
+                    className="text-zinc-500 transition hover:text-zinc-400"
                     title="Назначить эпик"
                   >+ эпик</button>
                 )}
@@ -530,13 +530,13 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     onClick={() => saveEpic()}
                     disabled={epicSaving}
                     className="shrink-0 w-6 h-6 flex items-center justify-center text-base
-                      text-zinc-500 hover:text-emerald-400 disabled:opacity-40"
+                      text-zinc-400 hover:text-emerald-400 disabled:opacity-40"
                     title="Сохранить"
                   >✓</button>
                   <button
                     onClick={() => setEpicForm(false)}
                     className="shrink-0 w-6 h-6 flex items-center justify-center text-base
-                      text-zinc-500 hover:text-rose-400"
+                      text-zinc-400 hover:text-rose-400"
                     title="Отменить (Esc)"
                   >✕</button>
                 </div>
@@ -544,7 +544,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                   <button
                     onClick={() => saveEpic('')}
                     disabled={epicSaving}
-                    className="text-[11px] text-zinc-500 transition hover:text-zinc-300
+                    className="text-[11px] text-zinc-400 transition hover:text-zinc-300
                       disabled:opacity-40">
                     снять эпик
                   </button>
@@ -569,12 +569,12 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                           <button
                             onClick={saveTitle}
                             disabled={saving}
-                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-500 hover:text-emerald-400"
+                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-400 hover:text-emerald-400"
                             title="Сохранить (Enter)"
                           >✓</button>
                           <button
                             onClick={cancelEdit}
-                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-500 hover:text-rose-400"
+                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-400 hover:text-rose-400"
                             title="Отменить (Esc)"
                           >✕</button>
                         </TitleActions>
@@ -602,7 +602,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                         <TitleActions>
                           <button
                             onClick={startEdit}
-                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-600 hover:text-zinc-300
+                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-500 hover:text-zinc-300
                               opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
                             title="Изменить название"
                           >✎</button>
@@ -617,7 +617,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
               <div className="shrink-0 w-14" aria-hidden="true" />
             </div>
             {task?.meta && (
-              <div className="text-xs text-zinc-500 mt-1 flex items-center gap-2 flex-wrap">
+              <div className="text-xs text-zinc-400 mt-1 flex items-center gap-2 flex-wrap">
                 {/* На превью тип — кружок с буквой (места там на один знак),
                     здесь он подписан полностью: окно и открывают, чтобы понять,
                     что это за задача. Клик по метке меняет тип: список тут же,
@@ -633,7 +633,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     className={`px-1.5 py-px rounded border text-[10px] transition
                       hover:brightness-125 disabled:opacity-60
                       ${taskType(task.meta.type)?.badge
-                        || 'border-dashed border-zinc-700 text-zinc-500'}`}>
+                        || 'border-dashed border-zinc-700 text-zinc-400'}`}>
                     {taskType(task.meta.type)?.label || 'без типа'}
                   </button>
                   {typePicker && (
@@ -674,7 +674,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     className={`px-1.5 py-px rounded border text-[10px] transition
                       hover:brightness-125 disabled:opacity-60
                       ${taskSize(task.meta.size)?.badge
-                        || 'border-dashed border-zinc-700 text-zinc-500'}`}>
+                        || 'border-dashed border-zinc-700 text-zinc-400'}`}>
                     {taskSize(task.meta.size)?.label || 'без размера'}
                   </button>
                   {sizePicker && (
@@ -706,7 +706,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                           className={`px-1.5 py-px rounded border border-dashed border-zinc-700
                             text-[10px] text-left whitespace-nowrap transition
                             ${sizeKeys.active === sizeOptions.length - 1
-                              ? 'text-zinc-300' : 'text-zinc-500'}`}>
+                              ? 'text-zinc-300' : 'text-zinc-400'}`}>
                           снять оценку
                         </button>
                       )}
@@ -737,7 +737,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
             {/* Причина отмены: спрашивается один раз при переводе и остаётся
                 в файле навсегда — из съезда не возвращаются */}
             {task?.meta?.cancel_reason && task.meta.cancel_reason !== '~' && (
-              <div className="text-xs text-zinc-500 mt-1">
+              <div className="text-xs text-zinc-400 mt-1">
                 отменена: <span className="text-zinc-400">{task.meta.cancel_reason}</span>
               </div>
             )}
@@ -752,7 +752,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                         Приглушаем и говорим прямо, но снимает человек:
                         пометка стоит в этой задаче, а решение за ним */}
                     <span className={`shrink-0 ${b.resolved || stall?.stale
-                      ? 'text-zinc-500 grayscale opacity-80' : 'text-rose-400/90'}`}>
+                      ? 'text-zinc-400 grayscale opacity-80' : 'text-rose-400/90'}`}>
                       ⛔ ждёт
                     </span>
                     {/* Номер блокера — в цвет маркера на превью: на доске и в
@@ -769,7 +769,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                       {b.id}
                     </button>
                     {b.found ? (
-                      <span className="text-zinc-500 truncate">
+                      <span className="text-zinc-400 truncate">
                         {b.title}
                         {b.status && <> · {statusLabel(b.status)}</>}
                       </span>
@@ -785,7 +785,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     <button
                       onClick={() => dropBlocker(b.id)}
                       disabled={stallBusy}
-                      className="ml-1 text-zinc-600 hover:text-zinc-300 shrink-0 disabled:opacity-40"
+                      className="ml-1 text-zinc-500 hover:text-zinc-300 shrink-0 disabled:opacity-40"
                       title="Снять блокировку"
                     >
                       ✕
@@ -796,7 +796,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                 {stall?.paused && (
                   <div className="flex items-center gap-2 text-xs">
                     <span className={`shrink-0 ${stall.stale
-                      ? 'text-zinc-500 grayscale opacity-80' : 'text-amber-300/80'}`}>
+                      ? 'text-zinc-400 grayscale opacity-80' : 'text-amber-300/80'}`}>
                       ⏸ пауза
                     </span>
                     <span className="text-zinc-400 truncate" title={stall.paused}>
@@ -808,7 +808,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     <button
                       onClick={() => patchStall({ paused: '' })}
                       disabled={stallBusy}
-                      className="text-zinc-600 hover:text-zinc-300 shrink-0 disabled:opacity-40"
+                      className="text-zinc-500 hover:text-zinc-300 shrink-0 disabled:opacity-40"
                       title="Снять паузу"
                     >
                       ✕
@@ -846,7 +846,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     подсказке, а не в строке: список тут бывает длинным, и
                     справочная строка не должна спорить с причиной простоя */}
                 {stall?.blocks_tasks?.length > 0 && (
-                  <div className="text-xs text-zinc-600">
+                  <div className="text-xs text-zinc-500">
                     держит:{' '}
                     {stall.blocks_tasks.map((b, i) => (
                       <Fragment key={b.id}>
@@ -854,7 +854,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                         {b.found ? (
                           <button
                             onClick={() => onOpenTask?.(b.id)}
-                            className="font-mono text-zinc-500 hover:text-zinc-300"
+                            className="font-mono text-zinc-400 hover:text-zinc-300"
                             title={`Открыть: ${b.title}`}
                           >
                             {b.id}
@@ -889,7 +889,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     сама подпись лежит вне потока и иначе наезжает на границу шапки */}
                 {stallForm === 'block' && (
                   <div className="flex items-center gap-2 pb-4">
-                    <span className="text-xs text-zinc-500 shrink-0">Ждёт:</span>
+                    <span className="text-xs text-zinc-400 shrink-0">Ждёт:</span>
                     {/* Кандидатов считает бэкенд: без завершённых, отменённых
                         и тех, кто сам ждёт эту задачу (иначе цикл) */}
                     <TaskPicker
@@ -912,7 +912,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     </button>
                     <button
                       onClick={() => { setStallForm(null); setBlockId(''); setBlockTask(null) }}
-                      className="shrink-0 px-1.5 py-1 text-xs text-zinc-500 hover:text-zinc-200 transition"
+                      className="shrink-0 px-1.5 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition"
                       title="Отменить (Esc)"
                     >
                       ✕
@@ -923,7 +923,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                 {/* В терминальном статусе простой не ставится вовсе — кнопок
                     просто нет: подпись про недоступное действие только шумит */}
                 {!stallForm && stall?.can_set && (
-                  <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+                  <div className="flex items-center gap-3 text-[11px] text-zinc-400">
                     <button className="hover:text-zinc-300 transition"
                             onClick={() => setStallForm('block')}>
                       + блокировка
@@ -946,7 +946,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
             <button
               onClick={() => onCopy(taskId)}
               className="ml-auto inline-flex items-center justify-center w-5 h-5 shrink-0 rounded transition
-                text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/60"
+                text-zinc-400 hover:text-zinc-300 hover:bg-zinc-700/60"
               title="Создать копию задачи"
             >
               <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none"
@@ -965,7 +965,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
           )}
           <button
             onClick={onClose}
-            className={`${task ? '' : 'ml-auto'} text-zinc-500 hover:text-zinc-200 text-xl leading-none px-2`}
+            className={`${task ? '' : 'ml-auto'} text-zinc-400 hover:text-zinc-200 text-xl leading-none px-2`}
             title="Закрыть (Esc)"
           >
             ×
@@ -974,7 +974,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
 
         <div className={`overflow-y-auto px-5 py-4 md-body text-sm ${style.mdTint}`}>
           {error && <div className="text-rose-400">{error}</div>}
-          {!task && !error && <div className="text-zinc-500">Загрузка…</div>}
+          {!task && !error && <div className="text-zinc-400">Загрузка…</div>}
           {task && blocks.map((block, i) => (
             <div key={i} className="md-block group relative">
               {block.type === 'section' && editSection === block.key ? (
@@ -1005,7 +1005,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                         <TitleActions>
                           <button
                             onClick={() => startSection(block)}
-                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-600
+                            className="w-6 h-6 flex items-center justify-center text-base text-zinc-500
                               hover:text-zinc-300 opacity-0 group-hover:opacity-100 focus:opacity-100
                               transition-opacity"
                             title="Изменить текст"
@@ -1040,7 +1040,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
               ) : (
                 <button
                   onClick={() => setCommentForm(true)}
-                  className="text-[11px] text-zinc-500 transition hover:text-zinc-300">
+                  className="text-[11px] text-zinc-400 transition hover:text-zinc-300">
                   + комментарий
                 </button>
               )}
