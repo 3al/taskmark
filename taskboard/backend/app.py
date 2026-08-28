@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import (baseline, changelog, help_docs, lifecycle, registry,
-                     updater, version)
+                     telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE,
@@ -74,6 +74,7 @@ watcher = TasksWatcher()
 
 # Остановка фонового цикла проверки обновлений (ставится при старте)
 _stop_update_loop = None
+_stop_telegram_loop = None
 
 
 # --- Модели запросов ---
@@ -1213,6 +1214,12 @@ def _startup() -> None:
     global _stop_update_loop
     _stop_update_loop = updater.start_periodic_check(
         cfg, check=lambda c: updater.check_and_notify(c, ROOT_DIR, watcher.send))
+    # Задачи из чата: поллер живёт тем же способом, что и проверка обновлений —
+    # потоком-демоном внутри уже работающего сервера. Обработчика сообщений
+    # пока нет (TASK-204), и это не «ничего не делать»: без него курсор очереди
+    # стоит, и сообщения дожидаются разбора в самом Telegram
+    global _stop_telegram_loop
+    _stop_telegram_loop = telegram_source.start_polling(cfg)
 
 
 @app.on_event("shutdown")
@@ -1222,3 +1229,5 @@ def _shutdown() -> None:
     watcher.shutdown()
     if _stop_update_loop is not None:
         _stop_update_loop()
+    if _stop_telegram_loop is not None:
+        _stop_telegram_loop()
