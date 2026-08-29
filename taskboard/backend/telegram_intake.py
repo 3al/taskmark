@@ -129,6 +129,27 @@ def _split_sentence(line: str) -> tuple[str, str]:
     return line, ""
 
 
+def author_of(message: dict) -> str:
+    """Кто принёс задачу — строкой для поля `author:`.
+
+    Три ступени, потому что у Bot API нет поля, которое есть всегда: ник ставят
+    не все, отображаемое имя тоже необязательно, номер остаётся последним
+    рубежом. Пустым автор не остаётся — «откуда пришла задача» такой же ответ,
+    как имя человека.
+
+    Ник пишется с «@»: так его отличают от ФИО исполнителя в общем списке
+    подсказок и так его копируют обратно в чат.
+    """
+    nick = str(message.get("username") or "").strip().lstrip("@")
+    if nick:
+        return f"@{nick}"
+    name = " ".join(str(message.get("sender_name") or "").split())
+    if name:
+        return name
+    sender_id = message.get("sender_id")
+    return str(sender_id) if sender_id is not None else ""
+
+
 def is_for_me(parsed: dict | None, cfg: dict) -> bool:
     """Тегнули ли в сообщении меня. Свой ник знает только человек."""
     me = _my_username(cfg)
@@ -250,6 +271,9 @@ def handle(message: dict, cfg: dict | None = None,
         "criteria": "",
         "task_type": "",
         "section": CHAT_SECTION,
+        # Автор — тот, кто бросил задачу в чат. Единственный путь заведения,
+        # где имя приходит само: доска и агент называют себя сами
+        "author": author_of(message),
     })
     if not result.get("ok"):
         reply(message["chat_id"],

@@ -729,6 +729,12 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                     шрифт и размер мета-строки прежние, отличается только цвет */}
                 <span>
                 статус: <span className={style.header}>{task.meta.status || '—'}</span> · создана: {task.meta.created || '—'}
+                {/* Автор — рядом с датой создания: оба отвечают на вопрос
+                    происхождения задачи. У заведённых до появления поля его
+                    нет — тогда молчим, а не показываем прочерк на пустом месте */}
+                {task.meta.author && task.meta.author !== '~' && (
+                  <> · автор: <span className="text-zinc-300">{task.meta.author}</span></>
+                )}
                 </span>
               </div>
             )}

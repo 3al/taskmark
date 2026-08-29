@@ -306,5 +306,66 @@ class HandleTest(unittest.TestCase):
         self.assertNotEqual(first, self.argv())
 
 
+class AuthorFromChatTest(HandleTest):
+    """Автором задачи становится тот, кто бросил её в чат (TASK-220).
+
+    Имя берётся из сообщения, а не выдумывается: ник, а если его нет —
+    отображаемое имя, а если и его нет — числовой идентификатор. Пустым автор
+    не остаётся: «откуда пришла задача» — такой же ответ, как имя человека.
+    """
+
+    def author_of(self, **sender) -> str:
+        msg = {**message("#задача Сделать X @kostya"), **sender}
+        self.handle(msg)
+        argv = self.argv()
+        self.assertIn("--author", argv, "автор не передан скрипту создания")
+        return argv[argv.index("--author") + 1]
+
+    def test_автором_становится_ник_отправителя(self):
+        self.assertEqual("@author", self.author_of(username="author"))
+
+    def test_без_ника_берётся_отображаемое_имя(self):
+        """Ник в телеграме есть не у всех, а имя показывают всем."""
+        self.assertEqual("Иван Иванов",
+                         self.author_of(username="", sender_name="Иван Иванов"))
+
+    def test_без_ника_и_имени_остаётся_номер(self):
+        """Последний рубеж: по номеру человека хотя бы отличают от другого."""
+        self.assertEqual("77", self.author_of(username="", sender_name="",
+                                              sender_id=77))
+
+    def test_ник_приходит_с_собачкой_один_раз(self):
+        """Bot API отдаёт ник без «@» — приписываем ровно одну."""
+        self.assertEqual("@author", self.author_of(username="@author"))
+
+
+class SenderFieldsTest(unittest.TestCase):
+    """Слой источника отдаёт наверх всё, из чего складывается автор."""
+
+    def raw(self, **sender) -> dict:
+        return {"update_id": 1,
+                "message": {"message_id": 2, "chat": {"id": -100, "title": "Ч"},
+                            "from": sender, "text": "привет"}}
+
+    def test_ник_имя_и_номер_доезжают(self):
+        msg = ts._message_of(self.raw(username="ivan", first_name="Иван",
+                                      last_name="Иванов", id=77))
+        self.assertEqual("ivan", msg["username"])
+        self.assertEqual("Иван Иванов", msg["sender_name"])
+        self.assertEqual(77, msg["sender_id"])
+
+    def test_только_имя_без_фамилии(self):
+        msg = ts._message_of(self.raw(first_name="Иван", id=77))
+        self.assertEqual("Иван", msg["sender_name"])
+
+    def test_отправителя_нет_вовсе(self):
+        """Сообщение из канала приходит без `from` — полям остаётся пустота."""
+        msg = ts._message_of(self.raw())
+        self.assertEqual("", msg["username"])
+        self.assertEqual("", msg["sender_name"])
+        self.assertIsNone(msg["sender_id"])
+
+
 if __name__ == "__main__":
+
     unittest.main()

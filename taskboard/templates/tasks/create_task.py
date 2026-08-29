@@ -20,6 +20,7 @@
   --type TYPE             Тип задачи: feature | bug | refactor | cleanup |
                           discussion | design (остаётся в поле `type` задачи
                           и рисует метку на доске; default: feature)
+  --author AUTHOR         Автор задачи: тот, кто её принёс
   --section SECTION       Подраздел Backlog. По умолчанию — рубрика типа
                           задачи: «Баги» для bug, «Обсуждения» для discussion
 """
@@ -390,6 +391,7 @@ def create_task(
     epic: str | None = None,
     task_type: str = DEFAULT_TASK_TYPE,
     section: str | None = None,
+    author: str | None = None,
 ) -> None:
     """Главная функция создания задачи."""
     print("\n=== Создание новой задачи ===\n")
@@ -433,6 +435,10 @@ def create_task(
 
     blocked_by_line = f"\nblocked_by: {blocked_by}" if blocked_by else ""
     epic_value = epic if epic else "~"
+    # Кто задачу принёс. Пустое значение — норма для задач, заведённых до
+    # появления поля; тот, кто зовёт скрипт, автора знает и называет сам:
+    # чат — ником отправителя, доска — собой, агент — своей моделью
+    author_value = " ".join((author or "").split()) or "~"
 
     tasks_dir = Path(__file__).parent
     cfg = load_config(tasks_dir)
@@ -445,7 +451,8 @@ epic: {epic_value}
 type: {task_type or "~"}
 size: ~
 status: {status_key}
-created: {created_date}{blocked_by_line}
+created: {created_date}
+author: {author_value}{blocked_by_line}
 ---"""
 
     # Структуру задаёт `_TEMPLATE.md` проекта; встроенная копия — запасной
@@ -526,6 +533,11 @@ created: {created_date}{blocked_by_line}
     print(f"  ID: TASK-{task_num:03d}")
     print(f"  Файл: tasks/{filename}")
     print(f"  Тип: {task_type or 'не указан'} | Секция: {section or intake_section}")
+    # Список известных авторов скрипт не пополняет: его ведёт инструмент, а
+    # скрипт автономен и о доме пользователя судить не должен — запущенный
+    # бэкендом, он писал бы конфиг мимо того, что бэкенд считает своим
+    if author_value != "~":
+        print(f"  Автор: {author_value}")
     if epic:
         print(f"  Эпик: {epic}")
     print(f"  Статус: {status_key}\n")
@@ -552,6 +564,11 @@ if __name__ == "__main__":
         default=None,
         help="Подраздел Backlog (по умолчанию — рубрика типа задачи)",
     )
+    parser.add_argument(
+        "--author",
+        default=None,
+        help="Автор задачи — тот, кто её принёс (ник из чата, «доска», модель)",
+    )
     args = parser.parse_args()
 
     try:
@@ -563,6 +580,7 @@ if __name__ == "__main__":
             epic=args.epic,
             task_type=args.task_type,
             section=args.section,
+            author=args.author,
         )
     except KeyboardInterrupt:
         print("\n[CANCEL] Отменено пользователем")

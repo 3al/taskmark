@@ -441,3 +441,22 @@ def add_assignee(name: str) -> list[str]:
         return known
     save_global_config({"assignees": [*known, name]})
     return assignees()
+
+
+# Авторы — второй такой список, и он **отдельный**. Смешать их в один нельзя:
+# исполнителя называет человек и пишет ФИО, автор приезжает из чата ником, и
+# общая подсказка предлагала бы «Иванов Иван Иванович» там, где ждут «@ivanov»
+
+def authors() -> list[str]:
+    """Известные авторы задач — общие для всех проектов машины."""
+    return [str(name) for name in (load_global_config().get("authors") or [])]
+
+
+def add_author(name: str) -> list[str]:
+    """Запомнить автора, если он новый. Вернуть полный список."""
+    name = (name or "").strip()
+    known = authors()
+    if not name or name in known:
+        return known
+    save_global_config({"authors": [*known, name]})
+    return authors()

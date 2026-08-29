@@ -7,13 +7,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+from backend.config import add_author
+
 
 def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
     """
     Вызвать create_task.py в не-интерактивном режиме.
 
     payload: title (обяз.), description, criteria, blocked_by, task_type,
-    epic (ключ эпика). Рубрику бэклога скрипт выводит из типа задачи.
+    epic (ключ эпика), author (кто принёс задачу). Рубрику бэклога скрипт
+    выводит из типа задачи.
     """
     script = tasks_dir / cfg.get("create_script", "create_task.py")
     if not script.is_file():
@@ -40,6 +43,11 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
     # чата ложится в свою рубрику, и она же служит сигналом «пришло, разбери»
     if payload.get("section"):
         args += ["--section", payload["section"]]
+    # Автор задачи — тот, кто её принёс. Ключ передают все три пути
+    # заведения, и пустым он приходит только у задач, заведённых до появления
+    # поля: подставлять что-то за вызывающего здесь нечем
+    if payload.get("author"):
+        args += ["--author", payload["author"]]
     if payload.get("task_type"):
         args += ["--type", payload["task_type"]]
     elif "task_type" in payload:
@@ -60,6 +68,12 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
 
     if result.returncode != 0:
         return {"ok": False, "error": (result.stderr or result.stdout).strip()}
+
+    # Имя автора запоминается **после** записи в файл, а не до: список
+    # подсказок не должен пополняться тем, что до задачи не доехало. Порядок
+    # тот же, что у исполнителя и у реестра эпиков
+    if payload.get("author"):
+        add_author(payload["author"])
 
     # Извлечь id созданной задачи из вывода ("ID: TASK-NNN")
     m = re.search(r"ID:\s*(TASK-\d+)", result.stdout)

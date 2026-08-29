@@ -47,7 +47,7 @@ from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            stall_details, stalled_tasks)
 from backend.statuses import CATALOG, accepts_assignee, load_pipeline
 from backend.tasks_delete import delete_plan, delete_task
-from backend.notes import append_note
+from backend.notes import BOARD_AUTHOR, append_note
 from backend.task_parser import (EDITABLE_SECTIONS, annotate_marks,
                                  find_task_file, list_all_tasks, parse_task,
                                  set_task_assignee, set_task_section,
@@ -802,7 +802,11 @@ def api_create_task(body: TaskIn) -> dict:
     if body.epic.strip():
         register_epic(tasks_dir, body.epic, body.epic_name)
 
-    result = create_task(tasks_dir, cfg, body.model_dump())
+    # Автор задачи, заведённой из окна: сама доска. Полем формы это не
+    # спрашивают — человек, сидящий за доской, и есть «доска», а имени его
+    # инструмент не знает. Из чата приезжает ник, у агента — имя его модели
+    result = create_task(tasks_dir, cfg, {**body.model_dump(),
+                                          "author": BOARD_AUTHOR})
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Ошибка создания задачи"))
 

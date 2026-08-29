@@ -149,6 +149,11 @@ def _message_of(raw: dict) -> dict | None:
         return None
     chat = message.get("chat") or {}
     sender = message.get("from") or {}
+    # Отправитель едет тремя полями, а не одним готовым именем: кем из них
+    # назвать автора задачи — решение верхнего слоя, а не источника. Ник есть
+    # не у всех, отображаемое имя тоже не обязательно, номер есть всегда
+    name = " ".join(part for part in (sender.get("first_name"),
+                                      sender.get("last_name")) if part)
     return {
         "update_id": raw.get("update_id"),
         "message_id": message.get("message_id"),
@@ -156,6 +161,8 @@ def _message_of(raw: dict) -> dict | None:
         "chat_title": chat.get("title") or chat.get("username") or "",
         "text": text,
         "username": sender.get("username") or "",
+        "sender_name": name,
+        "sender_id": sender.get("id"),
     }
 
 

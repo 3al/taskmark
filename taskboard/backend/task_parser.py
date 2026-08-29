@@ -6,8 +6,8 @@ import re
 from pathlib import Path
 
 from backend.config import TASK_SIZES, TASK_TYPES, card_style
-from backend.notes import (ASSIGNEE_TEXT, BOARD_AUTHOR, SIZE_TEXT, TITLE_TEXT,
-                           TYPE_TEXT, append_note)
+from backend.notes import (ASSIGNEE_TEXT, AUTHOR_TEXT, BOARD_AUTHOR, SIZE_TEXT,
+                           TITLE_TEXT, TYPE_TEXT, append_note)
 from backend.statuses import is_terminal
 
 _TASK_FILE_RE = re.compile(r"^TASK-\d+.*\.md$")
@@ -438,6 +438,36 @@ def slugify(text: str) -> str:
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_]+", "-", text)
     return text
+
+
+def set_task_author(tasks_dir: Path, task_id: str, value: str,
+                    by: str = BOARD_AUTHOR) -> dict:
+    """Записать автора задачи — того, кто её принёс, — или снять (`author: ~`).
+
+    Список авторов открытый, как у исполнителя: людей поставка не знает. Но
+    списки **разные** — автор приезжает ником из чата, исполнителя называет
+    человек (`config.authors` против `config.assignees`).
+
+    В отличие от исполнителя, этап здесь ни при чём: автор — свойство задачи,
+    а не момента маршрута, и пишется он на любом статусе.
+
+    Подписант события зовётся `by`, а не `author`: у соседних функций так
+    называется тот, **кто правит**, и рядом с полем «автор задачи» два разных
+    смысла одного слова читались бы как один.
+    """
+    value = " ".join((value or "").split())
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    was = str(meta.get("author", "") or "").strip()
+    was = "" if was == "~" else was
+    if not set_meta_fields(path, {"author": value or "~"}):
+        return {"ok": False, "error": f"Не удалось записать автора в {path.name}"}
+    if value != was:
+        append_note(path, AUTHOR_TEXT.format(now=value or "не указан",
+                                             was=was or "не указан"), by)
+    return {"ok": True, "author": value}
 
 
 def normalize_title(text: str) -> str:

@@ -6,6 +6,7 @@ type: feature
 size: ~
 status: backlog
 created: YYYY-MM-DD HH:MM
+author: ~
 blocked_by: ~
 blocks: ~
 paused: ~
