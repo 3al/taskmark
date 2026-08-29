@@ -47,6 +47,17 @@ class MomentSkillTest(Project):
         self.make("TASK-003", status="testing", section="## Testing")
         self.assertIn("fix-task", self.skill("TASK-003", "development"))
 
+    def test_entering_queue_names_no_skill(self) -> None:
+        """Постановка в очередь — приоритизация: своего скилла у неё нет."""
+        self.make("TASK-010", status="backlog", section="## Backlog")
+        self.assertFalse(self.skill("TASK-010", "todo"))
+
+    def test_queue_from_unknown_origin_is_silent(self) -> None:
+        """Исходный статус вне маршрута очередь финализацией тоже не делает."""
+        pipeline = self.mod.pipeline_of(self.CFG)
+        pick = self.mod.actions_of(self.CFG, pipeline)["pick"]
+        self.assertFalse(self.mod.moment_skill(self.CFG, pipeline, None, pick))
+
     def test_other_forward_move_names_finalize(self) -> None:
         """Продвижение по маршруту вне рабочего статуса — финализация."""
         self.make("TASK-004", status="testing", section="## Testing")
@@ -117,6 +128,33 @@ class MomentSkillNamesTest(Project):
         result = self.move("TASK-001", "coding")
         self.assertTrue(result.get("ok"), result.get("error"))
         self.assertIn("start-task", result.get("moment_skill", ""))
+
+
+class MomentSkillLateQueueTest(Project):
+    """Очередь не обязана быть вторым статусом маршрута."""
+
+    CFG = {**RELEASE_CFG,
+           "pipeline": ["inbox", "triage", "queue", "coding", "check",
+                        "shipped", "cancelled"],
+           "actions": {"create": "inbox", "pick": "queue", "start": "coding",
+                       "return": "coding"}}
+
+    def skill(self, task_id: str, status: str) -> str:
+        result = self.move(task_id, status)
+        self.assertTrue(result.get("ok"), result.get("error"))
+        return result.get("moment_skill", "")
+
+    def test_queue_is_silent_from_any_earlier_stage(self) -> None:
+        """Вход в очередь молчит и через голову промежуточного этапа."""
+        self.make("TASK-001", status="inbox", section="## Inbox")
+        self.assertFalse(self.skill("TASK-001", "queue"))
+        self.make("TASK-002", status="triage", section="## Triage")
+        self.assertFalse(self.skill("TASK-002", "queue"))
+
+    def test_other_forward_move_still_names_finalize(self) -> None:
+        """Молчит именно очередь: соседний шаг вперёд ведёт финализация."""
+        self.make("TASK-003", status="inbox", section="## Inbox")
+        self.assertIn("finalize-task", self.skill("TASK-003", "triage"))
 
 
 if __name__ == "__main__":

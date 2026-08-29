@@ -2468,13 +2468,15 @@ def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
     — проверить это скрипт не может, а молчать «на всякий случай» значит молчать
     ровно там, где нужнее.
 
-    Момент, у которого своего скилла нет (возврат мимо рабочего статуса),
-    остаётся без имени: назвать не тот скилл хуже, чем не назвать никакого.
+    Момент, у которого своего скилла нет (возврат мимо рабочего статуса,
+    постановка в очередь), остаётся без имени: назвать не тот скилл хуже, чем
+    не назвать никакого.
     """
     keys = [s["key"] for s in pipeline]
     if target not in keys:
         return ""
-    work = actions_of(cfg, pipeline).get("start")
+    actions = actions_of(cfg, pipeline)
+    work = actions.get("start")
     here = keys.index(target)
     there = keys.index(from_status) if from_status in keys else None
     offramp = bool(pipeline[here].get("offramp"))
@@ -2487,8 +2489,15 @@ def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
     if _in_release_tail(cfg, pipeline, target):
         # За концом работы задачу ведёт уже выпуск, и финализировать там нечего
         return RELEASE_SKILL
-    if offramp or there is None or here > there:
+    if offramp:
         # Съезд ведёт та же финализация: причину отмены спрашивает она
+        return FINALIZE_SKILL
+    if target == actions.get("pick"):
+        # Постановка в очередь — приоритизация, а не продвижение задачи: работы
+        # за ней не стоит и финализировать нечего. Момент идёт до всякого скилла
+        # и своего не имеет, поэтому здесь молчим, откуда бы в очередь ни пришли
+        return ""
+    if there is None or here > there:
         return FINALIZE_SKILL
     return ""
 

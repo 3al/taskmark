@@ -90,6 +90,17 @@ class GateTest(Project):
 
         self.assertEqual(0, done.returncode, done.stderr)
 
+    def test_queue_placement_is_not_gated(self) -> None:
+        """Постановка в очередь — тоже момент без скилла: приоритизация."""
+        path = self.make("TASK-008", status="backlog", section="## Backlog")
+
+        done = self.cli("TASK-008", "todo", "--agent", "Тест")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("status: todo", text)
+        self.assertNotIn("вручную", text)
+
     def test_no_deployed_skill_no_gate(self) -> None:
         """Скилл удалён из проекта — требовать его вызова не с чего."""
         self.skill_path("handoff-task").unlink()
