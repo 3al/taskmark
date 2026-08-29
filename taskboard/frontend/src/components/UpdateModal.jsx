@@ -61,6 +61,22 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
     api.updateStatus().then(setStatus).catch((e) => setError(e.message))
   }, [])
 
+  // Настроены ли требования этапов в этом проекте. От этого зависит только
+  // обучающая кнопка ниже: тому, у кого они есть, рассказывать про механизм
+  // незачем. `null` — ещё не знаем; кнопку в этот момент не рисуем, иначе она
+  // появлялась бы и исчезала на глазах
+  const [stagesTuned, setStagesTuned] = useState(null)
+
+  useEffect(() => {
+    api.getConfig()
+      .then((cfg) => {
+        const declared = cfg?.requires || {}
+        setStagesTuned(Object.values(declared).some((list) => (list || []).length > 0))
+      })
+      // Не смогли узнать — ведём себя как раньше и подсказку показываем
+      .catch(() => setStagesTuned(false))
+  }, [])
+
   // Готовность к обновлению спрашиваем, только когда есть что ставить:
   // проверка трогает git, и делать её просто так незачем
   useEffect(() => {
@@ -235,13 +251,19 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
                   а возможность, о которой надо догадаться, для большинства не
                   существует. Плашка уже показывается один раз и сама себя гасит,
                   поэтому нового места здесь не заводится — только путь отсюда
-                  туда, где настраивают */}
+                  туда, где настраивают.
+
+                  Кнопка обучающая, и **тому, кто уже настроил требования, она
+                  не нужна**: плашка приходит с каждым обновлением, а обновления
+                  идут пачками — подсказка превращалась в шум у того, кто её
+                  давно прочитал. Отдельной отметки «показали» для этого не
+                  нужно: ответ выводится из непустого `requires` */}
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className={btn} onClick={dismissResult}>Понятно</button>
                 {/* Заливкой, а не рамкой: рядом с «Понятно» одинаковая кнопка
                     читается вторым способом закрыть плашку, а это единственное
                     место, откуда про механизм вообще узнают */}
-                {result.ok && onOpenSettings && (
+                {result.ok && onOpenSettings && stagesTuned === false && (
                   <button
                     className="px-3 py-1.5 rounded-lg text-sm border border-sky-700/70
                       bg-sky-950/40 text-sky-200 hover:bg-sky-900/50 hover:text-sky-100
