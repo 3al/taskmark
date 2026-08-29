@@ -425,6 +425,53 @@ class BacklogSectionsTest(ProjectCase):
         self.assertIn("TASK-", board)
 
 
+    def flatten_backlog(self, *entries: str) -> Path:
+        """Раздел приёма без единой рубрики — как на доске, развёрнутой до типов."""
+        board_path = self.tasks_dir / "board.md"
+        board = board_path.read_text(encoding="utf-8")
+        head = board.index("## Backlog")
+        tail = head + board[head:].index("\n## ")
+        body = "".join(f"- {entry}\n" for entry in entries) or "_(нет)_\n"
+        board_path.write_text(board[:head] + "## Backlog\n\n" + body + board[tail:],
+                              encoding="utf-8")
+        return board_path
+
+    def test_source_rubric_created_on_flat_board(self) -> None:
+        """Рубрика источника заводится и там, где подразделов нет вовсе.
+
+        Отказ наводить рубрики написан про рубрику **типа**: плоский бэклог —
+        выбор человека. У явной рубрики смысл обратный: её задача — попасться
+        на глаза, и без неё задача из чата теряется в конце раздела приёма.
+        """
+        board_path = self.flatten_backlog(
+            "TASK-900 · [Своя](TASK-900.md) · Человек · 2026-08-01")
+
+        result = self.create("--type", "", "--section", "Из Telegram")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        board = board_path.read_text(encoding="utf-8")
+        self.assertIn("### Из Telegram", board, "рубрика источника не заведена")
+        own = board[board.index("### Из Telegram"):]
+        own = own[:own.index("\n## ")] if "\n## " in own else own
+        self.assertIn("Проверка типа", own, "задача легла мимо своей рубрики")
+
+    def test_flat_board_entries_stay_outside_the_new_rubric(self) -> None:
+        """Прежние записи остаются без рубрики — над ней, а не внутри.
+
+        Заголовок забирает себе всё, что стоит под ним: рубрика источника,
+        заведённая сверху, задним числом объявила бы чужие задачи пришедшими
+        из чата.
+        """
+        board_path = self.flatten_backlog(
+            "TASK-900 · [Своя](TASK-900.md) · Человек · 2026-08-01")
+
+        self.create("--type", "", "--section", "Из Telegram")
+
+        board = board_path.read_text(encoding="utf-8")
+        self.assertLess(board.index("TASK-900"), board.index("### Из Telegram"),
+                        "прежняя запись въехала в рубрику источника")
+
+
 class BacklogSectionFieldGoneTest(unittest.TestCase):
     """Раздел определяется типом, поэтому отдельного поля в форме нет (TASK-124)."""
 
