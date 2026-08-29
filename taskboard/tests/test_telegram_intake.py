@@ -366,6 +366,59 @@ class SenderFieldsTest(unittest.TestCase):
         self.assertIsNone(msg["sender_id"])
 
 
+class ManyMentionsTest(HandleTest):
+    """Задача заводится на одного: двое тегнутых — отказ, а не две задачи.
+
+    Отвечают **все тегнутые**: бот у каждого свой, и каждый разбирает сообщение
+    сам. Две одинаковых жалобы в чате — допустимая цена: так виднее, что
+    сообщение не сработало ни у кого.
+    """
+
+    def created(self) -> bool:
+        return (self.tasks / "argv.json").is_file()
+
+    def test_двое_тегнутых_задачу_не_создают(self):
+        result = self.handle(message("#задача Сделать X @kostya @ivan"))
+        self.assertFalse(result["ok"], result)
+        self.assertFalse(self.created(), "задача создана, хотя тегнуты двое")
+
+    def test_двое_тегнутых_получают_ответ(self):
+        self.handle(message("#задача Сделать X @kostya @ivan"))
+        self.assertEqual(1, len(self.sent), "ответа в чат нет")
+        self.assertIn("одного", self.sent[0][1])
+
+    def test_ответ_привязан_к_исходному_сообщению(self):
+        """Реплаем, как и остальные ответы: в живом чате иначе не найти повод."""
+        self.handle(message("#задача Сделать X @kostya @ivan", message_id=17))
+        self.assertEqual(17, self.sent[0][2])
+
+    def test_тегнули_двоих_без_меня_молчим(self):
+        """Чужой тег не мой повод: жалуются те, кого тегнули."""
+        result = self.handle(message("#задача Сделать X @ivan @petya"))
+        self.assertFalse(result["ok"])
+        self.assertEqual([], self.sent, "ответ ушёл на чужое сообщение")
+        self.assertFalse(self.created())
+
+    def test_трое_тегнутых_тоже_отказ(self):
+        self.handle(message("#задача Сделать X @kostya @ivan @petya"))
+        self.assertFalse(self.created())
+        self.assertEqual(1, len(self.sent))
+
+    def test_один_тегнутый_работает_как_прежде(self):
+        result = self.handle(message("#задача Сделать X @kostya"))
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(self.created())
+
+    def test_повтор_того_же_сообщения_снова_отвечает_отказом(self):
+        """Задачи нет — значит и помнить нечего: отказ повторяется."""
+        msg = message("#задача Сделать X @kostya @ivan")
+        self.handle(msg)
+        self.handle(msg)
+        self.assertEqual(2, len(self.sent))
+        self.assertFalse(self.created())
+
+
 if __name__ == "__main__":
+
 
     unittest.main()
