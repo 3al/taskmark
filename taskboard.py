@@ -401,6 +401,62 @@ def dev_supervisor(args, tasks_dir: Path) -> None:
         proc.terminate()
 
 
+def log_file(port: int) -> Path:
+    return UPDATE_DIR / f"server_{port}.log"
+
+
+def ensure_log_stream(port: int) -> None:
+    """Дать процессу без консоли, куда писать.
+
+    Автозапуск идёт через `pythonw`, у которого нет ни stdout, ни stderr:
+    `sys.stdout` равен `None`. Свои сообщения лаунчер при этом просто теряет,
+    но хуже другое — `uvicorn.run` на старте падает, его конфиг логирования
+    ссылается на `ext://sys.stdout`, и `dictConfig` на `None` бросает
+    `ValueError`. Без файла сервер при входе в систему не поднимался вовсе, и
+    узнать об этом было неоткуда: сообщать не через что (TASK-233).
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+        path = log_file(port)
+        # Лог пишется всю жизнь машины — подрезаем, чтобы не рос без края
+        if path.exists() and path.stat().st_size > 1_000_000:
+            path.unlink()
+        stream = path.open("a", encoding="utf-8", buffering=1)
+    except OSError:
+        return  # писать некуда — молча, иначе некуда и жаловаться
+    sys.stdout = sys.stderr = stream
+    log(f"--- запуск без консоли ({time.strftime('%Y-%m-%d %H:%M:%S')}) ---")
+
+
+def resolve_tasks_dir(explicit: str | None, cwd: Path) -> tuple[Path, str]:
+    """Папка задач и причина, по которой её нельзя брать активным проектом.
+
+    Причина пустая — можно. `missing` — папки нет. `not_project` — папка есть,
+    но нашего в ней ничего: ни доски, ни конфига проекта.
+
+    **Рабочая папка — догадка, а не поручение.** Папка с именем `tasks`
+    встречается где угодно, и одна из них — `C:\\Windows\\System32\\Tasks`,
+    хранилище планировщика заданий: запись автозагрузки не задавала рабочую
+    папку, Проводник запускал лаунчер из `System32`, и инструмент заводил себе
+    активный проект в системной папке Windows (TASK-233).
+
+    **Явный `--tasks-dir` не проверяется**: путь назвал человек, и развернуть
+    структуру в пустую папку он вправе.
+    """
+    path = (Path(explicit) if explicit else cwd / "tasks").resolve()
+    if not path.is_dir():
+        return path, "missing"
+    if explicit:
+        return path, ""
+
+    sys.path.insert(0, str(TOOL_DIR))
+    from backend.fs_browse import looks_like_project
+
+    return path, "" if looks_like_project(path) else "not_project"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Taskboard — фронтенд для tasks/")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -417,6 +473,10 @@ def main() -> None:
     parser.add_argument("--apply-update", action="store_true",
                         help="Служебный (обновление из UI): применить обновление и стартовать")
     args = parser.parse_args()
+
+    # Первым делом: без этого запуск без консоли (автозапуск через pythonw)
+    # не сможет ни сказать о себе, ни поднять uvicorn
+    ensure_log_stream(args.port)
 
     ensure_python()
     ensure_deps(args.yes)
@@ -440,10 +500,12 @@ def main() -> None:
 
     ensure_frontend(args.yes)
 
-    tasks_dir = Path(args.tasks_dir) if args.tasks_dir else Path.cwd() / "tasks"
-    tasks_dir = tasks_dir.resolve()
-    if not tasks_dir.is_dir():
+    tasks_dir, refusal = resolve_tasks_dir(args.tasks_dir, Path.cwd())
+    if refusal == "missing":
         log(f"ВНИМАНИЕ: папка задач не найдена: {tasks_dir}")
+    elif refusal == "not_project":
+        log(f"ВНИМАНИЕ: это не проект Taskmark — в папке задач нет доски: {tasks_dir}")
+    if refusal:
         log("Сервер стартует без активного проекта — зарегистрируйте проект в UI.")
 
     # Если сервер уже жив — регистрируем проект в нём и выходим
@@ -467,7 +529,7 @@ def main() -> None:
             log(f"  текущая копия: {ROOT}")
             log("Запросы пойдут СТАРОМУ коду! Остановите его: UI → Настройки → "
                 "«Остановить», или: lsof -ti:8765 | xargs kill")
-        if tasks_dir.is_dir() and register_in_running(args.port, tasks_dir):
+        if not refusal and register_in_running(args.port, tasks_dir):
             log(f"Проект активирован: {tasks_dir}")
         if not args.no_browser:
             webbrowser.open(f"http://127.0.0.1:{args.port}")
@@ -486,7 +548,7 @@ def main() -> None:
     # Порт нужен backend/lifecycle.py для перезапуска из UI
     os.environ["TASKBOARD_PORT"] = str(args.port)
 
-    if tasks_dir.is_dir():
+    if not refusal:
         proj = registry.register_project(tasks_dir, activate=True)
         log(f"Активный проект: {proj['name']} ({tasks_dir})")
 

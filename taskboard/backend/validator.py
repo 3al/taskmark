@@ -8,6 +8,7 @@ from pathlib import Path
 from backend.board_parser import parse_board
 from backend.board_repair import _section_for_status, row_matches_file, task_files
 from backend.config import is_lost_section
+from backend.fs_browse import readable
 from backend.scaffold import (detect_harnesses, environment_issues, harness_choice,
                               script_capabilities)
 from backend.requirements import (declaration_issues, exception_gaps_message,
@@ -95,6 +96,14 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
         report = _report(critical, degraded, warnings, features)
         # Отдельный маркер: структуры нет совсем — UI предложит scaffold
         report["structure"] = "missing"
+        return report
+
+    if not readable(tasks_dir):
+        critical.append(f"Нет доступа к папке задач: {tasks_dir}")
+        report = _report(critical, degraded, warnings, features)
+        # Отдельный маркер: разворачивать структуру сюда нельзя — это не наша
+        # папка. UI предложит убрать проект, а не создавать в нём файлы
+        report["structure"] = "unreadable"
         return report
 
     board_path = tasks_dir / board_file

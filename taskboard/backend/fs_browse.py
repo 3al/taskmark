@@ -51,19 +51,38 @@ def _is_hidden(item) -> bool:
     return bool(attrs & (_HIDDEN | _SYSTEM))
 
 
-def _is_project(path: Path) -> bool:
+def readable(path: Path) -> bool:
+    """Пускают ли нас внутрь папки.
+
+    `is_dir()` на закрытой папке говорит «да», и дальше всё разваливается по
+    очереди: доски не видно, наблюдатель получает отказ. Спросить прямо — один
+    вызов, и случай перестаёт притворяться пустым проектом.
+    """
+    try:
+        with os.scandir(path):
+            return True
+    except OSError:
+        return False
+
+
+def looks_like_project(tasks_dir: Path) -> bool:
     """Проект — это доска внутри папки задач, а не сама папка `tasks`.
 
     Папка с таким именем встречается где угодно: домен волта, каталог исходников,
-    чужой репозиторий. Метка на них — ложное обещание, и человек открывает их
-    наугад ровно так же, как остальные. Доска или конфиг проекта врут гораздо
-    реже: их кладёт сюда сам инструмент.
+    чужой репозиторий, хранилище планировщика заданий Windows. Метка на них —
+    ложное обещание. Доска или конфиг проекта врут гораздо реже: их кладёт сюда
+    сам инструмент.
     """
-    tasks = path / TASKS_DIR_NAME
     try:
-        return (tasks / BOARD_FILE).is_file() or (tasks / PROJECT_CONFIG).is_file()
+        return ((tasks_dir / BOARD_FILE).is_file()
+                or (tasks_dir / PROJECT_CONFIG).is_file())
     except OSError:
         return False
+
+
+def _is_project(path: Path) -> bool:
+    """То же про корень проекта: обзор папок показывает метку именно на нём."""
+    return looks_like_project(path / TASKS_DIR_NAME)
 
 
 def browse_dir(path: str | None) -> dict:

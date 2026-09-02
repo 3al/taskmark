@@ -10,6 +10,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from backend.fs_browse import readable
 from backend.scaffold import RULES_FILES, agentic_paths
 
 
@@ -53,11 +54,21 @@ class TasksWatcher:
         self.stop()
 
     def watch(self, path: Path) -> None:
-        """Перенавесить наблюдение на новую папку."""
+        """Перенавесить наблюдение на новую папку.
+
+        **Не бросает.** Живые обновления — вспомогательная функция: доска
+        работает и без них, по F5. Отказ наблюдения ронял сервер целиком —
+        вызов стоит в обработчике старта, и `PermissionError` на нечитаемой
+        папке уводил uvicorn из жизни ещё до первого запроса (TASK-233).
+        """
         with self._watch_lock:
             self._watched = path
             self._watching = path.is_dir()
-            self._start_observer()
+            try:
+                self._start_observer()
+            except Exception as exc:
+                print(f"[taskboard] watcher: наблюдение не поднято ({path}): {exc}",
+                      flush=True)
         self._ensure_monitor()
 
     def stop(self) -> None:
@@ -104,10 +115,27 @@ class TasksWatcher:
             return False
 
         fresh = Observer()
+        taken = 0
         for path, recursive, only in dict.fromkeys((str(p), rec, names)
                                                    for p, rec, names in paths):
-            fresh.schedule(_Handler(self._on_change, set(only) if only else None, path),
-                           path, recursive=recursive)
+            # Нечитаемый путь отсеиваем ДО подъёма наблюдателя. На Windows
+            # обработчик папки открывается не в `schedule`, а в потоке эмиттера
+            # при `start()` — отказ там валит подъём целиком, вместе с путями,
+            # которые читаются прекрасно
+            if not readable(Path(path)):
+                print(f"[taskboard] watcher: путь без наблюдения ({path}): нет доступа",
+                      flush=True)
+                continue
+            try:
+                fresh.schedule(_Handler(self._on_change, set(only) if only else None, path),
+                               path, recursive=recursive)
+            except OSError as exc:
+                print(f"[taskboard] watcher: путь без наблюдения ({path}): {exc}",
+                      flush=True)
+                continue
+            taken += 1
+        if not taken:
+            return False
         fresh.daemon = True
         fresh.start()
         self._observer = fresh

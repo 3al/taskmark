@@ -69,20 +69,56 @@ def _python(root: Path) -> Path:
 
 
 def _script(root: Path) -> str:
+    """Текст записи. Эталон: по нему же устаревшая запись узнаётся и чинится.
+
+    **Рабочую папку задаём сами.** Элементы автозагрузки Проводник запускает из
+    `C:\\Windows\\System32`, а лаунчер выводит проект из рабочей папки — и там
+    существует `Tasks`, хранилище планировщика заданий. Без `cd` инструмент
+    заводил себе проект в системной папке Windows, делал его активным и падал
+    на следующем запуске (TASK-233).
+
+    `--yes` обязателен: при входе в систему отвечать на вопросы установки
+    некому, а спросить не через что — консоли у процесса нет.
+    """
     text = (
         "@echo off\r\n"
         "rem Запуск taskboard при входе в систему. Управляется из настроек\r\n"
-        f'start "" "{_python(root)}" "{root / "taskboard.py"}" --no-browser\r\n'
+        f'cd /d "{root}"\r\n'
+        f'start "" "{_python(root)}" "{root / "taskboard.py"}" --no-browser --yes\r\n'
     )
     return text
 
 
+def _entry_text() -> str:
+    """Текст записи; нечитаемая запись — пустая строка.
+
+    Кодировку файла в папке автозагрузки мы не контролируем: его мог положить
+    кто угодно. `UnicodeDecodeError` — не `OSError`, и без этой ветки он ушёл бы
+    наружу, в обработчик старта сервера.
+
+    Переносы читаются как есть (`newline=""`): иначе `\\r\\n` файла превращается
+    в `\\n`, и запись никогда не совпадёт с эталоном — самопочинка переписывала
+    бы её при каждом старте.
+    """
+    try:
+        return entry_path().read_text(encoding="utf-8", newline="")
+    except (OSError, ValueError):
+        return ""
+
+
+def _write_entry(text: str) -> None:
+    """Записать `.cmd` ровно тем текстом, что дали.
+
+    `newline=""` обязателен: переносы в скрипте уже `\\r\\n`, и без этого
+    `write_text` добавляет к ним свой — файл получает `\\r\\r\\n` и перестаёт
+    совпадать с эталоном, по которому узнаётся устаревшая запись.
+    """
+    entry_path().write_text(text, encoding="utf-8", newline="")
+
+
 def _entry_points_here(root: Path) -> bool:
     """Ведёт ли существующая запись в эту копию Taskmark."""
-    try:
-        return str(root / "taskboard.py") in entry_path().read_text(encoding="utf-8")
-    except OSError:
-        return False
+    return str(root / "taskboard.py") in _entry_text()
 
 
 def status(root: Path) -> dict:
@@ -106,10 +142,37 @@ def enable(root: Path) -> dict:
         return {"ok": False, "error": hint() or "Автозапуск кнопкой на этой системе не заводится"}
     try:
         startup_dir().mkdir(parents=True, exist_ok=True)
-        entry_path().write_text(_script(root), encoding="utf-8")
+        _write_entry(_script(root))
     except OSError as exc:
         return {"ok": False, "error": f"Не удалось записать автозапуск: {exc}"}
     return {"ok": True, **status(root)}
+
+
+def refresh_if_outdated(root: Path) -> bool:
+    """Привести запись этой копии к эталону. Вызывается при старте сервера.
+
+    Прежние версии писали запись без рабочей папки, и она ведёт в правильную
+    копию — то есть `stale` считает её нормальной, а при каждом входе в систему
+    она заново заводит проект в системной папке Windows. Такая запись чинится
+    сама: своё же поручение, приведённое к своей же форме, — не то решение,
+    ради которого будят человека.
+
+    **Запись, ведущая в другую копию, не трогается**: там перезапись меняет
+    смысл, а не форму, и об этом спрашивают предупреждением `stale`. Отсутствие
+    записи — тоже не случай для починки: автозапуск включает человек.
+
+    Возвращает True, если запись переписана.
+    """
+    if not supported() or not entry_path().is_file() or not _entry_points_here(root):
+        return False
+    fresh = _script(root)
+    if _entry_text() == fresh:
+        return False
+    try:
+        _write_entry(fresh)
+    except OSError:
+        return False
+    return True
 
 
 def disable() -> dict:

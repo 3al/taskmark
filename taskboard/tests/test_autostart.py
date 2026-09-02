@@ -51,6 +51,23 @@ class EnableTest(Base):
         self.assertIn("taskboard.py", text)
         self.assertIn("--no-browser", text)
 
+    def test_запись_ничего_не_спрашивает(self):
+        """При входе в систему отвечать на вопросы установки некому,
+        да и спросить не через что: консоли у процесса нет."""
+        autostart.enable(ROOT)
+        self.assertIn("--yes", self.entry().read_text(encoding="utf-8"))
+
+    def test_запись_задаёт_рабочую_папку(self):
+        """Иначе проект выводится из рабочей папки Проводника.
+
+        Элементы автозагрузки запускаются из `C:\\Windows\\System32`, где есть
+        папка `Tasks`: лаунчер принимал её за проект и делал активной (TASK-233).
+        """
+        autostart.enable(ROOT)
+        text = self.entry().read_text(encoding="utf-8")
+        self.assertIn(f'cd /d "{ROOT}"', text,
+                      "запуск зависит от того, откуда его дёрнули")
+
     def test_повторное_включение_не_плодит_вторую_запись(self):
         autostart.enable(ROOT)
         autostart.enable(ROOT)
@@ -96,6 +113,55 @@ class StatusTest(Base):
     def test_состояние_называет_путь_записи(self):
         state = autostart.status(ROOT)
         self.assertIn(autostart.ENTRY_NAME, state["path"])
+
+
+class RefreshTest(Base):
+    """Самопочинка записи: у тех, кто включил автозапуск раньше, в папке
+    автозагрузки лежит старый текст. Он ведёт в правильную копию, поэтому
+    `stale` его нормальным и считает, — и поломка повторяется при каждом входе
+    в систему, пока запись не переписана (TASK-233)."""
+
+    def outdated(self, root: Path = ROOT) -> None:
+        """Запись, какой её писала прежняя версия: без рабочей папки."""
+        self.startup.mkdir(parents=True, exist_ok=True)
+        crlf = chr(13) + chr(10)
+        launcher = root / "taskboard.py"
+        self.entry().write_text(
+            '@echo off' + crlf
+            + f'start "" "pythonw" "{launcher}" --no-browser' + crlf,
+            encoding="utf-8", newline="")
+
+    def test_устаревшая_запись_переписывается(self):
+        self.outdated()
+        self.assertTrue(autostart.refresh_if_outdated(ROOT))
+        self.assertEqual(self.entry().read_text(encoding="utf-8", newline=""),
+                         autostart._script(ROOT))
+
+    def test_актуальная_запись_не_трогается(self):
+        autostart.enable(ROOT)
+        self.assertFalse(autostart.refresh_if_outdated(ROOT))
+
+    def test_записи_нет_и_она_не_заводится(self):
+        """Автозапуск включает человек. Молча прописать его — не починка."""
+        self.assertFalse(autostart.refresh_if_outdated(ROOT))
+        self.assertFalse(self.entry().exists())
+
+    def test_запись_другой_копии_не_трогается(self):
+        """Тут перезапись меняет смысл, а не форму: об этом спрашивают
+        человека — предупреждением `stale` с кнопкой."""
+        other = Path(self.tmp.name) / "другая-копия"
+        self.outdated(other)
+        before = self.entry().read_text(encoding="utf-8")
+        self.assertFalse(autostart.refresh_if_outdated(ROOT))
+        self.assertEqual(self.entry().read_text(encoding="utf-8"), before)
+        self.assertTrue(autostart.status(ROOT)["stale"])
+
+    def test_нечитаемая_запись_не_роняет_старт(self):
+        """Файл в чужой кодировке — не повод не запуститься."""
+        self.startup.mkdir(parents=True, exist_ok=True)
+        self.entry().write_bytes(bytes([0xff, 0xfe, 0x00]) + b"chcp")
+        self.assertFalse(autostart.refresh_if_outdated(ROOT))
+        self.assertFalse(autostart.status(ROOT)["stale"] is None)
 
 
 class UnsupportedPlatformTest(unittest.TestCase):

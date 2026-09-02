@@ -327,5 +327,75 @@ class TasksWatcherRecoveryTest(unittest.TestCase):
                 w.shutdown()
 
 
+class DeniedPathTest(unittest.TestCase):
+    """Наблюдение — вспомогательная функция, и её отказ не смертелен.
+
+    Активным проектом оказалась папка, читать которую нельзя
+    (`C:\\Windows\\System32\\Tasks`): наблюдатель бросал `PermissionError`
+    прямо в обработчике старта сервера, uvicorn получал исключение и выходил.
+    Человек видел закрывшуюся консоль и `ERR_CONNECTION_REFUSED` в уже
+    открытом браузере (TASK-233).
+    """
+
+    class DenyingObserver:
+        """Наблюдатель, которому не дают смотреть."""
+
+        def __init__(self) -> None:
+            self.daemon = False
+            self.emitters = []
+
+        def schedule(self, handler, path, recursive=False) -> None:
+            raise PermissionError(5, "Отказано в доступе")
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+        def join(self, timeout=None) -> None:
+            pass
+
+        def is_alive(self) -> bool:
+            return False
+
+    def test_отказ_в_доступе_не_роняет_наблюдение(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            w = TasksWatcher(debounce_sec=0.05, monitor_sec=10)
+            with mock.patch("backend.watcher.Observer", self.DenyingObserver):
+                try:
+                    w.watch(Path(tmp))  # не должно бросить
+                finally:
+                    w.shutdown()
+
+    def test_доступная_папка_наблюдается_несмотря_на_соседнюю(self) -> None:
+        """Отказ на одном пути не отменяет наблюдение за остальными.
+
+        На Windows обработчик папки открывается не в `schedule`, а в потоке
+        эмиттера при `start()`: один недоступный путь валил подъём целиком —
+        вместе с папкой задач, которая читается прекрасно.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks = root / "tasks"
+            tasks.mkdir()
+
+            FakeFSEventsObserver.scheduled.clear()
+            w = TasksWatcher(debounce_sec=0.05, monitor_sec=10)
+            with mock.patch("backend.watcher.Observer", FakeFSEventsObserver),                     mock.patch("backend.watcher.readable",
+                               lambda p: Path(p) != root):
+                try:
+                    w.watch(tasks)
+                    self.assertIsNotNone(w._observer,
+                                         "наблюдение снято целиком из-за одного пути")
+                    watched = [e.path for e in w._observer.emitters]
+                    self.assertIn(str(tasks), watched,
+                                  "папка задач осталась без наблюдения")
+                    self.assertNotIn(str(root), watched,
+                                     "недоступный путь всё-таки пошёл в наблюдение")
+                finally:
+                    w.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()

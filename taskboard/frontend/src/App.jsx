@@ -342,8 +342,9 @@ export default function App() {
   useEffect(() => {
     const report = health?.report
     if (!report || report.harnesses?.choice) return
-    // Структуры нет вовсе — там свой экран с той же кнопкой, не перехватываем
-    if (['missing', 'no_board'].includes(report.structure)) return
+    // Структуры нет вовсе — там свой экран с той же кнопкой, не перехватываем.
+    // Недоступная папка — тем более: разворачивать в неё нечего и незачем
+    if (['missing', 'no_board', 'unreadable'].includes(report.structure)) return
     if (harnessAsked.current === projects.active) return
     harnessAsked.current = projects.active
     setShowScaffold(true)
@@ -363,6 +364,19 @@ export default function App() {
     if (!name) return
     await api.activateProject(name)
     refresh()
+  }
+
+  // Убрать активный проект из реестра (файлы на диске не трогаются).
+  // Нужен там, где проектом оказалась чужая папка: подтверждения не спрашиваем —
+  // кнопка стоит на пустом экране, случайно на неё не нажать
+  const removeActiveProject = async () => {
+    if (!projects.active) return
+    try {
+      await api.removeProject(projects.active)
+      refresh()
+    } catch (e) {
+      setError(e.message)
+    }
   }
 
   // --- DnD ---
@@ -913,7 +927,7 @@ export default function App() {
         </div>
       )}
 
-      {report && !report.ok && !['missing', 'no_board'].includes(report.structure) && (
+      {report && !report.ok && !['missing', 'no_board', 'unreadable'].includes(report.structure) && (
         <div className="px-4 py-3 bg-rose-950/60 border-b border-rose-800 text-sm text-rose-200 space-y-1">
           <div className="font-semibold flex items-center gap-2">
             Критические проблемы структуры tasks/:
@@ -990,7 +1004,26 @@ export default function App() {
       )}
 
       <main className="flex-1 overflow-x-auto overflow-y-hidden p-4">
-        {['missing', 'no_board'].includes(report?.structure) ? (
+        {report?.structure === 'unreadable' ? (
+          // Читать эту папку нам не дают, значит она не наша: скорее всего
+          // проект завёлся сам из рабочей папки запуска (TASK-233). Кнопки
+          // «Развернуть структуру» тут быть не должно — это предложение
+          // создавать файлы в чужой, часто системной папке
+          <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
+            <div className="text-zinc-300">Нет доступа к папке задач этого проекта</div>
+            <div className="text-xs text-zinc-400 font-mono">{health?.project?.tasks_dir}</div>
+            <div className="text-xs text-zinc-500 max-w-md">
+              Такой проект мог завестись сам — из папки, откуда запускали Taskmark.
+              Если вы его не заводили, уберите: файлы на диске это не тронет.
+            </div>
+            <button
+              className="mt-1 px-4 py-2 text-sm rounded-lg bg-sky-600 hover:bg-sky-500 font-medium"
+              onClick={removeActiveProject}
+            >
+              Убрать проект
+            </button>
+          </div>
+        ) : ['missing', 'no_board'].includes(report?.structure) ? (
           <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
             <div className="text-zinc-300">
               {report.structure === 'missing'
