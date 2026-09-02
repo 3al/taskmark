@@ -8,6 +8,8 @@ import sys
 import threading
 from pathlib import Path
 
+from backend.proc import no_window_flags
+
 # Коды выхода: dev-супервизор в taskboard.py различает по ним,
 # перезапускать ли сервер-подпроцесс или завершаться вместе с ним
 EXIT_RESTART = 42
@@ -106,10 +108,13 @@ def _spawn_detached(port: int, tasks_dir: str | None,
         "stderr": subprocess.DEVNULL,
         "cwd": str(LAUNCHER.parent),
     }
+    detach = 0
     if sys.platform == "win32":
-        kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
+        detach = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(cmd, **kwargs)
+    # Отсоединённому процессу окно и так не достаётся — Windows игнорирует
+    # CREATE_NO_WINDOW вместе с DETACHED_PROCESS. Флаг ставится ради одного
+    # правила на все запуски: исключение здесь пришлось бы объяснять каждому,
+    # кто заводит следующий вызов
+    subprocess.Popen(cmd, **kwargs, creationflags=no_window_flags(detach))

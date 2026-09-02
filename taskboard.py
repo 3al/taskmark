@@ -30,6 +30,11 @@ VENV_DIR = TOOL_DIR / ".venv"
 DIST_DIR = TOOL_DIR / "frontend" / "dist"
 REQUIREMENTS = TOOL_DIR / "requirements.txt"
 
+# Флаг «запустить без консольного окна». Дублирует backend/proc.py намеренно:
+# лаунчер применяет обновление до импорта backend, и зависеть от него не может.
+# На macOS и Linux флага не существует — 0 равносилен его отсутствию
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 MIN_PYTHON = (3, 10)
 DEFAULT_PORT = 8765
 
@@ -125,14 +130,15 @@ def deps_installed() -> bool:
 def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(root), capture_output=True,
                           text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout)
+                          timeout=timeout, creationflags=NO_WINDOW)
 
 
 def _pip_install() -> bool:
     """Доустановить зависимости новой версии: requirements.txt мог смениться."""
     out = subprocess.run(
         [sys.executable, "-m", "pip", "install", "-q", "-r", str(REQUIREMENTS)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=NO_WINDOW)
     return out.returncode == 0
 
 
@@ -250,11 +256,12 @@ def ensure_deps(assume_yes: bool) -> None:
         log("Зависимости не найдены. Создаю окружение taskboard/.venv ...")
         if not assume_yes and not _confirm("Установить зависимости (fastapi, uvicorn, watchdog)?"):
             fail("Установка отменена пользователем")
-        subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True)
+        subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], check=True,
+                       creationflags=NO_WINDOW)
         log("Устанавливаю зависимости ...")
         subprocess.run(
             [str(py), "-m", "pip", "install", "-q", "-r", str(REQUIREMENTS)],
-            check=True,
+            check=True, creationflags=NO_WINDOW,
         )
 
     # Перезапуск под python из venv
@@ -282,9 +289,11 @@ def ensure_frontend(assume_yes: bool) -> None:
     frontend = TOOL_DIR / "frontend"
     shell = sys.platform == "win32"
     log("npm install ...")
-    subprocess.run(["npm", "install"], cwd=str(frontend), check=True, shell=shell)
+    subprocess.run(["npm", "install"], cwd=str(frontend), check=True, shell=shell,
+                   creationflags=NO_WINDOW)
     log("npm run build ...")
-    subprocess.run(["npm", "run", "build"], cwd=str(frontend), check=True, shell=shell)
+    subprocess.run(["npm", "run", "build"], cwd=str(frontend), check=True,
+                   shell=shell, creationflags=NO_WINDOW)
 
 
 def _confirm(question: str) -> bool:

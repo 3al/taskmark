@@ -27,6 +27,7 @@ import subprocess
 from pathlib import Path
 
 from backend import baseline
+from backend.proc import no_window_flags
 
 # Корень клона инструмента: backend/ → taskboard/ → сам репозиторий
 TOOL_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -60,7 +61,8 @@ def _git(*args: str, stdin: bytes | None = None,
          timeout: int = 60) -> subprocess.CompletedProcess | None:
     try:
         return subprocess.run(["git", *args], cwd=str(TOOL_ROOT), input=stdin,
-                              capture_output=True, timeout=timeout)
+                              capture_output=True, timeout=timeout,
+                              creationflags=no_window_flags())
     except (OSError, subprocess.SubprocessError):
         return None
 

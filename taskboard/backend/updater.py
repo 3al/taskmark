@@ -30,6 +30,7 @@ from pathlib import Path
 
 from . import version
 from .config import GLOBAL_DIR, DEFAULTS
+from .proc import no_window_flags
 
 # Кэш последней проверки: рядом с остальным глобальным состоянием инструмента
 CACHE_FILE = GLOBAL_DIR / "update.json"
@@ -308,7 +309,7 @@ def _git(root: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProce
     """Запустить git в папке инструмента. Без shell и без склейки строк."""
     return subprocess.run(["git", *args], cwd=str(root), capture_output=True,
                           text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout)
+                          timeout=timeout, creationflags=no_window_flags())
 
 
 def local_remote(root: Path) -> str | None:

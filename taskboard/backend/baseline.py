@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 from backend import version
+from backend.proc import no_window_flags
 
 # Служебная папка проекта и её разделы
 STORE_DIR = ".taskboard"
@@ -167,7 +168,8 @@ def git_available() -> bool:
     """Есть ли git: слияние выполняет `git merge-file`."""
     try:
         return subprocess.run(["git", "--version"], capture_output=True,
-                              timeout=10).returncode == 0
+                              timeout=10,
+                              creationflags=no_window_flags()).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -195,7 +197,8 @@ def merge(base: str, ours: str, theirs: str) -> tuple[str, int] | None:
                 ["git", "merge-file", "-p", "--diff3",
                  "-L", "в проекте", "-L", "из чего разворачивали", "-L", "шаблон",
                  str(files["ours"]), str(files["base"]), str(files["theirs"])],
-                capture_output=True, timeout=30)
+                capture_output=True, timeout=30,
+                creationflags=no_window_flags())
         except (OSError, subprocess.SubprocessError):
             return None
     # Код возврата git merge-file — число конфликтов; отрицательный (в оболочке

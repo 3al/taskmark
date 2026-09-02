@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from backend.config import add_author
+from backend.proc import no_window_flags
 
 
 def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
@@ -62,6 +63,7 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
         result = subprocess.run(
             args, capture_output=True, text=True, encoding="utf-8",
             cwd=str(tasks_dir.parent), timeout=30,
+            creationflags=no_window_flags(),
         )
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
