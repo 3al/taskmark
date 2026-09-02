@@ -52,6 +52,7 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
   const [plan, setPlan] = useState(null)
   const [news, setNews] = useState(null)
   const [allNews, setAllNews] = useState(false)
+  const [allMissed, setAllMissed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState(null)
@@ -163,6 +164,9 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
   }
 
   const latest = status?.latest
+  // Пропущенные выпуски: показываем свежие, остальные — по кнопке.
+  // Отставшему на год полная история не подарок, а стена текста
+  const missed = (status?.missed || []).slice(0, allMissed ? undefined : NEWS_SHOWN)
   // Итог считаем настоящим только с отметкой времени: пустой объект в JS
   // истинен, и окно рисовало плашку о провале, которого не было
   const result = status?.last_result?.at ? status.last_result : null
@@ -383,7 +387,40 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
                 <p className="mt-3 text-zinc-400">{INSTALL_HINT[status.install] || ''}</p>
               )}
 
-              {latest.notes && (
+              {/* Все пропущенные выпуски, а не только последний: по ним человек
+                  и решает, обновляться ли. Последний релиз мог оказаться мелким
+                  патчем, а нужное ему — двумя версиями раньше */}
+              {missed.length > 0 ? (
+                <div className="mt-4">
+                  <div className="text-zinc-400 mb-1">
+                    {status.missed_total > 1
+                      ? `Вы пропустили выпусков: ${status.missed_total}`
+                      : 'Что изменилось:'}
+                  </div>
+                  <div className="space-y-3 max-h-72 overflow-y-auto rounded-lg border border-zinc-800 px-4 py-3">
+                    {missed.map((s) => (
+                      <div key={s.version}>
+                        <div className="text-zinc-300">
+                          {s.version}
+                          {s.date && <span className="text-zinc-500 text-xs ml-2">{s.date}</span>}
+                        </div>
+                        <div className="md-body md-tint-zinc text-sm mt-1">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                            {s.body}
+                          </ReactMarkdown>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {status.missed_total > missed.length && (
+                    <button className={`${btn} mt-2`} onClick={() => setAllMissed(true)}>
+                      Показать все {status.missed_total}
+                    </button>
+                  )}
+                </div>
+              ) : latest.notes && (
+                /* Текстов пропущенных выпусков нет (не дошёл запрос, старый кэш) —
+                   показываем то, что знает манифест: это лучше пустого окна */
                 <div className="mt-4">
                   <div className="text-zinc-400 mb-1">Что изменилось:</div>
                   <div className="md-body md-tint-zinc text-sm rounded-lg border border-zinc-800 px-4 py-3">

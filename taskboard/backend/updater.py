@@ -28,6 +28,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import changelog as changelog_text
 from . import version
 from .config import GLOBAL_DIR, DEFAULTS
 from .proc import no_window_flags
@@ -140,6 +141,32 @@ def cache_is_fresh(cache: dict, now: float | None = None) -> bool:
 # --- Сеть ------------------------------------------------------------------
 
 
+def changelog_url(cfg: dict) -> str:
+    """Адрес удалённого CHANGELOG.md — рядом с манифестом.
+
+    Выводится из адреса манифеста, а не заводится второй настройкой: файлы
+    лежат в одном репозитории и на одной ветке, а лишний ключ в конфиге
+    заморозил бы ещё один дефолт (см. слои конфигурации) и разъехался бы
+    с манифестом у того, кто сменил адрес.
+    """
+    base = manifest_url(cfg).rsplit("/", 1)[0]
+    return f"{base}/CHANGELOG.md"
+
+
+def fetch_changelog(url: str, timeout: int = TIMEOUT) -> str:
+    """Скачать удалённый CHANGELOG.md как текст.
+
+    Тот же предел размера, что и у манифеста: ответ приходит по сети, и
+    доверия ему не больше.
+    """
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read(MAX_MANIFEST_BYTES + 1)
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise ValueError("changelog подозрительно большой")
+    return raw.decode("utf-8", errors="replace")
+
+
 def fetch_manifest(url: str, timeout: int = TIMEOUT) -> dict:
     """Скачать и разобрать манифест релиза.
 
@@ -186,7 +213,7 @@ def parse_manifest(data: object) -> dict:
 
 
 def check_remote(cfg: dict, force: bool = False,
-                 fetch=fetch_manifest) -> dict:
+                 fetch=fetch_manifest, fetch_text=fetch_changelog) -> dict:
     """Сходить за манифестом (если можно и пора) и обновить кэш.
 
     Возвращает кэш — прежний или свежий. `force` — явное действие пользователя
@@ -213,7 +240,20 @@ def check_remote(cfg: dict, force: bool = False,
         write_cache(cache)
         return cache
 
-    fresh = {"checked_at": time.time(), "url": url, "error": None, "latest": latest}
+    # Тексты пропущенных выпусков: манифест описывает только последний, а
+    # решение «обновляться ли» человек принимает по всему, что пропустил.
+    # Провал этого запроса проверку не отменяет — окно покажет заметки
+    # последней версии, как показывало раньше (TASK-237)
+    text = ""
+    try:
+        text = fetch_text(changelog_url(cfg))
+        if len(text) > MAX_MANIFEST_BYTES:
+            raise ValueError("changelog подозрительно большой")
+    except Exception:
+        text = str(read_cache().get("changelog") or "")
+
+    fresh = {"checked_at": time.time(), "url": url, "error": None, "latest": latest,
+             "changelog": text}
     write_cache(fresh)
     return fresh
 
@@ -479,6 +519,13 @@ def status(cfg: dict, root: Path) -> dict:
     if latest and version.is_valid(str(latest.get("version", ""))):
         available = version.compare(str(latest["version"]), current) > 0
 
+    # Пропущенные выпуски режем **при чтении**, а не при загрузке: локальная
+    # версия меняется после обновления, и нарезанный заранее список сразу
+    # устарел бы (TASK-237)
+    missed = []
+    if available:
+        missed = changelog_text.since(str(cache.get("changelog") or ""), current)
+
     kind = install_kind(root)
     tag = str(latest.get("tag")) if latest else ""
     return {
@@ -490,6 +537,10 @@ def status(cfg: dict, root: Path) -> dict:
         "install": kind,
         "latest": latest,
         "update_available": available,
+        # Все выпуски новее установленного, а не только последний: манифест
+        # описывает один релиз, и по нему не видно, что человек пропустил
+        "missed": missed,
+        "missed_total": len(missed),
         "checked_at": cache.get("checked_at"),
         "error": cache.get("error"),
         "command": update_command(tag) if available and kind == "git" and tag else "",
