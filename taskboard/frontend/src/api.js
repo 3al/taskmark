@@ -122,8 +122,12 @@ export const api = {
   setAutostart: (enabled) =>
     request('/api/autostart', { method: 'POST', body: JSON.stringify({ enabled }) }),
   // Проверка токена бота: человек видит имя своего бота до сохранения
-  telegramCheck: (token) =>
-    request('/api/telegram/check', { method: 'POST', body: JSON.stringify({ token }) }),
+  // Прокси идёт вместе с токеном: проверка мимо него отвечала бы про другой путь
+  telegramCheck: (token, proxy, apiRoot) =>
+    request('/api/telegram/check', {
+      method: 'POST',
+      body: JSON.stringify({ token, proxy, api_root: apiRoot }),
+    }),
   // Чаты, которые бот увидел: выбор по имени вместо охоты за отрицательным id
   telegramChats: () => request('/api/telegram/chats'),
   saveConfig: (updates, moves) =>

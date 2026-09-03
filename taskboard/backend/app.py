@@ -160,6 +160,10 @@ class TelegramCheckIn(BaseModel):
     # Токен приходит из формы, а не из конфига: человек проверяет то, что
     # только что вставил, ещё до сохранения
     token: str
+    # Прокси — оттуда же и по той же причине: проверка мимо прокси отвечала бы
+    # про другой путь, чем тот, которым потом пойдёт бот
+    proxy: str = ""
+    api_root: str = ""
 
 
 class AutostartIn(BaseModel):
@@ -446,8 +450,20 @@ def api_telegram_check(body: TelegramCheckIn) -> dict:
     token = (body.token or "").strip()
     if not token:
         raise HTTPException(400, "Токен не введён")
+    proxy = (body.proxy or "").strip()
     try:
-        me = telegram_source.get_me(token)
+        telegram_source.parse_proxy(proxy)
+        root = telegram_source.api_root({"telegram_api_root": body.api_root})
+    except telegram_source.TelegramError as exc:
+        # Неразобранный адрес — ошибка настройки, а не связи: так и скажем,
+        # иначе человек будет искать причину в боте
+        raise HTTPException(400, str(exc))
+    try:
+        me = telegram_source.get_me(token, proxy=proxy, api_root=root)
+    except telegram_source.TelegramError as exc:
+        # Наш текст уже называет причину целиком: префикс про бота увёл бы
+        # человека не туда — бот тут может быть вовсе ни при чём
+        raise HTTPException(400, str(exc))
     except Exception as exc:  # noqa: BLE001 — сеть или отказ API: скажем как есть
         raise HTTPException(400, f"Бот не отозвался: {exc}")
     return {"ok": True, "username": me.get("username", "")}

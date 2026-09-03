@@ -121,6 +121,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   // нажатие «Проверить», а не сохранённая настройка
   const [botName, setBotName] = useState(null)
   const [botError, setBotError] = useState(null)
+  // Проверка через прокси занимает секунды: без этого кнопка молчит, и человек
+  // жмёт её повторно
+  const [botChecking, setBotChecking] = useState(false)
   const [telegramChats, setTelegramChats] = useState([])
   const [projectNames, setProjectNames] = useState([])
 
@@ -161,11 +164,16 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   const checkTelegram = async () => {
     setBotName(null)
     setBotError(null)
+    setBotChecking(true)
     try {
-      const result = await api.telegramCheck(config.telegram_token || '')
+      const result = await api.telegramCheck(config.telegram_token || '',
+                                             config.telegram_proxy || '',
+                                             config.telegram_api_root || '')
       setBotName(result.username)
     } catch (e) {
       setBotError(e.message)
+    } finally {
+      setBotChecking(false)
     }
   }
 
@@ -239,6 +247,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     review_sources: !!config.review_sources,
     telegram: !!config.telegram,
     telegram_token: (config.telegram_token || '').trim(),
+    telegram_proxy: (config.telegram_proxy || '').trim(),
+    telegram_api_root: (config.telegram_api_root || '').trim(),
     telegram_username: (config.telegram_username || '').trim().replace(/^@/, ''),
     telegram_chats: config.telegram_chats || {},
     ...(pipeline ? {
@@ -832,9 +842,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                           />
                           <button
                             onClick={checkTelegram}
-                            className="px-3 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg shrink-0"
+                            disabled={botChecking}
+                            className="px-3 py-2 text-sm bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg shrink-0 disabled:opacity-50"
                           >
-                            Проверить
+                            {botChecking ? 'Проверяю…' : 'Проверить'}
                           </button>
                         </div>
                         {botName && (
@@ -843,6 +854,18 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         {botError && (
                           <div className="text-[11px] text-rose-400 mt-1">{botError}</div>
                         )}
+                        <input
+                          className={`${field} mt-2`}
+                          placeholder="прокси: socks5://хост:1080 — если Telegram недоступен напрямую"
+                          value={config.telegram_proxy || ''}
+                          onChange={(e) => set('telegram_proxy', e.target.value)}
+                        />
+                        <input
+                          className={`${field} mt-2`}
+                          placeholder="свой адрес Bot API: https://ваш.домен — вместо api.telegram.org"
+                          value={config.telegram_api_root || ''}
+                          onChange={(e) => set('telegram_api_root', e.target.value)}
+                        />
                         <div className="text-[11px] text-zinc-400 mt-1">
                           У @BotFather: /newbot → выключить Group Privacy → добавить бота в чат
                           {onOpenHelp && (
