@@ -418,6 +418,35 @@ class ManyMentionsTest(HandleTest):
         self.assertFalse(self.created())
 
 
+class ReplyPathTest(HandleTest):
+    """Ответ уходит тем же путём, что и приём.
+
+    Приём идёт через прокси, а ответ уходил напрямую: за прокси задача
+    создавалась, подтверждение не доходило, и человек присылал сообщение заново —
+    получая **вторую** задачу, потому что дедупликация ловит только повтор того
+    же апдейта.
+    """
+
+    def test_ответ_идёт_через_прокси_и_свой_адрес(self):
+        with mock.patch.object(ts, "send_message") as sent:
+            intake.handle(message("#задача Сделать X @kostya"),
+                          cfg=self.cfg(telegram_proxy="socks5://p:1080",
+                                       telegram_api_root="https://мой.домен"),
+                          projects=self.projects)
+        self.assertTrue(sent.called, "ответ в чат не отправлялся вовсе")
+        kwargs = sent.call_args.kwargs
+        self.assertEqual(kwargs.get("proxy"), "socks5://p:1080")
+        self.assertEqual(kwargs.get("api_root"), "https://мой.домен")
+
+    def test_без_настроек_путь_прежний(self):
+        with mock.patch.object(ts, "send_message") as sent:
+            intake.handle(message("#задача Сделать X @kostya"),
+                          cfg=self.cfg(), projects=self.projects)
+        kwargs = sent.call_args.kwargs
+        self.assertEqual(kwargs.get("proxy"), "")
+        self.assertEqual(kwargs.get("api_root"), ts.API_ROOT)
+
+
 if __name__ == "__main__":
 
 

@@ -247,8 +247,14 @@ def handle(message: dict, cfg: dict | None = None,
     cfg = cfg if cfg is not None else load_global_config()
     projects = (projects if projects is not None
                 else registry.list_projects().get("projects", []))
+    # Ответ идёт **тем же путём, что и приём**: прокси и свой адрес API берутся
+    # из того же конфига. Иначе за прокси сообщения принимаются, задача
+    # создаётся, а подтверждение не уходит — и человек, для которого молчание
+    # значит «не доехало», присылает сообщение заново, получая вторую задачу
     reply = send or (lambda chat_id, text, reply_to=None: telegram_source.send_message(
-        telegram_source.token(cfg), chat_id, text, reply_to))
+        telegram_source.token(cfg), chat_id, text, reply_to,
+        proxy=telegram_source.proxy(cfg),
+        api_root=telegram_source.api_root(cfg)))
 
     parsed = parse(message.get("text", ""), cfg)
     if parsed is None or not is_for_me(parsed, cfg):
