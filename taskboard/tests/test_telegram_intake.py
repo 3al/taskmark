@@ -418,6 +418,75 @@ class ManyMentionsTest(HandleTest):
         self.assertFalse(self.created())
 
 
+class FailureReplyTest(HandleTest):
+    """Неудача — обычный отказ бота, а не вывод внутренностей.
+
+    В чат уходит то, чего там ждут: заведённая задача и отказы по правилам.
+    Диагностика адресована тому, кто чинит инструмент, и её место в логе.
+    """
+
+    def _broken_script(self, text: str) -> None:
+        script = ("import sys\n"
+                  f"sys.stderr.write({text!r})\n"
+                  "sys.exit(2)\n")
+        (self.tasks / "create_task.py").write_text(script, encoding="utf-8")
+
+    def test_вывод_скрипта_в_чат_не_попадает(self):
+        self._broken_script("usage: create_task.py [-h] [-t TITLE]\n"
+                            "error: unrecognized arguments: --что-то")
+        self.handle(message("#задача Сделать X @kostya"))
+        answer = self.sent[-1][1]
+        for leak in ("usage:", "unrecognized", "create_task.py", "Traceback"):
+            self.assertNotIn(leak, answer, answer)
+
+    def test_человеку_говорят_что_не_вышло(self):
+        self._broken_script("что угодно")
+        self.handle(message("#задача Сделать X @kostya"))
+        self.assertEqual(self.sent[-1][1], intake.FAILED_TEXT)
+
+    def test_причина_уходит_в_лог(self):
+        self._broken_script("no write access")
+        with mock.patch("builtins.print") as printed:
+            self.handle(message("#задача Сделать X @kostya"))
+        logged = " ".join(str(call) for call in printed.call_args_list)
+        self.assertIn("no write access", logged)
+
+    def test_чужая_кодировка_в_выводе_не_роняет_разбор(self):
+        """Скрипт проекта пишет ошибки в кодировке своей консоли, не в utf-8."""
+        script = ("import sys\n"
+                  "sys.stderr.buffer.write('нет прав'.encode('cp1251'))\n"
+                  "sys.exit(1)\n")
+        (self.tasks / "create_task.py").write_text(script, encoding="utf-8")
+        result = self.handle(message("#задача Сделать X @kostya"))
+        self.assertFalse(result.get("ok"))
+        self.assertEqual(self.sent[-1][1], intake.FAILED_TEXT)
+
+    def test_отказы_по_правилам_остаются_дословными(self):
+        """Они написаны для человека и подстановок из внутренностей не несут."""
+        self.handle(message("#задача Сделать X @kostya @ivan"))
+        self.assertEqual(self.sent[-1][1], intake.MANY_TEXT)
+
+
+class OriginTest(HandleTest):
+    """Откуда задача пришла — отметка в самой задаче.
+
+    По ней канал чата узнаёт **свои** задачи и адрес, куда писать: рубрика
+    бэклога для этого не годится (её переносят и переименовывают), а автор-ник
+    не доказательство — его могли проставить как угодно.
+    """
+
+    def test_задача_из_чата_помнит_свой_чат(self):
+        self.handle(message("#задача Сделать X @kostya"))
+        argv = self.argv()
+        self.assertIn("--origin", argv)
+        self.assertEqual(argv[argv.index("--origin") + 1], "telegram:-100")
+
+    def test_шаблон_объявляет_поле(self):
+        head = (Path("D:/taskboard/taskboard/templates/tasks/_TEMPLATE.md")
+                .read_text(encoding="utf-8"))
+        self.assertIn("origin:", head, "шаблон задачи не объявляет происхождение")
+
+
 class ReplyPathTest(HandleTest):
     """Ответ уходит тем же путём, что и приём.
 

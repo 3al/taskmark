@@ -30,9 +30,10 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
-from . import registry, telegram_source
+from . import registry, telegram_notify, telegram_source
 from .config import load_global_config, load_project_config
 from .create_task_runner import create_task
 
@@ -61,6 +62,13 @@ _MENTION = re.compile(r"@([A-Za-z0-9_]{3,})")
 # с количеством, а человеку хватает и этого
 MANY_TEXT = ("Задача заводится на одного, а в сообщении тегнуто несколько. "
              "Пришлите отдельное сообщение каждому.")
+
+# Неудача заведения — такой же отказ, как остальные, и говорит он то же, что
+# все они: что случилось и что делать. Подстановок из внутренностей здесь нет
+# намеренно — `usage` argparse и трассировка адресованы тому, кто чинит
+# инструмент, и уходят в лог сервера
+FAILED_TEXT = ("Задачу завести не удалось. Загляните в лог Taskmark — "
+               "причина записана там.")
 
 # Конец предложения: точка (или «!»/«?») и пробел за ней. Пробел обязателен —
 # иначе «версия 1.2 сломалась» разрежется по номеру версии
@@ -298,11 +306,15 @@ def handle(message: dict, cfg: dict | None = None,
         # Автор — тот, кто бросил задачу в чат. Единственный путь заведения,
         # где имя приходит само: доска и агент называют себя сами
         "author": author_of(message),
+        # Откуда задача пришла. По этой метке канал чата потом узнаёт свои
+        # задачи и адрес: рубрика бэклога для этого не годится (её переносят и
+        # переименовывают), а автор-ник не доказательство
+        "origin": telegram_notify.origin_of(message.get("chat_id")),
     })
     if not result.get("ok"):
-        reply(message["chat_id"],
-              f"Задачу завести не удалось: {result.get('error', 'ошибка')}",
-              message.get("message_id"))
+        error = str(result.get("error") or "").strip()
+        _log(f"[taskboard] telegram: задача из чата не заведена — {error}")
+        reply(message["chat_id"], FAILED_TEXT, message.get("message_id"))
         return {"ok": False, "error": result.get("error")}
 
     done = {"id": result.get("id"), "title": parsed["title"],
@@ -311,6 +323,17 @@ def handle(message: dict, cfg: dict | None = None,
     reply(message["chat_id"], _reply_text(done["id"], done["title"], done["project"]),
           message.get("message_id"))
     return {"ok": True, **done}
+
+
+def _log(text: str) -> None:
+    """Написать в лог, не уронив разбор.
+
+    В сообщение попадает вывод чужого процесса, а у консоли Windows своя
+    кодировка: `print` с символом, которого в ней нет, падает исключением — и
+    сообщение оставалось бы необработанным из-за строчки в логе.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(text.encode(encoding, "replace").decode(encoding, "replace"), flush=True)
 
 
 def _reply_text(task_id: str, title: str, project: str) -> str:

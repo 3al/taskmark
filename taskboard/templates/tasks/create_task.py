@@ -21,6 +21,7 @@
                           discussion | design (остаётся в поле `type` задачи
                           и рисует метку на доске; default: feature)
   --author AUTHOR         Автор задачи: тот, кто её принёс
+  --origin ORIGIN         Откуда пришла задача (метка источника)
   --section SECTION       Подраздел Backlog. По умолчанию — рубрика типа
                           задачи: «Баги» для bug, «Обсуждения» для discussion
 """
@@ -392,6 +393,7 @@ def create_task(
     task_type: str = DEFAULT_TASK_TYPE,
     section: str | None = None,
     author: str | None = None,
+    origin: str | None = None,
 ) -> None:
     """Главная функция создания задачи."""
     print("\n=== Создание новой задачи ===\n")
@@ -439,6 +441,10 @@ def create_task(
     # появления поля; тот, кто зовёт скрипт, автора знает и называет сам:
     # чат — ником отправителя, доска — собой, агент — своей моделью
     author_value = " ".join((author or "").split()) or "~"
+    # Откуда задача пришла. Метку записывает и разбирает один и тот же источник:
+    # по ней он потом узнаёт свои задачи и адрес для ответа. У заведённых в окне
+    # доски и агентом её нет — человек видит их там, где работает
+    origin_value = " ".join((origin or "").split()) or "~"
 
     tasks_dir = Path(__file__).parent
     cfg = load_config(tasks_dir)
@@ -452,7 +458,8 @@ type: {task_type or "~"}
 size: ~
 status: {status_key}
 created: {created_date}
-author: {author_value}{blocked_by_line}
+author: {author_value}
+origin: {origin_value}{blocked_by_line}
 ---"""
 
     # Структуру задаёт `_TEMPLATE.md` проекта; встроенная копия — запасной
@@ -569,6 +576,11 @@ if __name__ == "__main__":
         default=None,
         help="Автор задачи — тот, кто её принёс (ник из чата, «доска», модель)",
     )
+    parser.add_argument(
+        "--origin",
+        default=None,
+        help="Откуда пришла задача: метка источника (например, telegram:<чат>)",
+    )
     args = parser.parse_args()
 
     try:
@@ -581,6 +593,7 @@ if __name__ == "__main__":
             task_type=args.task_type,
             section=args.section,
             author=args.author,
+            origin=args.origin,
         )
     except KeyboardInterrupt:
         print("\n[CANCEL] Отменено пользователем")

@@ -11,13 +11,31 @@ from backend.config import add_author
 from backend.proc import no_window_flags
 
 
+def _unknown_flag(result, flag: str) -> bool:
+    """Скрипт отверг именно этот флаг, а не сломался по своей причине.
+
+    Признак — жалоба argparse: любой другой отказ (нет прав, битый шаблон)
+    повторять без флага бессмысленно и вредно.
+    """
+    text = f"{result.stderr or ''}{result.stdout or ''}"
+    return "unrecognized arguments" in text and flag in text
+
+
+def _without(args: list[str], flag: str) -> list[str]:
+    """Аргументы без флага и его значения."""
+    if flag not in args:
+        return args
+    at = args.index(flag)
+    return args[:at] + args[at + 2:]
+
+
 def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
     """
     Вызвать create_task.py в не-интерактивном режиме.
 
     payload: title (обяз.), description, criteria, blocked_by, task_type,
-    epic (ключ эпика), author (кто принёс задачу). Рубрику бэклога скрипт
-    выводит из типа задачи.
+    epic (ключ эпика), author (кто принёс задачу), origin (откуда пришла).
+    Рубрику бэклога скрипт выводит из типа задачи.
     """
     script = tasks_dir / cfg.get("create_script", "create_task.py")
     if not script.is_file():
@@ -49,6 +67,10 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
     # поля: подставлять что-то за вызывающего здесь нечем
     if payload.get("author"):
         args += ["--author", payload["author"]]
+    # Откуда задача пришла. Ставит только тот источник, который потом узнаёт по
+    # ней свои задачи: форма доски и агент метки не передают
+    if payload.get("origin"):
+        args += ["--origin", payload["origin"]]
     if payload.get("task_type"):
         args += ["--type", payload["task_type"]]
     elif "task_type" in payload:
@@ -59,12 +81,25 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
     if payload.get("epic"):
         args += ["-e", payload["epic"]]
 
-    try:
-        result = subprocess.run(
-            args, capture_output=True, text=True, encoding="utf-8",
-            cwd=str(tasks_dir.parent), timeout=30,
+    def run(argv: list[str]):
+        # `errors="replace"`: скрипт проекта пишет ошибки в кодировке своей
+        # консоли, и на Windows это не всегда utf-8. Без замены чтение вывода
+        # падало исключением — вместо отказа человек получал молчание
+        return subprocess.run(
+            argv, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", cwd=str(tasks_dir.parent), timeout=30,
             creationflags=no_window_flags(),
         )
+
+    try:
+        result = run(args)
+        if result.returncode != 0 and _unknown_flag(result, "--origin"):
+            # **Скрипт проекта обновляет человек, и бэкенд приезжает раньше
+            # него.** Флаг, которого тот ещё не знает, закрывал вход из чата
+            # целиком: задача не заводилась, а в чат уходил usage-дамп
+            # argparse. Задача важнее метки, которую она несёт, — заводим без
+            # неё, а метка появится после обновления окружения
+            result = run(_without(args, "--origin"))
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

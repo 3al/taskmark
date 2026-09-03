@@ -7,6 +7,7 @@ size: ~
 status: backlog
 created: YYYY-MM-DD HH:MM
 author: ~
+origin: ~
 blocked_by: ~
 blocks: ~
 paused: ~
