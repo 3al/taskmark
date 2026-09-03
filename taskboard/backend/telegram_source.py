@@ -625,12 +625,17 @@ def poll_once(cfg: dict, handle: Callable | None = None,
 
 def start_polling(cfg: dict, handle: Callable | None = None,
                   interval: float = WAKE_INTERVAL,
-                  fetch: Callable | None = None):
+                  fetch: Callable | None = None,
+                  tick: Callable | None = None):
     """Проверять чат по таймеру, пока живёт сервер. Возвращает «стоп».
 
     Поток — демон, как у проверки обновлений: он не держит выход процесса и не
     мешает остановке и перезапуску сервера из UI. Выключенная возможность
     потока не создаёт вовсе — в сеть при ней не уходит ни одного запроса.
+
+    `tick` — что ещё сделать на каждом проходе. Через него к циклу прицеплен
+    наблюдатель за статусами: своего таймера ему не нужно, а слой источника про
+    уведомления так и не узнаёт.
     """
     stop = threading.Event()
     if not enabled(cfg):
@@ -642,6 +647,11 @@ def start_polling(cfg: dict, handle: Callable | None = None,
                 poll_once(cfg, handle, fetch)
             except Exception:  # noqa: BLE001 — цикл переживает любую неудачу
                 pass
+            if tick is not None:
+                try:
+                    tick()
+                except Exception:  # noqa: BLE001 — беда попутчика не должна
+                    pass           # останавливать опрос чата
 
     threading.Thread(target=loop, name="telegram-poll-loop", daemon=True).start()
     return stop.set

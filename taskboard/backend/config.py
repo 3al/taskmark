@@ -255,7 +255,7 @@ PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
                 # Этапы, на которых у задачи спрашивают исполнителя: это часть
                 # жизненного цикла. Сам список имён, наоборот, глобален —
                 # люди работают в нескольких проектах одной машины
-                "assignee_statuses"}
+                "assignee_statuses", "notify_statuses"}
 
 
 def lost_section(cfg: dict) -> str:

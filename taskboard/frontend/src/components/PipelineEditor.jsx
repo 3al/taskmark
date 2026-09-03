@@ -160,8 +160,13 @@ function RequirementForm({ predicates, takenBy, onAdd }) {
 // Редактор жизненного цикла: порядок статусов, цели действий скиллов и
 // требования этапов. Порядок задаёт маршрут (что идёт за чем), а не запреты:
 // прыжки вперёд и возвраты назад законны в любом случае.
+// Общая ширина колонки требований: у одних этапов там «✓», у других «✓2•», и
+// без фиксации правый блок каждой строки вставал на своё место
+const REQ_WIDTH = 'min-w-[2.5rem]'
+
 export default function PipelineEditor({ pipeline, actions, catalog, sources, requires,
-                                         predicates, onChange, onOpenHelp }) {
+                                         predicates, telegram, onChange,
+                                         onOpenHelp }) {
   const keys = pipeline.map((s) => s.key)
   const available = catalog.filter((c) => !keys.includes(c.key))
 
@@ -174,11 +179,11 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
   // у остальных ключ приходит `undefined`, и форма оставляет своё. Иначе
   // перестановка статуса стрелкой стирала бы подставленное источником
   const emit = (nextPipeline, nextActions = actions, nextStatuses, nextRequires,
-                nextAssignees) => {
+                nextAssignees, nextNotify) => {
     setPicked('')
     onChange({ pipeline: nextPipeline, actions: nextActions,
                statuses: nextStatuses, requires: nextRequires,
-               assigneeStatuses: nextAssignees })
+               assigneeStatuses: nextAssignees, notifyStatuses: nextNotify })
   }
 
   // Спрашивает ли этап исполнителя. Наружу уходит **весь** список отмеченных, а
@@ -192,6 +197,16 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
          next.filter((s) => s.assignee).map((s) => s.key))
   }
 
+  // О каких этапах уведомляют в чат. Наружу, как и с исполнителем, уходит весь
+  // список: снятая галочка значит «об этом этапе молчим», и от «человек ещё не
+  // выбирал» (тогда отмечен конец маршрута) её отличает только список целиком
+  const toggleNotify = (index) => {
+    const next = pipeline.map((s, i) =>
+      (i === index ? { ...s, notify: !s.notify } : s))
+    emit(next, actions, undefined, undefined, undefined,
+         next.filter((s) => s.notify).map((s) => s.key))
+  }
+
   // Готовый маршрут подставляется в форму, а не сохраняется: дальше его можно
   // поправить, а применится он обычным «Сохранить» — с переносом задач из
   // выключаемых статусов, как при ручной правке
@@ -201,7 +216,8 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
     // Требования — часть жизненного цикла, как подписи: копируя маршрут соседнего
     // проекта, человек ждёт и его проверок. Пустые у источника (пресет их не
     // несёт) значат «требований нет» и старые вытесняют — маршрут заменён целиком
-    emit(source.pipeline, source.actions, source.statuses || {}, source.requires || {})
+    emit(source.pipeline, source.actions, source.statuses || {}, source.requires || {},
+         undefined, source.notify_statuses || [])
     setPicked(value)
   }
 
@@ -382,6 +398,34 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                     {/* Исполнитель: этапы, где работу делает кто-то другой
                         (ревью, тестирование), спрашивают имя. Съезд с маршрута
                         не спрашивает: отменённой задачей никто не занимается */}
+                    {/* Уведомления в чат: галочка есть только при включённой
+                        интеграции — без неё этот выбор ни на что не влияет и
+                        только загромождает маршрут. Съезд с маршрута отметить
+                        **можно**: «задачу отменили» — то, что постановщику из
+                        чата важно узнать, а доска у него не открыта. В дефолт
+                        отмена при этом не входит: конец маршрута — это финиш */}
+                    {telegram && (
+                      <button onClick={() => toggleNotify(i)}
+                              title={status.notify
+                                ? `О попадании в «${status.label}» бот пишет в чат`
+                                : `Уведомлять в чат о попадании в «${status.label}»`}
+                              className={`px-1.5 mr-1 text-[10px] rounded border ${
+                                status.notify
+                                  ? 'border-zinc-600 bg-zinc-700/40 text-zinc-300'
+                                  : 'border-dashed border-zinc-700 text-zinc-500'
+                              } hover:text-zinc-200`}>
+                        в чат
+                      </button>
+                    )}
+                    {/* У съезда кнопки исполнителя нет, но её место остаётся за
+                        ней: иначе «в чат» съезжает в чужую колонку и строка
+                        отмены выбивается из ряда */}
+                    {status.offramp && (
+                      <span aria-hidden
+                            className="px-1.5 mr-1 text-[10px] border border-transparent invisible">
+                        исполнитель
+                      </span>
+                    )}
                     {!status.offramp && (
                       <button onClick={() => toggleAssignee(i)}
                               title={status.assignee
@@ -395,17 +439,23 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
                         исполнитель
                       </button>
                     )}
+                    {/* Ширина у кнопки требований фиксированная: число и точка
+                        рекомендаций меняли её от этапа к этапу, и весь правый
+                        блок съезжал — строки маршрута шли лесенкой */}
                     {/* Съезд с маршрута требований не имеет: из отмены не выходят */}
-                    {!status.offramp && (
+                    {!status.offramp ? (
                       <button onClick={() => setOpenReq(open ? null : status.key)}
                               title="Что должно быть выполнено, чтобы уйти с этапа"
-                              className={`px-1.5 mr-2 text-xs rounded ${
+                              className={`px-1.5 mr-2 text-xs rounded inline-flex
+                                justify-center ${REQ_WIDTH} ${
                                 open ? 'bg-zinc-700/60 text-zinc-100' :
                                 declared.length ? 'text-amber-300' : 'text-zinc-400'
                               } hover:text-zinc-200`}>
                         ✓{declared.length || ''}
                         {recommended.length > 0 && <span className="text-sky-400">•</span>}
                       </button>
+                    ) : (
+                      <span aria-hidden className={`px-1.5 mr-2 ${REQ_WIDTH}`} />
                     )}
                     <button onClick={() => move(i, -1)} disabled={i === 0}
                             title="Выше"

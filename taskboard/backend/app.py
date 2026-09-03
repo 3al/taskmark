@@ -13,7 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import (autostart, baseline, changelog, help_docs, lifecycle, registry,
-                     telegram_intake, telegram_source, updater, version)
+                     notify_watch, telegram_intake, telegram_source, updater,
+                     version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, TELEGRAM_KEYS,
@@ -76,6 +77,11 @@ watcher = TasksWatcher()
 # Остановка фонового цикла проверки обновлений (ставится при старте)
 _stop_update_loop = None
 _stop_telegram_loop = None
+
+# Снимок статусов по проектам для уведомлений в чат. Живёт рядом с поллером и
+# переживает его перезапуск: сброс означал бы «первый проход» и молчание о том,
+# что случилось за это время
+_notify_state: dict = {}
 
 
 # --- Модели запросов ---
@@ -1274,8 +1280,13 @@ def restart_telegram_poller() -> None:
     global _stop_telegram_loop
     if _stop_telegram_loop is not None:
         _stop_telegram_loop()
+    cfg = load_global_config()
     _stop_telegram_loop = telegram_source.start_polling(
-        load_global_config(), handle=lambda message: telegram_intake.handle(message))
+        cfg, handle=lambda message: telegram_intake.handle(message),
+        # Наблюдатель за статусами едет тем же циклом: своего таймера ему не
+        # нужно, а снимок переживает перезапуск поллера — иначе сохранение
+        # настроек считалось бы первым проходом и движения терялись
+        tick=lambda: notify_watch.check_all(cfg, _notify_state))
 
 
 def start_watcher() -> None:

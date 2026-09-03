@@ -17,7 +17,8 @@ from backend.statuses import PRESETS, load_pipeline
 
 # Ключи конфига, из которых состоит жизненный цикл. Проект, не переопределивший
 # ни одного, живёт на дефолтах — предлагать его как источник нечего
-LIFECYCLE_KEYS = ("pipeline", "actions", "statuses", "requires")
+LIFECYCLE_KEYS = ("pipeline", "actions", "statuses", "requires",
+                  "notify_statuses")
 
 
 def _source(kind: str, name: str, hint: str, cfg: dict) -> dict:
@@ -27,9 +28,10 @@ def _source(kind: str, name: str, hint: str, cfg: dict) -> dict:
     сырыми переопределениями: без них скопированный маршрут разошёлся бы с
     исходным по названиям колонок доски.
 
-    `requires` — тоже часть жизненного цикла: копируя маршрут соседнего проекта,
-    человек ждёт и его проверок. Пресеты требований не несут — они дают статусы,
-    а требования приходят рекомендациями каталога при добавлении статуса.
+    `requires` и `notify_statuses` — тоже часть жизненного цикла: копируя маршрут
+    соседнего проекта, человек ждёт и его проверок, и его уведомлений. Пресеты
+    ни того, ни другого не несут — они дают статусы, а требования приходят
+    рекомендациями каталога при добавлении статуса.
     """
     pipeline = load_pipeline(cfg)
     return {
@@ -40,6 +42,10 @@ def _source(kind: str, name: str, hint: str, cfg: dict) -> dict:
         "actions": pipeline.actions(),
         "statuses": cfg.get("statuses") or {},
         "requires": cfg.get("requires") or {},
+        # Набор статусов, о которых уведомляют: копируя маршрут соседа, человек
+        # ждёт и его уведомлений. Пустой у пресета значит «нигде» и вытесняет
+        # прежний — маршрут заменяется целиком, как и с требованиями
+        "notify_statuses": list(cfg.get("notify_statuses") or []),
     }
 
 

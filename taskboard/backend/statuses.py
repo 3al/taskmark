@@ -279,6 +279,18 @@ def _presentation(cfg: dict) -> dict[str, dict]:
     return overrides
 
 
+def _finish_key(statuses: list[dict]) -> str:
+    """Конец маршрута: последний статус, кроме съездов.
+
+    Отмена концом не считается — из неё не возвращаются, но и приходят в неё не
+    по плану, а вместо него.
+    """
+    for meta in reversed(statuses):
+        if not meta.get("offramp"):
+            return str(meta["key"])
+    return ""
+
+
 def _thin_recommendations(statuses: list[dict]) -> None:
     """Оставить рекомендацию одного смысла только у самого раннего этапа.
 
@@ -338,6 +350,20 @@ def load_pipeline(cfg: dict) -> Pipeline:
     else:
         for meta in statuses:
             meta["assignee"] = bool(meta.get("assignee"))
+
+    # Этапы, о которых уведомляют в чате. **Дефолт вычисляется, а не пишется в
+    # конфиг**: пока человек не трогал галочки, отмечен конец маршрута этого
+    # проекта. Зашить имя нельзя — состав статусов у проектов свой, а
+    # записанный дефолт перестал бы следовать за правкой маршрута
+    chosen = cfg.get("notify_statuses")
+    if isinstance(chosen, (list, tuple, set)):
+        allowed = {str(key) for key in chosen}
+        for meta in statuses:
+            meta["notify"] = meta["key"] in allowed
+    else:
+        finish = _finish_key(statuses)
+        for meta in statuses:
+            meta["notify"] = meta["key"] == finish
 
     _thin_recommendations(statuses)
 

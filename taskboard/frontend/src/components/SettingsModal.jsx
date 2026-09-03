@@ -56,6 +56,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   // Этапы, спрашивающие исполнителя; null — галочек не трогали, и проект
   // остаётся на умолчаниях поставки (ревью и тестирование)
   const [assigneeStatuses, setAssigneeStatuses] = useState(null)
+  const [notifyStatuses, setNotifyStatuses] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   // Выполненные миграции после сохранения (переименования в проекте)
@@ -263,6 +264,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     // затирается применением готового маршрута, а галочки к маршруту не
     // относятся
     ...(assigneeStatuses !== null ? { assignee_statuses: assigneeStatuses } : {}),
+    ...(notifyStatuses !== null ? { notify_statuses: notifyStatuses } : {}),
   })
 
   // Сначала спрашиваем бэкенд, не осиротеют ли задачи выключаемых статусов
@@ -751,13 +753,16 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         sources={sources}
                         requires={requiresOverride ?? config.requires ?? {}}
                         predicates={config.predicates}
+                        telegram={!!config.telegram}
                         onOpenHelp={onOpenHelp}
                         onChange={({ pipeline: next, actions: nextActions, statuses,
-                                     requires, assigneeStatuses: nextAssignees }) => {
+                                     requires, assigneeStatuses: nextAssignees,
+                                     notifyStatuses: nextNotify }) => {
                           setPipelineState({ pipeline: next, actions: nextActions })
                           if (statuses !== undefined) setStatusesOverride(statuses)
                           if (requires !== undefined) setRequiresOverride(requires)
                           if (nextAssignees !== undefined) setAssigneeStatuses(nextAssignees)
+                          if (nextNotify !== undefined) setNotifyStatuses(nextNotify)
                         }}
                       />
                     </div>
