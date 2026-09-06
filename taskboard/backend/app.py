@@ -52,7 +52,8 @@ from backend.notes import BOARD_AUTHOR, append_note
 from backend.task_parser import (EDITABLE_SECTIONS, annotate_marks,
                                  find_task_file, list_all_tasks, parse_task,
                                  set_task_assignee, set_task_section,
-                                 set_task_size, set_task_title, set_task_type)
+                                 set_task_due, set_task_size, set_task_title,
+                                 set_task_type)
 from backend.validator import validate_project
 from backend.watcher import TasksWatcher
 
@@ -135,6 +136,9 @@ class TaskUpdateIn(BaseModel):
     # Размер задачи (S…XL): оценка объёма. Пустая строка снимает оценку —
     # поэтому None («поле не прислали») и "" значат здесь разное
     size: str | None = None
+    # Срок задачи (ГГГГ-ММ-ДД): до какого дня её ждут. Пустая строка снимает
+    # срок — как и у размера, None и "" значат здесь разное
+    due: str | None = None
     # Простой задачи: список блокеров целиком (строкой или списком) и причина
     # паузы. Пустое значение снимает: [] — все блокировки, "" — паузу
     blocked_by: list[str] | str | None = None
@@ -892,6 +896,12 @@ def api_update_task(task_id: str, body: TaskUpdateIn) -> dict:
         if not sized.get("ok"):
             raise HTTPException(400, sized.get("error", "Ошибка смены размера"))
         result["size"] = sized["size"]
+
+    if body.due is not None:
+        dated = set_task_due(tasks_dir, task_id, body.due)
+        if not dated.get("ok"):
+            raise HTTPException(400, dated.get("error", "Ошибка смены срока"))
+        result["due"] = dated["due"]
 
     if body.assignee is not None:
         # Исполнителя спрашивают не на каждом этапе: на своих задачу делает

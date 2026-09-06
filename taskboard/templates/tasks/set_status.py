@@ -60,7 +60,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 PLACEHOLDER = "_(нет)_"
@@ -84,7 +84,7 @@ def _utf8_console() -> None:
 # Имена, а не номер версии, — как CAPABILITIES в backend/app.py: набор
 # расширяется, не заводя таблицы соответствия версий возможностям.
 SCRIPT_CAPABILITIES = {"stall", "task_types", "task_sizes", "task_assignee",
-                       "requires", "comments", "epics"}
+                       "requires", "comments", "epics", "task_due"}
 
 # Дефолты дублируют backend/config.py: скрипт автономен и работает
 # без запущенного сервера, в том числе в проектах без установленного taskboard
@@ -832,6 +832,9 @@ PAUSE_TEXT = "пауза: {reason}"
 RESUME_TEXT = "пауза снята"
 TYPE_TEXT = "тип: {now} (было {was})"
 SIZE_TEXT = "размер: {now} (было {was})"
+# Срок задачи: до какого дня её ждут. Во frontmatter видно только
+# нынешнюю дату, а перенос срока — как раз то, что объясняет ход работы
+DUE_TEXT = "срок: {now} (было {was})"
 ASSIGNEE_TEXT = "исполнитель: {now} (было {was})"
 TITLE_TEXT = "название: «{now}» (было «{was}»)"
 
@@ -1644,6 +1647,99 @@ def set_size(tasks_dir: Path, task_id: str, value: str,
             "label": TASK_SIZES[value]["label"] if value else "не указан",
             # Крупная работа без плана — повод позвать к нему, а не требование
             "hint": _plan_hint(path, value)}
+
+
+DUE_FIELD = "due"
+
+
+def parse_due(value: str) -> "date | None":
+    """Разобрать срок. None — значение непригодно, «» — снятие (проверяют до вызова).
+
+    Формат один — `ГГГГ-ММ-ДД`. Времени у срока нет: оно нужно редко, а два вида
+    значения расползлись бы по текстам, сравнениям и форматированию.
+    """
+    try:
+        return date.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+
+
+def due_left(value: str, today: "date | None" = None) -> "int | None":
+    """Сколько дней осталось до срока: 0 — сегодня, отрицательное — просрочен.
+
+    Считается по календарным дням локального пояса машины: у срока нет времени,
+    и «осталось 0.4 дня» ничего не значило бы.
+    """
+    due = parse_due(value)
+    if due is None:
+        return None
+    return (due - (today or date.today())).days
+
+
+def set_due(tasks_dir: Path, task_id: str, value: str,
+            agent: str | None = None) -> dict:
+    """Проставить или снять срок задачи. По маршруту не двигает.
+
+    Пустое значение **снимает срок** (`due: ~`): задача без срока — норма, и
+    передумать должно быть чем. Перенос идёт в хронологию: «двигали дважды»
+    объясняет ход работы лучше, чем одна нынешняя дата во frontmatter.
+    """
+    tasks_dir = Path(tasks_dir)
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    value = (value or "").strip()
+    if value and parse_due(value) is None:
+        return {"ok": False,
+                "error": f"Не разобрал срок: {value} (нужен формат ГГГГ-ММ-ДД)"}
+    was = _one_line(_read_meta(path).get(DUE_FIELD))
+    was = "" if was == EMPTY else was
+    _set_fields(path, {DUE_FIELD: value or EMPTY})
+    if value != was:
+        note_event(tasks_dir, task_id,
+                   DUE_TEXT.format(now=value or "не указан",
+                                   was=was or "не указан"), agent)
+    return {"ok": True, "task": task_id.strip().upper(), "due": value,
+            "left": due_left(value) if value else None}
+
+
+def due_slice(tasks_dir: Path, horizon: int = 7) -> dict:
+    """Что горит и что просрочено — срез по срокам, а не грепом по файлам.
+
+    `horizon` — сколько дней вперёд считать «горит». Завершённые и отменённые
+    задачи в срез не идут: срок у них смысла не имеет.
+    """
+    tasks_dir = Path(tasks_dir)
+    cfg = load_config(tasks_dir)
+    pipeline = pipeline_of(cfg)
+    closed = {st["key"] for st in pipeline if st.get("offramp")} | {pipeline[-1]["key"]}
+    today = date.today()
+    overdue: list[dict] = []
+    soon: list[dict] = []
+    for path in sorted(tasks_dir.glob("TASK-*.md")):
+        meta = _read_meta(path)
+        due = _one_line(meta.get(DUE_FIELD))
+        if not due or due == EMPTY:
+            continue
+        left = due_left(due, today)
+        if left is None:
+            continue
+        status = _one_line(meta.get("status"))
+        if status in closed:
+            continue
+        entry = {"id": _one_line(meta.get("id")) or path.stem.split("-")[0],
+                 "title": _one_line(meta.get("title")),
+                 "status": status, "label": _label_of(pipeline, status),
+                 "due": due, "left": left, "file": path.name}
+        if left < 0:
+            overdue.append(entry)
+        elif left <= horizon:
+            soon.append(entry)
+    overdue.sort(key=lambda e: e["due"])
+    soon.sort(key=lambda e: e["due"])
+    return {"today": today.isoformat(), "horizon": horizon,
+            "overdue": overdue, "soon": soon,
+            "total": len(overdue) + len(soon)}
 
 
 def sizes() -> dict:
@@ -2866,6 +2962,11 @@ def main() -> None:
                         help="оценить объём задачи: S | M | L | XL (пусто — снять)")
     parser.add_argument("--sizes", action="store_true",
                         help="каталог размеров задачи (JSON)")
+    parser.add_argument("--due", dest="task_due", metavar="ГГГГ-ММ-ДД", default=None,
+                        help="срок задачи (пусто — снять)")
+    parser.add_argument("--due-slice", dest="due_slice", nargs="?", const=7,
+                        type=int, metavar="ДНЕЙ", default=None,
+                        help="что просрочено и что горит в ближайшие N дней (JSON, по умолчанию 7)")
     parser.add_argument("--assignee", metavar="ИМЯ", default=None,
                         help="кто занимается задачей на этапе проверки (пусто — снять)")
     parser.add_argument("--assignees", action="store_true",
@@ -2948,6 +3049,11 @@ def main() -> None:
         print(json.dumps(stalled(tasks_dir), ensure_ascii=False, indent=2))
         return
 
+    if args.due_slice is not None:
+        print(json.dumps(due_slice(tasks_dir, args.due_slice),
+                         ensure_ascii=False, indent=2))
+        return
+
     if args.debt is not None:
         task_id = args.debt or args.task_id
         if not task_id:
@@ -3017,6 +3123,24 @@ def main() -> None:
             print(f"[ERROR] {result.get('error')}", file=sys.stderr)
             sys.exit(1)
         print(f"[OK] {result['task']}: тип — {result['label']} ({result['type']})")
+        if not args.status and args.note is None:
+            return
+
+    # Срок — не этап: по маршруту не двигает, порядок тот же, что у размера
+    if args.task_due is not None:
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --due")
+        result = set_due(tasks_dir, args.task_id, args.task_due, args.agent)
+        if not result.get("ok"):
+            print(f"[ERROR] {result.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        if result["due"]:
+            left = result["left"]
+            when = ("сегодня" if left == 0 else
+                    f"через {left} дн." if left > 0 else f"просрочен на {-left} дн.")
+            print(f"[OK] {result['task']}: срок — {result['due']} ({when})")
+        else:
+            print(f"[OK] {result['task']}: срок снят")
         if not args.status and args.note is None:
             return
 

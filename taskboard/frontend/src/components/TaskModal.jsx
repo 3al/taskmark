@@ -287,6 +287,30 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
     onPick: pickSize, onClose: () => setSizePicker(false),
   })
 
+  // Срок задачи. Списка тут быть не может — значение непрерывное, поэтому
+  // вместо выбора обычное поле даты: календарь рисует браузер, и своего мы
+  // не заводим. Пустая строка на бэкенде значит «снять», как и у размера
+  const [duePicker, setDuePicker] = useState(false)
+  const [dueSaving, setDueSaving] = useState(false)
+  // Пустое поле во frontmatter — это `~`, а не отсутствие ключа: метка «до ~»
+  // выглядела бы поломкой
+  const dueValue = task?.meta?.due && task.meta.due !== '~' ? task.meta.due : ''
+
+  const saveDue = async (value) => {
+    if ((value || '') === dueValue) { setDuePicker(false); return }
+    setDueSaving(true)
+    try {
+      await api.updateTask(taskId, { due: value })
+      setTask(await api.task(taskId))
+      onChanged?.()
+      setDuePicker(false)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setDueSaving(false)
+    }
+  }
+
   // Исполнитель: кто занимается задачей на этапе проверки. Поле есть не в
   // каждом статусе — спрашивает ли этап исполнителя, говорит бэкенд
   // (`can_assign`): правило одно, и считать его здесь заново значило бы
@@ -708,6 +732,55 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                             ${sizeKeys.active === sizeOptions.length - 1
                               ? 'text-zinc-300' : 'text-zinc-400'}`}>
                           снять оценку
+                        </button>
+                      )}
+                    </span>
+                    </>
+                  )}
+                </span>
+                {/* Срок: та же метка-кнопка, что у типа и размера. Срока нет
+                    у большинства задач, поэтому у пустой метка пунктирная —
+                    ею же срок и ставят */}
+                <span className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setDuePicker((v) => !v)}
+                    disabled={dueSaving}
+                    title="Срок задачи"
+                    className={`px-1.5 py-px rounded border text-[10px] transition
+                      hover:brightness-125 disabled:opacity-60
+                      ${dueValue
+                        ? 'border-zinc-600 text-zinc-300'
+                        : 'border-dashed border-zinc-700 text-zinc-400'}`}>
+                    {dueValue ? `до ${dueValue}` : 'без срока'}
+                  </button>
+                  {duePicker && (
+                    <>
+                    <span className="fixed inset-0 z-40"
+                          onClick={(e) => { e.stopPropagation(); setDuePicker(false) }} />
+                    <span className="absolute left-0 top-full mt-1 z-50 flex items-center gap-1
+                      rounded-lg border border-zinc-700 bg-zinc-900 p-1.5 shadow-xl">
+                      <input
+                        type="date"
+                        defaultValue={dueValue}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveDue(e.currentTarget.value)
+                          if (e.key === 'Escape') setDuePicker(false)
+                        }}
+                        onBlur={(e) => saveDue(e.currentTarget.value)}
+                        className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-px
+                          text-[11px] text-zinc-200" />
+                      {/* Снять срок: задача без срока — норма, и способ
+                          передумать обязан быть */}
+                      {dueValue && (
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => saveDue('')}
+                          className="px-1.5 py-px rounded border border-dashed border-zinc-700
+                            text-[10px] text-zinc-400 hover:text-zinc-300 whitespace-nowrap">
+                          снять срок
                         </button>
                       )}
                     </span>

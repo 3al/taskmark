@@ -207,9 +207,13 @@ class ProgressOnCardTest(unittest.TestCase):
         self.assertIn("task.progress", self.src)
 
     def test_row_appears_for_progress_alone(self) -> None:
-        """У задачи без возраста и эпика строка нужна ради одной полоски."""
-        row = self.src[self.src.index("task.stale_days || task.epic"):]
-        self.assertIn("progress", row[:200],
+        """У задачи без возраста, срока и эпика строка нужна ради одной полоски.
+
+        Условие строки ищем по её началу, а не целиком: слева от эпика стоит
+        то, что вытесняет друг друга (возраст, срок), и список там растёт.
+        """
+        row = self.src[self.src.index("{(task.stale_days"):]
+        self.assertIn("task.progress", row[:300],
                       "нижняя строка не рисуется, когда есть только прогресс")
 
     def test_progress_is_centered_between_neighbours(self) -> None:

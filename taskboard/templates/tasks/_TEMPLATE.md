@@ -4,6 +4,7 @@ title: Краткое название задачи
 epic: ~
 type: feature
 size: ~
+due: ~
 status: backlog
 created: YYYY-MM-DD HH:MM
 author: ~

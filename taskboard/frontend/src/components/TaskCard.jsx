@@ -40,6 +40,34 @@ const GLYPH = { fontSize: '0.95em' }
 // (TASK-122), и флаг ради одного элемента незачем тащить пропсами
 const MARK = `${SLOT} rounded-full ring-1`
 
+// Срок словами: «сколько осталось» вместо даты. Дата сама по себе требует
+// счёта в уме — ровно того, от чего избавляет возраст в соседней ячейке.
+// Число дней считает бэкенд: оно зависит от сегодняшнего дня, и карточка,
+// отрисованная вчера, врала бы до перезагрузки
+function duePhrase(left) {
+  if (left === 0) return 'срок сегодня'
+  if (left === 1) return 'срок завтра'
+  if (left < 0) {
+    const days = -left
+    const last = days % 10
+    const teen = days % 100 >= 11 && days % 100 <= 14
+    const word = !teen && last === 1 ? 'день' : !teen && last >= 2 && last <= 4 ? 'дня' : 'дней'
+    return `просрочен на ${days} ${word}`
+  }
+  const last = left % 10
+  const teen = left % 100 >= 11 && left % 100 <= 14
+  const word = !teen && last === 1 ? 'день' : !teen && last >= 2 && last <= 4 ? 'дня' : 'дней'
+  return `${left} ${word} до срока`
+}
+
+// Цвет срока: просроченный — тревожный, ближайшая неделя — предупреждение,
+// дальний — как весь низ карточки. Порог недели тот же, что у среза скрипта
+function dueTone(left) {
+  if (left < 0) return 'text-rose-400/90'
+  if (left <= 7) return 'text-amber-300/90'
+  return ''
+}
+
 // Возраст в статусе словами. Число дней приходит с бэкенда — там же решено,
 // показывать ли его вообще: порог залежалости один на доску
 function agePhrase(days) {
@@ -335,11 +363,23 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             карточки независимо от того, есть ли у задачи возраст и эпик. В
             потоке она уезжала бы вслед за соседями, и колонка превращалась
             в лесенку */}
-        {(task.stale_days || task.epic || task.progress) && (
+        {(task.stale_days || task.due_left != null || task.epic || task.progress) && (
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1 text-zinc-400"
                style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
+            {/* Одна ячейка — одна мысль. Обе пометки про время, но отвечают на
+                разные его половины: «сколько висит» и «сколько осталось».
+                Рядом они спорят за место и за внимание, поэтому срок вытесняет
+                возраст — он действеннее. Возраст не пропадает: уходит
+                в подсказку, где уже живут исполнитель и дата перехода */}
             <span className="min-w-0 truncate">
-              {task.stale_days > 0 && (
+              {task.due_left != null ? (
+                <span className={dueTone(task.due_left)}
+                      title={[`Срок: ${task.due}`,
+                              task.stale_days > 0 ? agePhrase(task.stale_days) : '',
+                              task.agent, task.moved].filter(Boolean).join(' · ')}>
+                  {duePhrase(task.due_left)}
+                </span>
+              ) : task.stale_days > 0 && (
                 <span title={[task.agent, task.moved].filter(Boolean).join(' · ')}>
                   {agePhrase(task.stale_days)}
                 </span>

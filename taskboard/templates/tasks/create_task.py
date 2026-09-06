@@ -456,6 +456,7 @@ title: {title}
 epic: {epic_value}
 type: {task_type or "~"}
 size: ~
+due: ~
 status: {status_key}
 created: {created_date}
 author: {author_value}

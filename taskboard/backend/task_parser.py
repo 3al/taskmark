@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
 from backend.config import TASK_SIZES, TASK_TYPES, card_style
-from backend.notes import (ASSIGNEE_TEXT, AUTHOR_TEXT, BOARD_AUTHOR, SIZE_TEXT,
+from backend.notes import (ASSIGNEE_TEXT, AUTHOR_TEXT, BOARD_AUTHOR, DUE_TEXT,
+                           SIZE_TEXT,
                            TITLE_TEXT, TYPE_TEXT, append_note)
 from backend.statuses import is_terminal
 
@@ -231,6 +233,19 @@ def checklist_progress(body: str) -> dict | None:
     return {"done": done, "total": total} if done else None
 
 
+def due_left(value: str, today: date | None = None) -> int | None:
+    """Сколько дней осталось до срока: 0 — сегодня, отрицательное — просрочен.
+
+    None — срока нет или он не разобран: задача без срока это норма, а мусор
+    в поле не повод показывать на превью пустую метку.
+    """
+    try:
+        due = date.fromisoformat((value or "").strip())
+    except ValueError:
+        return None
+    return (due - (today or date.today())).days
+
+
 def annotate_marks(tasks_dir: Path, board: dict, cfg: dict | None = None,
                    pipeline=None) -> dict:
     """Проставить карточкам доски метки из файла задачи: тип, размер, прогресс.
@@ -274,6 +289,14 @@ def annotate_marks(tasks_dir: Path, board: dict, cfg: dict | None = None,
                 size = str(meta.get("size", "") or "").strip().upper()
                 if size in TASK_SIZES:
                     task["size"] = size
+                # Срок и то, сколько до него осталось. Считает бэкенд, а не
+                # превью: «сколько осталось» зависит от сегодняшнего дня, и
+                # карточка, отрисованная вчера, врала бы до перезагрузки
+                due = str(meta.get("due", "") or "").strip()
+                left = due_left(due)
+                if left is not None:
+                    task["due"] = due
+                    task["due_left"] = left
                 progress = checklist_progress(content) if column_progress else None
                 if progress:
                     task["progress"] = progress
@@ -401,6 +424,35 @@ def set_task_size(tasks_dir: Path, task_id: str, value: str,
                                            was=was or "не указан"), author)
     return {"ok": True, "size": value,
             "label": TASK_SIZES[value]["label"] if value else ""}
+
+
+def set_task_due(tasks_dir: Path, task_id: str, value: str,
+                 author: str = BOARD_AUTHOR) -> dict:
+    """Проставить или снять срок задачи — то же, что `set_status.py --due`.
+
+    Пустое значение **снимает срок** (`due: ~`): задача без срока — норма.
+    Формат один, `ГГГГ-ММ-ДД`: времени у срока нет, и разбирать два вида
+    значения пришлось бы во всех концах — от сравнения до текста на карточке.
+
+    Перенос срока объясняет ход работы не хуже смены размера, поэтому идёт
+    в хронологию. Повтор того же значения событием не считается.
+    """
+    value = (value or "").strip()
+    if value and due_left(value) is None:
+        return {"ok": False,
+                "error": f"Не разобрал срок: {value} (нужен формат ГГГГ-ММ-ДД)"}
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
+    meta, _body = parse_frontmatter(path.read_text(encoding="utf-8-sig"))
+    was = str(meta.get("due", "") or "").strip()
+    was = was if due_left(was) is not None else ""
+    if not set_meta_fields(path, {"due": value or "~"}):
+        return {"ok": False, "error": f"Не удалось записать срок в {path.name}"}
+    if value != was:
+        append_note(path, DUE_TEXT.format(now=value or "не указан",
+                                          was=was or "не указан"), author)
+    return {"ok": True, "due": value, "left": due_left(value) if value else None}
 
 
 def set_task_assignee(tasks_dir: Path, task_id: str, value: str,
