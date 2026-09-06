@@ -26,6 +26,9 @@ COMMANDS_TEMPLATES = AGENTIC_TEMPLATES / ".opencode" / "commands"
 HOOK_TEMPLATES = {
     "claude": AGENTIC_TEMPLATES / ".claude" / "hooks",
     "opencode": AGENTIC_TEMPLATES / ".opencode" / "plugin",
+    # Codex понимает тот же контракт, что и Claude Code, — тот же обработчик,
+    # своя лишь регистрация (`.codex/hooks.json` вместо настроек проекта)
+    "codex": AGENTIC_TEMPLATES / ".codex" / "hooks",
 }
 VAULT_TEMPLATES = TEMPLATES_DIR / "vault"
 
@@ -98,10 +101,13 @@ VAULT_GITIGNORE = (
 # конфиге проекта (ключ "harnesses"): по раскладке на диске его не угадать —
 # папки может не быть просто потому, что проект ещё не открывали в этой среде,
 # а планы на неё знает только пользователь.
-HARNESSES = ("claude", "opencode")
+HARNESSES = ("claude", "opencode", "codex")
 
-# Файл правил каждой среды — тот, который она реально читает
-HARNESS_RULES_FILE = {"claude": "CLAUDE.md", "opencode": "AGENTS.md"}
+# Файл правил каждой среды — тот, который она реально читает. Связь
+# много-к-одному: `AGENTS.md` читают и opencode, и Codex, поэтому состав файлов
+# нужно разворачивать по множеству, а не по списку сред (см. rules_files)
+HARNESS_RULES_FILE = {"claude": "CLAUDE.md", "opencode": "AGENTS.md",
+                      "codex": "AGENTS.md"}
 
 # Опция scaffold, которой можно отказаться от конкретного файла правил
 _RULES_OPTION = {"CLAUDE.md": "rules_claude", "AGENTS.md": "rules_agents"}
@@ -477,8 +483,8 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
                     created += c
                     replaced += r
                     diverged += d
-        if "hook_registration" in want and register_hook(project_root, cfg):
-            replaced.append(CLAUDE_SETTINGS)
+        if "hook_registration" in want:
+            replaced += register_hook(project_root, cfg)
         for part in ("skills", "commands", "hooks", "rules"):
             if part not in want:
                 continue
@@ -492,14 +498,15 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             # Проверяем независимо от того, создали ли что-то сейчас: часть
             # может быть давно на месте, а игнор её так и не покрывать
             if part in ("skills", "commands"):
-                target = (_deployed_skills(project_root, cfg) if part == "skills"
-                          else _deployed_commands(project_root))
-                outcome = _ensure_ignored(target.parent, target.name)
-                if outcome == "created":
-                    created.append(f"{target.parent.name}/.gitignore")
-                elif outcome == "appended":
-                    replaced.append(
-                        f"{target.parent.name}/.gitignore (дописано: {target.name}/)")
+                targets = ([d for _p, d in _skills_dirs(project_root, cfg)]
+                           if part == "skills" else [_deployed_commands(project_root)])
+                for target in targets:
+                    outcome = _ensure_ignored(target.parent, target.name)
+                    if outcome == "created":
+                        created.append(f"{target.parent.name}/.gitignore")
+                    elif outcome == "appended":
+                        replaced.append(
+                            f"{target.parent.name}/.gitignore (дописано: {target.name}/)")
         return {"created": created, "skipped": skipped, "replaced": replaced,
                 "diverged": diverged, "rules": {"appended": [], "already_present": []}}
 
@@ -514,16 +521,16 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         replaced += r
         skipped += s
         diverged += d
-        # .gitignore кладём в ту агентскую папку, куда легли скиллы
-        skills_dir = _deployed_skills(project_root, cfg)
-        outcome = _ensure_ignored(skills_dir.parent, skills_dir.name)
-        if outcome == "created":
-            created.append(f"{skills_dir.parent.name}/.gitignore")
-        elif outcome == "appended":
-            replaced.append(
-                f"{skills_dir.parent.name}/.gitignore (дописано: {skills_dir.name}/)")
-        else:
-            skipped.append(f"{skills_dir.parent.name}/.gitignore")
+        # .gitignore кладём в каждую агентскую папку, куда легли скиллы
+        for _prefix, skills_dir in _skills_dirs(project_root, cfg):
+            outcome = _ensure_ignored(skills_dir.parent, skills_dir.name)
+            if outcome == "created":
+                created.append(f"{skills_dir.parent.name}/.gitignore")
+            elif outcome == "appended":
+                replaced.append(
+                    f"{skills_dir.parent.name}/.gitignore (дописано: {skills_dir.name}/)")
+            else:
+                skipped.append(f"{skills_dir.parent.name}/.gitignore")
 
     # Волт — часть поставки, а не только режим текстов: без структуры скиллы
     # ссылались бы на папку, которой никто не создаёт
@@ -560,10 +567,9 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
         replaced += r
         skipped += s
         diverged += d
-        # Ссылка на обработчик в настройках проекта: файл пользователя, поэтому
-        # правится только своя запись
-        if register_hook(project_root, cfg):
-            replaced.append(CLAUDE_SETTINGS)
+        # Ссылка на обработчик в файле настроек среды: файл пользователя,
+        # поэтому правится только своя запись
+        replaced += register_hook(project_root, cfg)
         for _harness, hooks_dir in _hook_dirs(project_root, cfg):
             outcome = _ensure_ignored(hooks_dir.parent, hooks_dir.name)
             if outcome == "created":
@@ -674,10 +680,13 @@ def detect_harnesses(project_root: Path) -> dict:
     Не найдено ничего — проект просто не открывали ни в одной среде;
     предлагаем обе, лишнее пользователь снимет сам.
     """
+    # `AGENTS.md` читают обе среды, и по нему их не различить: предзаполняем обе,
+    # лишнюю пользователь снимет. Своя папка — признак однозначный
+    agents_md = (project_root / "AGENTS.md").is_file()
     found = {
         "claude": (project_root / ".claude").is_dir() or (project_root / "CLAUDE.md").is_file(),
-        "opencode": ((project_root / ".opencode").is_dir()
-                     or (project_root / "AGENTS.md").is_file()),
+        "opencode": (project_root / ".opencode").is_dir() or agents_md,
+        "codex": (project_root / ".codex").is_dir() or agents_md,
     }
     return found if any(found.values()) else {h: True for h in HARNESSES}
 
@@ -689,18 +698,40 @@ def harnesses(project_root: Path, cfg: dict | None = None) -> dict:
 
 # --- Актуальность развёрнутого агентского окружения ---
 
-def _deployed_skills(project_root: Path, cfg: dict | None = None) -> Path:
-    """Где живут наши скиллы — одна копия на проект.
+def _skills_dirs(project_root: Path,
+                 cfg: dict | None = None) -> list[tuple[str, Path]]:
+    """Куда кладём скиллы: (префикс имени, папка). Копий может быть две.
 
-    opencode читает и `.claude/skills`, поэтому при обеих средах дублировать
-    нечего; отдельная папка `.opencode/skills` нужна только проекту без
-    Claude Code. Смена выбора не удаляет прежнюю копию (там могут быть правки),
-    но в проверке участвует только действующее расположение.
+    Правило «одна копия» держится ровно до тех пор, пока среды читают общий
+    каталог: opencode читает `.claude/skills`, поэтому паре claude+opencode
+    хватает одной папки, а отдельная `.opencode/skills` нужна проекту без
+    Claude Code. Codex не читает ни ту, ни другую — только `.codex/skills`
+    (и `.agents/skills`), поэтому вместе с Claude Code он требует второй копии.
+
+    Префикс отличает элементы второй копии в отчёте и в ключах слепков — тем же
+    приёмом, что у обработчиков хуков. У основной копии он пуст: имена скиллов
+    в уже развёрнутых проектах менять нельзя, иначе их слепки разом теряют
+    происхождение.
+
+    Смена выбора прежнюю копию не удаляет (там могут быть правки), но в
+    проверке участвуют только действующие расположения.
     """
     active = harnesses(project_root, cfg)
-    if active["opencode"] and not active["claude"]:
-        return project_root / ".opencode" / "skills"
-    return project_root / ".claude" / "skills"
+    dirs: list[tuple[str, Path]] = []
+    if active["claude"]:
+        dirs.append(("", project_root / ".claude" / "skills"))
+    elif active["opencode"]:
+        dirs.append(("", project_root / ".opencode" / "skills"))
+    if active["codex"]:
+        dirs.append(("codex/" if dirs else "", project_root / ".codex" / "skills"))
+    # Сред не выбрано вовсе — расположение прежнее: место должно быть известно
+    # и до выбора, иначе проверки не на что опереть
+    return dirs or [("", project_root / ".claude" / "skills")]
+
+
+def _deployed_skills(project_root: Path, cfg: dict | None = None) -> Path:
+    """Основная копия скиллов — там, где её ищут вопросы «развёрнуто ли вообще»."""
+    return _skills_dirs(project_root, cfg)[0][1]
 
 
 def _deployed_commands(project_root: Path) -> Path:
@@ -750,7 +781,6 @@ def _skill_targets(project_root: Path, features: set[str] | None = None,
     if features is None:
         features = project_features(project_root, cfg)
     skipped = _skipped_skills(features)
-    skills_dir = _deployed_skills(project_root, cfg)
     out: list[tuple[str, Path, str]] = []
     for skill_dir in sorted(SKILLS_TEMPLATES.iterdir()):
         if not skill_dir.is_dir():
@@ -760,8 +790,10 @@ def _skill_targets(project_root: Path, features: set[str] | None = None,
         if skill_dir.name in skipped:
             continue
         raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-        out.append((skill_dir.name, skills_dir / skill_dir.name / "SKILL.md",
-                    strip_optional_blocks(raw, features)))
+        text = strip_optional_blocks(raw, features)
+        for prefix, skills_dir in _skills_dirs(project_root, cfg):
+            out.append((f"{prefix}{skill_dir.name}",
+                        skills_dir / skill_dir.name / "SKILL.md", text))
     return out
 
 
@@ -771,33 +803,47 @@ def _skill_targets(project_root: Path, features: set[str] | None = None,
 # на каждую его запись. Приём тот же, что у секции правил внутри CLAUDE.md —
 # правим только свою запись, остальное остаётся владельцу дословно.
 CLAUDE_SETTINGS = ".claude/settings.json"
+CODEX_HOOKS = ".codex/hooks.json"
+# Файл, куда каждая среда ждёт запись о хуке. Codex держит хуки отдельным
+# файлом, но формат блока `hooks` у него тот же, что в настройках Claude Code,
+# — и он точно так же может содержать хуки пользователя, поэтому правим только
+# свою запись. opencode здесь не участвует: плагин он берёт из папки сам
+HOOK_REGISTRATION_FILE = {"claude": CLAUDE_SETTINGS, "codex": CODEX_HOOKS}
 HOOK_EVENT = "PostToolUse"
 # По этому куску пути своя запись и опознаётся: имя обработчика — константа
 # поставки, и совпасть с чужим хуком случайно оно не может
 HOOK_MARK = "work-hint"
 
 
-def _settings_path(project_root: Path) -> Path:
-    return Path(project_root) / ".claude" / "settings.json"
+def _settings_path(project_root: Path, harness: str = "claude") -> Path:
+    return Path(project_root) / HOOK_REGISTRATION_FILE[harness]
 
 
-def _hook_command() -> str:
-    """Чем звать обработчик. Лаунчер `py` есть только на Windows."""
+def _hook_command(harness: str = "claude") -> str:
+    """Чем звать обработчик. Лаунчер `py` есть только на Windows.
+
+    Путь до обработчика у сред задаётся по-разному. Claude Code подставляет
+    в команду `CLAUDE_PROJECT_DIR`; у Codex такой переменной нет вовсе, зато
+    процесс хука он запускает из корня проекта — оттуда работает относительный
+    путь, и абсолютный, который в шаблон поставки всё равно не зашить, не нужен.
+    """
     python = "py" if os.name == "nt" else "python3"
+    if harness == "codex":
+        return f"{python} .codex/hooks/work-hint.py"
     return f'{python} "${{CLAUDE_PROJECT_DIR}}/.claude/hooks/work-hint.py"'
 
 
-def _hook_entry() -> dict:
+def _hook_entry(harness: str = "claude") -> dict:
     return {"matcher": "Bash",
-            "hooks": [{"type": "command", "command": _hook_command()}]}
+            "hooks": [{"type": "command", "command": _hook_command(harness)}]}
 
 
-def _read_settings(project_root: Path) -> dict | None:
+def _read_settings(project_root: Path, harness: str = "claude") -> dict | None:
     """Настройки проекта или None, если файла нет либо он не читается.
 
     Битый JSON — не повод переписывать чужой файл начисто: молчим и не трогаем.
     """
-    path = _settings_path(project_root)
+    path = _settings_path(project_root, harness)
     if not path.is_file():
         return None
     try:
@@ -822,32 +868,46 @@ def _is_dead(entry) -> bool:
             and not (entry.get("hooks") or []))
 
 
-def hook_registered(project_root: Path) -> bool:
-    """Сослались ли настройки проекта на наш обработчик."""
-    data = _read_settings(project_root)
+def hook_registered(project_root: Path, harness: str = "claude") -> bool:
+    """Сослался ли файл настроек среды на наш обработчик."""
+    data = _read_settings(project_root, harness)
     if data is None:
         return False
     entries = ((data.get("hooks") or {}).get(HOOK_EVENT) or [])
     return any(_is_ours(entry) for entry in entries)
 
 
-def register_hook(project_root: Path, cfg: dict | None = None) -> bool:
-    """Добавить свою запись в настройки проекта. True — файл изменился.
+def hooks_unregistered(project_root: Path, cfg: dict | None = None) -> list[str]:
+    """Файлы сред, где записи о нашем обработчике ещё нет."""
+    active = harnesses(project_root, cfg)
+    return [name for harness, name in HOOK_REGISTRATION_FILE.items()
+            if active[harness] and not hook_registered(project_root, harness)]
 
-    Нужна только Claude Code: opencode подхватывает плагин из папки сам.
+
+def register_hook(project_root: Path, cfg: dict | None = None) -> list[str]:
+    """Добавить свою запись в файлы настроек сред. Возвращает изменённые файлы.
+
+    Нужна Claude Code и Codex: opencode подхватывает плагин из папки сам.
+    Файл в обоих случаях **чужой** — там могут быть хуки пользователя, — поэтому
+    правится только своя запись, а остальное остаётся владельцу дословно.
     """
     project_root = Path(project_root)
-    if not harnesses(project_root, cfg)["claude"]:
-        return False
-    path = _settings_path(project_root)
-    data = _read_settings(project_root)
+    active = harnesses(project_root, cfg)
+    return [name for harness, name in HOOK_REGISTRATION_FILE.items()
+            if active[harness] and _register_one(project_root, harness)]
+
+
+def _register_one(project_root: Path, harness: str) -> bool:
+    """Запись о хуке в файле одной среды. True — файл изменился."""
+    path = _settings_path(project_root, harness)
+    data = _read_settings(project_root, harness)
     if data is None and path.is_file():
         return False  # чужой файл сломан — молча не трогаем
     if data is None:
         data = {}
 
     entries = list((data.get("hooks") or {}).get(HOOK_EVENT) or [])
-    entry = _hook_entry()
+    entry = _hook_entry(harness)
 
     # Своё — наша запись и мёртвые оболочки от неё: команду из записи вынимают
     # руками, и опознать её потом можно только по пустому списку. Раз мы готовы
@@ -873,9 +933,9 @@ def register_hook(project_root: Path, cfg: dict | None = None) -> bool:
     return True
 
 
-def unregister_hook(project_root: Path) -> bool:
+def unregister_hook(project_root: Path, harness: str = "claude") -> bool:
     """Убрать свою запись, ничего чужого не задев. True — файл изменился."""
-    data = _read_settings(project_root)
+    data = _read_settings(project_root, harness)
     if data is None:
         return False
     entries = list((data.get("hooks") or {}).get(HOOK_EVENT) or [])
@@ -888,7 +948,7 @@ def unregister_hook(project_root: Path) -> bool:
     else:
         hooks.pop(HOOK_EVENT, None)
     data["hooks"] = hooks
-    _settings_path(project_root).write_text(
+    _settings_path(project_root, harness).write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return True
 
@@ -896,8 +956,9 @@ def unregister_hook(project_root: Path) -> bool:
 def _hook_dirs(project_root: Path, cfg: dict | None = None) -> list[tuple[str, Path]]:
     """(среда, папка обработчиков) для каждой выбранной среды.
 
-    Раскладок две и обе живут одновременно: у Claude Code и opencode разные
-    механизмы, и общей копией, как у скиллов, тут не обойтись.
+    Раскладки у сред разные — у Claude Code и Codex скрипт, который зовут по
+    записи в их файле настроек, у opencode плагин, подхватываемый из папки
+    самой средой, — поэтому общей копией, как у скиллов, тут не обойтись.
     """
     active = harnesses(project_root, cfg)
     out = []
@@ -905,6 +966,8 @@ def _hook_dirs(project_root: Path, cfg: dict | None = None) -> list[tuple[str, P
         out.append(("claude", project_root / ".claude" / "hooks"))
     if active["opencode"]:
         out.append(("opencode", project_root / ".opencode" / "plugin"))
+    if active["codex"]:
+        out.append(("codex", project_root / ".codex" / "hooks"))
     return out
 
 
@@ -961,9 +1024,10 @@ def _extra_targets(project_root: Path,
     active = harnesses(project_root, cfg)
     out: list[tuple[str, str, Path]] = []
     for name in sorted(skipped):
-        skill = _deployed_skills(project_root, cfg) / name / "SKILL.md"
-        if skill.is_file():
-            out.append(("skills", name, skill))
+        for prefix, skills_dir in _skills_dirs(project_root, cfg):
+            skill = skills_dir / name / "SKILL.md"
+            if skill.is_file():
+                out.append(("skills", f"{prefix}{name}", skill))
         command = _deployed_commands(project_root) / f"{name}.md"
         if active["opencode"] and command.is_file():
             out.append(("commands", name, command))
@@ -1109,6 +1173,7 @@ def agentic_paths(project_root: Path) -> list[Path]:
     """
     candidates = (project_root / ".claude" / "skills",
                   project_root / ".opencode" / "skills",
+                  project_root / ".codex" / "skills",
                   _deployed_commands(project_root),
                   *(project_root / VAULT_DIR / name for name in VAULT_SYSTEM_DIRS))
     return [p for p in candidates if p.is_dir()]
@@ -1137,7 +1202,8 @@ def _marker_deployed(project_root: Path, marker: str, cfg: dict | None) -> bool:
     """Остались ли маркеры возможности в развёрнутых скиллах проекта."""
     start = _block_markers(marker)[0]
     return any(start in (_read(skill) or "")
-               for skill in _deployed_skills(project_root, cfg).glob("*/SKILL.md"))
+               for _prefix, skills_dir in _skills_dirs(project_root, cfg)
+               for skill in skills_dir.glob("*/SKILL.md"))
 
 
 def uses_vault(project_root: Path, cfg: dict | None = None) -> bool:
@@ -1160,7 +1226,10 @@ def rules_files(project_root: Path, cfg: dict | None = None) -> list[str]:
     выбор сред: каждая среда читает свой файл.
     """
     active = harnesses(project_root, cfg)
-    return [HARNESS_RULES_FILE[h] for h in HARNESSES if active[h]]
+    # dict.fromkeys, а не set: `AGENTS.md` нужен и opencode, и Codex — без
+    # схлопывания дублей файл разворачивался бы дважды и дважды же попадал
+    # в отчёт валидатора
+    return list(dict.fromkeys(HARNESS_RULES_FILE[h] for h in HARNESSES if active[h]))
 
 
 def rules_deployed(project_root: Path, cfg: dict | None = None) -> list[str]:
@@ -1264,7 +1333,7 @@ def _deployed_parts(project_root: Path,
     """
     active = harnesses(project_root, cfg)
     parts: list[tuple[str, list[tuple[str, Path, str]]]] = []
-    if any(_deployed_skills(project_root, cfg).glob("*/SKILL.md")):
+    if any(any(d.glob("*/SKILL.md")) for _p, d in _skills_dirs(project_root, cfg)):
         parts.append(("skills", _skill_targets(project_root, cfg=cfg)))
     if active["opencode"] and any(_deployed_commands(project_root).glob("*.md")):
         parts.append(("commands", _command_targets(project_root, cfg=cfg)))
@@ -1639,10 +1708,10 @@ ENV_PARTS = (
     # push при задаче в работе. Часть общая для сред, но раскладка у каждой своя
     {"part": "hooks", "harness": "any",
      "missing": "no_hooks", "outdated": "outdated_hooks"},
-    # Ссылка на обработчик в настройках проекта. Нужна только Claude Code:
+    # Ссылка на обработчик в файле настроек среды. Нужна Claude Code и Codex:
     # opencode подхватывает плагин из папки сам. Устаревания нет — запись либо
     # наша и актуальная, либо её нет: сверять чужой файл с эталоном нельзя
-    {"part": "hook_registration", "harness": "claude",
+    {"part": "hook_registration", "harness": ("claude", "codex"),
      "missing": "no_hook_registration", "outdated": None},
     # Волт проверяется только у тех, кто его выбрал: отказ от внешней памяти —
     # решение пользователя, а не пробел поставки
@@ -1735,6 +1804,9 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             continue
         if harness == "any" and not any(active.values()):
             continue
+        # Кортеж — часть нужна нескольким средам, но не всем: хватает одной
+        if isinstance(harness, tuple) and not any(active[h] for h in harness):
+            continue
         if harness in HARNESSES and not active[harness]:
             continue
 
@@ -1751,7 +1823,7 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             missing = [] if (tasks_dir / name).is_dir() else [f"{name}/"]
             outdated = []
         elif part == "hook_registration":
-            missing = [] if hook_registered(project_root) else [CLAUDE_SETTINGS]
+            missing = hooks_unregistered(project_root, cfg)
             outdated = []
         elif part in ("skills", "commands", "hooks", "vault"):
             missing, partial, outdated = _targets_state(

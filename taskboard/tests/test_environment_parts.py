@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend import baseline  # noqa: E402
 from backend.config import DEFAULTS  # noqa: E402
-from backend.scaffold import environment_issues, scaffold_project  # noqa: E402
+from backend.scaffold import HARNESSES, environment_issues, scaffold_project  # noqa: E402
 from backend.validator import validate_project  # noqa: E402
 
 BOTH = {"claude": True, "opencode": True}
@@ -75,7 +75,9 @@ class EnvironmentPartsTest(unittest.TestCase):
         self._bare_structure()
         report = validate_project(self.tasks_dir, self.cfg)
         self.assertIsNone(report["harnesses"]["choice"])
-        self.assertEqual(set(report["harnesses"]["detected"]), {"claude", "opencode"})
+        # Ничего агентского на диске нет — предлагаются все среды реестра,
+        # лишнее пользователь снимет сам
+        self.assertEqual(set(report["harnesses"]["detected"]), set(HARNESSES))
 
     # --- Отсутствие части видно так же, как устаревание ---
 

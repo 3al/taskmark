@@ -648,7 +648,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                   <span className={label}>Среды агентов</span>
                   <div className="space-y-2">
                     {[['claude', 'Claude Code', '.claude/skills · CLAUDE.md'],
-                      ['opencode', 'opencode', '.opencode/commands · AGENTS.md']].map(
+                      ['opencode', 'opencode', '.opencode/commands · AGENTS.md'],
+                      ['codex', 'Codex', '.codex/skills · .codex/hooks.json · AGENTS.md']].map(
                       ([key, title, where]) => (
                         <label key={key} className="flex items-start gap-2 text-sm cursor-pointer select-none">
                           <input
@@ -701,8 +702,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     </span>
                   </label>
                   <div className="text-[11px] text-zinc-400 mt-1">
-                    Недостающее развернётся кнопками на баннере. Скиллы лежат в одном
-                    месте: opencode читает и .claude/skills
+                    Недостающее развернётся кнопками на баннере. Скиллы лежат одной
+                    копией, пока средам хватает общего каталога: opencode читает
+                    и .claude/skills. Codex её не читает — с ним появляется вторая
+                    копия в .codex/skills
                     {onOpenHelp && (
                       <button className="ml-1 underline hover:text-zinc-400"
                               onClick={() => onOpenHelp('agentic')}>подробнее</button>

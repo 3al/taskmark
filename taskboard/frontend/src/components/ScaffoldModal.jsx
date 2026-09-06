@@ -9,6 +9,7 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
   const [options, setOptions] = useState({
     claude: harnesses?.choice?.claude ?? harnesses?.detected?.claude ?? true,
     opencode: harnesses?.choice?.opencode ?? harnesses?.detected?.opencode ?? true,
+    codex: harnesses?.choice?.codex ?? harnesses?.detected?.codex ?? true,
     vault: false,
   })
   const [busy, setBusy] = useState(false)
@@ -17,12 +18,16 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
 
   const set = (key, value) => setOptions({ ...options, [key]: value })
 
+  // Волт нужен агенту, а агента нет, пока не выбрана хоть одна среда
+  const anyHarness = options.claude || options.opencode || options.codex
+
   const run = async () => {
     setBusy(true)
     setError(null)
     try {
       setResult(await api.scaffold({
-        harnesses: { claude: options.claude, opencode: options.opencode },
+        harnesses: { claude: options.claude, opencode: options.opencode,
+                     codex: options.codex },
         vault: options.vault,
       }))
     } catch (e) {
@@ -164,16 +169,30 @@ export default function ScaffoldModal({ tasksDir, harnesses, onClose, onDone, on
                   </span>
                 </label>
 
+                <label className={row}>
+                  <input
+                    type="checkbox"
+                    checked={options.codex}
+                    onChange={(e) => set('codex', e.target.checked)}
+                    className={`mt-0.5 ${checkbox}`}
+                  />
+                  <span>
+                    Codex
+                    <div className={hint}>.codex/skills/ — свой каталог скиллов · хук в .codex/hooks.json · секция правил в AGENTS.md, общем с opencode</div>
+                  </span>
+                </label>
+
                 <div className="text-[11px] text-zinc-400 pl-6">
-                  Скиллы разворачиваются один раз: opencode читает и .claude/skills,
-                  поэтому вторая копия нужна только проекту без Claude Code.
+                  Скиллы разворачиваются одной копией, пока средам хватает общего
+                  каталога: opencode читает и .claude/skills. Codex не читает ни её,
+                  ни .opencode/skills — с ним появляется вторая копия в .codex/skills.
                 </div>
 
-                <label className={`${row} ${!options.claude && !options.opencode ? 'opacity-40 pointer-events-none' : ''}`}>
+                <label className={`${row} ${!anyHarness ? 'opacity-40 pointer-events-none' : ''}`}>
                   <input
                     type="checkbox"
                     checked={options.vault}
-                    disabled={!options.claude && !options.opencode}
+                    disabled={!anyHarness}
                     onChange={(e) => set('vault', e.target.checked)}
                     className={`mt-0.5 ${checkbox}`}
                   />
