@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -134,8 +135,8 @@ class RefreshTest(Base):
     def test_устаревшая_запись_переписывается(self):
         self.outdated()
         self.assertTrue(autostart.refresh_if_outdated(ROOT))
-        self.assertEqual(self.entry().read_text(encoding="utf-8", newline=""),
-                         autostart._script(ROOT))
+        with self.entry().open(encoding="utf-8", newline="") as fh:
+            self.assertEqual(fh.read(), autostart._script(ROOT))
 
     def test_актуальная_запись_не_трогается(self):
         autostart.enable(ROOT)
@@ -224,6 +225,25 @@ class SettingsUiTest(unittest.TestCase):
         block = text[text.index("{label}>Автозапуск<"):text.index("{label}>Сервер<")]
         self.assertIn("autostart.hint", block,
                       "инструкция для платформы без кнопки не показывается")
+
+
+class MinPythonTest(unittest.TestCase):
+    """Запись автозагрузки читается тем, что есть в минимальном Python.
+
+    `newline` у `Path.read_text` появился только в 3.13, а минимум проекта —
+    3.10: у пользователя старт сервера падал с `TypeError` и инструмент
+    переставал запускаться вовсе (TASK-254). Разработка идёт на свежем
+    Python, поэтому обычным прогоном такое не ловится — сторожим текстом.
+    """
+
+    def test_read_text_без_newline(self):
+        for src in (ROOT / "taskboard" / "backend").glob("*.py"):
+            text = src.read_text(encoding="utf-8")
+            # Точка перед именем: так ищется сам вызов, а не упоминание
+            # в комментарии или строке
+            for call in re.findall(r"\.read_text\([^)]*\)", text):
+                self.assertNotIn("newline", call,
+                                 f"{src.name}: read_text(newline=) требует Python 3.13")
 
 
 if __name__ == "__main__":

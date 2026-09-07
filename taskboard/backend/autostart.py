@@ -98,10 +98,13 @@ def _entry_text() -> str:
 
     Переносы читаются как есть (`newline=""`): иначе `\\r\\n` файла превращается
     в `\\n`, и запись никогда не совпадёт с эталоном — самопочинка переписывала
-    бы её при каждом старте.
+    бы её при каждом старте. Читаем через `open()`, а не `read_text(newline="")`:
+    этот параметр у `read_text` появился только в Python 3.13, а минимум
+    проекта — 3.10.
     """
     try:
-        return entry_path().read_text(encoding="utf-8", newline="")
+        with entry_path().open(encoding="utf-8", newline="") as fh:
+            return fh.read()
     except (OSError, ValueError):
         return ""
 
