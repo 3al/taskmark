@@ -252,6 +252,14 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     telegram_api_root: (config.telegram_api_root || '').trim(),
     telegram_username: (config.telegram_username || '').trim().replace(/^@/, ''),
     telegram_chats: config.telegram_chats || {},
+    // Лестница напоминаний: три поля формы — один список в конфиге. Пустое
+    // поле означает «этой границы нет», все пустые — «не напоминать»
+    telegram_due_days: (Array.isArray(config.telegram_due_days)
+      ? config.telegram_due_days : [config.telegram_due_days])
+      .map((n) => Number(n))
+      .filter((n) => Number.isInteger(n) && n > 0 && n <= 365)
+      .filter((n, i, all) => all.indexOf(n) === i)
+      .sort((a, b) => b - a),
     ...(pipeline ? {
       pipeline: pipeline.pipeline.map((s) => s.key),
       actions: pipeline.actions,
@@ -976,6 +984,56 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         <div className="text-[11px] text-zinc-400 mt-2">
                           Сообщение в чате: #{config.telegram_tag || 'задача'} Текст задачи @
                           {config.telegram_username || 'ваш_ник'}
+                        </div>
+                      </div>
+
+                      {/* Напоминание — про срок, а не про заведение задач, поэтому
+                          отдельным шагом. Границ несколько: одно окно обслуживает
+                          только один горизонт, а лестница даёт задаче ровно те
+                          границы, которые она реально пересекает. Пустое поле и
+                          есть выключатель — переключатель рядом спорил бы с ним */}
+                      <div className="border-t border-zinc-800 pt-4">
+                        <span className={label}>4. Напоминать о сроке за столько дней</span>
+                        {/* Три поля, а не строка через запятую: границ немного и
+                            все они — маленькие целые числа, то есть ровно то, что
+                            набирают крутилкой. Пустое поле означает «этой границы
+                            нет» — так одна и та же клетка отвечает и за значение,
+                            и за отказ от него */}
+                        {(() => {
+                          // Одиночное число — форма прежних версий: показываем
+                          // его границей, а не пустотой «напоминаний нет»
+                          const saved = config.telegram_due_days
+                          const ladder = Array.isArray(saved)
+                            ? saved : (saved ? [saved] : [])
+                          const at = (i) => ladder[i] ?? ''
+                          const put = (i, value) => {
+                            const next = [at(0), at(1), at(2)]
+                            next[i] = value === '' ? '' : Number(value)
+                            set('telegram_due_days', next)
+                          }
+                          return (
+                            <div className="flex items-center gap-2">
+                              {[0, 1, 2].map((i) => (
+                                <input
+                                  key={i}
+                                  className={`${narrowField} w-20`}
+                                  type="number"
+                                  min={1}
+                                  max={365}
+                                  placeholder="—"
+                                  value={at(i)}
+                                  onChange={(e) => put(i, e.target.value)}
+                                />
+                              ))}
+                            </div>
+                          )
+                        })()}
+                        <div className="text-[11px] text-zinc-400 mt-1">
+                          бот напомнит в чат по задачам, заведённым оттуда, и тегнет
+                          причастных. Задача проходит только те границы, до которых
+                          дожила: на две недели — все три, на день — последнюю.
+                          Очистите поле, чтобы убрать границу; все пустые — не
+                          напоминать вовсе
                         </div>
                       </div>
                     </>

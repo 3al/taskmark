@@ -100,6 +100,12 @@ DEFAULTS: dict = {
     # чтобы автор задачи не приписывал к хэштегу ничего. Она же — разрешение:
     # писать можно только в привязанные проекты, а не в любой из реестра
     "telegram_chats": {},
+    # За сколько дней до срока напоминать в чат — лестница границ, а не одно
+    # число: задача на две недели и задача на день пересекают разное их число,
+    # и горизонт задачи сам задаёт, сколько раз о ней напомнят. Пусто — не
+    # напоминать вовсе. Глобальный, как и сам бот, — понадобится разный ритм по
+    # проектам, тогда и разведём
+    "telegram_due_days": [7, 3, 1],
 }
 
 # Границы вида карточки: за ними превью разваливается — заголовок перестаёт
@@ -238,7 +244,7 @@ def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
 # человека, а привязка чатов ссылается сразу на несколько проектов реестра
 TELEGRAM_KEYS = {"telegram", "telegram_token", "telegram_proxy",
                  "telegram_api_root", "telegram_username", "telegram_tag",
-                 "telegram_chats"}
+                 "telegram_chats", "telegram_due_days"}
 
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
                 "dnd_full_board", "harnesses", "vault", "delete_tasks",

@@ -12,9 +12,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend import (autostart, baseline, changelog, help_docs, lifecycle, registry,
-                     notify_watch, telegram_intake, telegram_source, updater,
-                     version)
+from backend import (autostart, baseline, changelog, due_watch, help_docs,
+                     lifecycle, notify_watch, registry, telegram_intake,
+                     telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, TELEGRAM_KEYS,
@@ -83,6 +83,8 @@ _stop_telegram_loop = None
 # переживает его перезапуск: сброс означал бы «первый проход» и молчание о том,
 # что случилось за это время
 _notify_state: dict = {}
+# Расписание напоминаний о сроке: своё, потому что ходит оно реже тика
+_due_state: dict = {}
 
 
 # --- Модели запросов ---
@@ -1280,6 +1282,23 @@ else:
         }
 
 
+def _telegram_tick(cfg: dict):
+    """Что делать на каждом проходе цикла опроса чата.
+
+    Попутчиков двое, и беда одного не должна отменять другого: наблюдатель за
+    статусами читает одну доску на проект, напоминание о сроке — файлы задач, и
+    ходят они с разной частотой (расписание внутри `due_watch`).
+    """
+    def tick() -> None:
+        for run in (lambda: notify_watch.check_all(cfg, _notify_state),
+                    lambda: due_watch.check_all(cfg, _due_state)):
+            try:
+                run()
+            except Exception:  # noqa: BLE001 — проход переживает любую неудачу
+                pass
+    return tick
+
+
 def restart_telegram_poller() -> None:
     """Поднять поллер заново по текущему конфигу.
 
@@ -1290,13 +1309,17 @@ def restart_telegram_poller() -> None:
     global _stop_telegram_loop
     if _stop_telegram_loop is not None:
         _stop_telegram_loop()
+    # Расписание напоминаний сбрасываем: человек только что правил настройки и
+    # ждёт, что порог заработает сейчас, а не через час. Повторов это не даёт —
+    # от них защищает отметка о посланном, а не молчание
+    _due_state.clear()
     cfg = load_global_config()
     _stop_telegram_loop = telegram_source.start_polling(
         cfg, handle=lambda message: telegram_intake.handle(message),
-        # Наблюдатель за статусами едет тем же циклом: своего таймера ему не
-        # нужно, а снимок переживает перезапуск поллера — иначе сохранение
-        # настроек считалось бы первым проходом и движения терялись
-        tick=lambda: notify_watch.check_all(cfg, _notify_state))
+        # Попутчики цикла — наблюдатель за статусами и напоминание о сроке:
+        # своих таймеров им не нужно, а состояние переживает перезапуск
+        # поллера — иначе сохранение настроек считалось бы первым проходом
+        tick=_telegram_tick(cfg))
 
 
 def start_watcher() -> None:
