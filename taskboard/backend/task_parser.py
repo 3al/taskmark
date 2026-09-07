@@ -269,8 +269,8 @@ def annotate_marks(tasks_dir: Path, board: dict, cfg: dict | None = None,
     tasks_dir = Path(tasks_dir)
     want_progress = card_style(cfg or {})["card_show_progress"]
     for column in board.get("columns", []):
-        column_progress = want_progress and not is_terminal(
-            pipeline, column.get("status", ""))
+        column_active = not is_terminal(pipeline, column.get("status", ""))
+        column_progress = want_progress and column_active
         for group in column.get("groups", []):
             for task in group.get("tasks", []):
                 path = tasks_dir / task.get("file", "")
@@ -293,7 +293,9 @@ def annotate_marks(tasks_dir: Path, board: dict, cfg: dict | None = None,
                 # превью: «сколько осталось» зависит от сегодняшнего дня, и
                 # карточка, отрисованная вчера, врала бы до перезагрузки
                 due = str(meta.get("due", "") or "").strip()
-                left = due_left(due)
+                # В конце маршрута предупреждать уже не о чем. Дату в файле
+                # сохраняем, но метки близкого срока и просрочки не выдаём.
+                left = due_left(due) if column_active else None
                 if left is not None:
                     task["due"] = due
                     task["due_left"] = left

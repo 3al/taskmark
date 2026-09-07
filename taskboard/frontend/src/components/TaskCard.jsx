@@ -44,7 +44,7 @@ const MARK = `${SLOT} rounded-full ring-1`
 // счёта в уме — ровно того, от чего избавляет возраст в соседней ячейке.
 // Число дней считает бэкенд: оно зависит от сегодняшнего дня, и карточка,
 // отрисованная вчера, врала бы до перезагрузки
-function duePhrase(left) {
+function duePhrase(left, compact = false) {
   if (left === 0) return 'срок сегодня'
   if (left === 1) return 'срок завтра'
   if (left < 0) {
@@ -52,7 +52,7 @@ function duePhrase(left) {
     const last = days % 10
     const teen = days % 100 >= 11 && days % 100 <= 14
     const word = !teen && last === 1 ? 'день' : !teen && last >= 2 && last <= 4 ? 'дня' : 'дней'
-    return `просрочен на ${days} ${word}`
+    return compact ? `проср. ${days} ${word}` : `Просрочен на ${days} ${word}`
   }
   const last = left % 10
   const teen = left % 100 >= 11 && left % 100 <= 14
@@ -365,7 +365,9 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             в лесенку */}
         {(task.stale_days || task.due_left != null || task.epic || task.progress) && (
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1 text-zinc-400"
-               style={{ fontSize: 'var(--card-meta-size, 12px)' }}>
+               style={{ fontSize: 'var(--card-meta-size, 12px)',
+                        gridTemplateColumns: !task.epic && !task.progress?.total
+                          ? 'minmax(0, 1fr) auto auto' : undefined }}>
             {/* Одна ячейка — одна мысль. Обе пометки про время, но отвечают на
                 разные его половины: «сколько висит» и «сколько осталось».
                 Рядом они спорят за место и за внимание, поэтому срок вытесняет
@@ -374,10 +376,10 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
             <span className="min-w-0 truncate">
               {task.due_left != null ? (
                 <span className={dueTone(task.due_left)}
-                      title={[`Срок: ${task.due}`,
+                      title={[duePhrase(task.due_left), `Срок: ${task.due}`,
                               task.stale_days > 0 ? agePhrase(task.stale_days) : '',
                               task.agent, task.moved].filter(Boolean).join(' · ')}>
-                  {duePhrase(task.due_left)}
+                  {duePhrase(task.due_left, true)}
                 </span>
               ) : task.stale_days > 0 && (
                 <span title={[task.agent, task.moved].filter(Boolean).join(' · ')}>

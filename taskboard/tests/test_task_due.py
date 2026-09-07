@@ -160,6 +160,25 @@ class BoardMarksTest(_Tasks):
                              encoding="utf-8")
         self.assertNotIn("due_left", self.card())
 
+    def test_due_warnings_follow_project_terminal_statuses(self) -> None:
+        from backend.statuses import load_pipeline
+        pipeline = load_pipeline({"pipeline": ["backlog", "development",
+                                               "completed", "cancelled"]})
+        for status in ("development", "completed", "cancelled"):
+            for days in (-2, 0, 3):
+                with self.subTest(status=status, days=days):
+                    due = (date.today() + timedelta(days=days)).isoformat()
+                    set_task_due(self.tasks, "TASK-001", due)
+                    board = self.board()
+                    board["columns"][0]["status"] = status
+                    annotate_marks(self.tasks, board, DEFAULTS, pipeline)
+                    card = board["columns"][0]["groups"][0]["tasks"][0]
+                    if status == "development":
+                        self.assertEqual(days, card["due_left"])
+                    else:
+                        self.assertNotIn("due_left", card)
+                    self.assertEqual(due, self.meta()["due"])
+
 
 if __name__ == "__main__":
     unittest.main()

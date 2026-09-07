@@ -31,11 +31,13 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 from . import registry, telegram_notify, telegram_source
 from .config import load_global_config, load_project_config
 from .create_task_runner import create_task
+from .due_input import parse_due_input
 
 # Заголовок уезжает в имя файла задачи — простыня там никому не нужна.
 # Всё, что длиннее, не теряется: остаток уходит в описание
@@ -54,6 +56,14 @@ MEMORY = 200
 CHAT_SECTION = "Из Telegram"
 
 _MENTION = re.compile(r"@([A-Za-z0-9_]{3,})")
+_DUE_TAG = re.compile(r"(?<!\w)#срок(?![\w-])", re.IGNORECASE)
+_DUE_VALUE = re.compile(
+    r"[ \t]*([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]+[ \t]+"
+    r"(?:день|дня|дней|неделя|недели|недель|месяц|месяца|месяцев))(?=$|\s|[.!?,;])",
+    re.IGNORECASE,
+)
+DUE_ERROR = ("Не разобрал срок. Укажите один #срок и дату ГГГГ-ММ-ДД "
+             "или число и единицу: 2 дня, 3 недели, 1 месяц.")
 
 # Задачу ставят одному. Тегнули двоих — это не «задача на двоих», а сообщение,
 # которое у каждого тегнутого завелось бы своей задачей со своим номером: доски
@@ -106,6 +116,17 @@ def parse(text: str, cfg: dict) -> dict | None:
     mentions = [name.lower() for name in _MENTION.findall(body)]
     body = _MENTION.sub(" ", body)
 
+    due = ""
+    due_tags = list(_DUE_TAG.finditer(body))
+    if due_tags:
+        marker = due_tags[0]
+        value = _DUE_VALUE.match(body, marker.end())
+        parsed_due = parse_due_input(value.group(1)) if value else None
+        if len(due_tags) != 1 or parsed_due is None:
+            return {"mentions": mentions, "error": DUE_ERROR}
+        due = parsed_due.isoformat()
+        body = body[:marker.start()] + " " + body[value.end():]
+
     lines = [line.strip() for line in body.splitlines()]
     lines = [line for line in lines if line]
     if not lines:
@@ -126,7 +147,7 @@ def parse(text: str, cfg: dict) -> dict | None:
         description = (title[cut:].strip() + "\n" + description).strip()
         title = title[:cut].strip()
     return {"title": title, "description": description,
-            "project": project, "mentions": mentions}
+            "project": project, "mentions": mentions, "due": due}
 
 
 def _split_sentence(line: str) -> tuple[str, str]:
@@ -277,6 +298,10 @@ def handle(message: dict, cfg: dict | None = None,
         reply(message["chat_id"], MANY_TEXT, message.get("message_id"))
         return {"ok": False, "error": MANY_TEXT}
 
+    if parsed.get("error"):
+        reply(message["chat_id"], parsed["error"], message.get("message_id"))
+        return {"ok": False, "error": parsed["error"]}
+
     known = _recall(message.get("update_id"))
     if known:
         # То же самое сообщение уже разбирали: задача есть, а вот ответ мог
@@ -286,6 +311,13 @@ def handle(message: dict, cfg: dict | None = None,
                                               known["project"]),
               message.get("message_id"))
         return {"ok": True, **known, "repeat": True}
+
+    # Проверка только при новом создании: повтор уже принятого сообщения
+    # должен подтвердить существующую задачу и после наступления её срока.
+    if parsed["due"] and date.fromisoformat(parsed["due"]) < date.today():
+        error = "Срок в прошлом. Укажите сегодняшнюю или будущую дату — задача не создана."
+        reply(message["chat_id"], error, message.get("message_id"))
+        return {"ok": False, "error": error}
 
     project, error = resolve_project(parsed, message, cfg, projects)
     if error:
@@ -297,6 +329,7 @@ def handle(message: dict, cfg: dict | None = None,
     result = create_task(tasks_dir, project_cfg, {
         "title": parsed["title"],
         "description": parsed["description"],
+        "due": parsed["due"],
         # Критериев и типа из чата не приходит, а скрипт без этих ключей
         # подставляет свои дефолты: задача начинала утверждать то, чего никто
         # не говорил — TDD-критерий и «новый функционал»
@@ -314,7 +347,8 @@ def handle(message: dict, cfg: dict | None = None,
     if not result.get("ok"):
         error = str(result.get("error") or "").strip()
         _log(f"[taskboard] telegram: задача из чата не заведена — {error}")
-        reply(message["chat_id"], FAILED_TEXT, message.get("message_id"))
+        reply(message["chat_id"], result.get("user_error") or FAILED_TEXT,
+              message.get("message_id"))
         return {"ok": False, "error": result.get("error")}
 
     done = {"id": result.get("id"), "title": parsed["title"],

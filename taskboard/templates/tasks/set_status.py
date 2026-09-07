@@ -60,7 +60,8 @@ import argparse
 import json
 import re
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from calendar import monthrange
 from pathlib import Path
 
 PLACEHOLDER = "_(нет)_"
@@ -1652,6 +1653,34 @@ def set_size(tasks_dir: Path, task_id: str, value: str,
 DUE_FIELD = "due"
 
 
+def parse_due_input(value: str, today: "date | None" = None) -> "date | None":
+    """Дата или целое число дней, недель, месяцев от локального сегодня.
+
+    Копия в backend/due_input.py и автономном set_status.py: синхронность
+    проверяют общие календарные примеры в test_due_input.py.
+    """
+    value = (value or "").strip().lower()
+    try:
+        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+            return date.fromisoformat(value)
+        match = re.fullmatch(
+            r"([0-9]+)\s+(день|дня|дней|неделя|недели|недель|месяц|месяца|месяцев)",
+            value,
+        )
+        if not match:
+            return None
+        count = int(match.group(1))
+        unit = match.group(2)
+        base = today or date.today()
+        if unit.startswith("месяц"):
+            year, month = divmod(base.year * 12 + base.month - 1 + count, 12)
+            month += 1
+            return date(year, month, min(base.day, monthrange(year, month)[1]))
+        return base + timedelta(days=count * (7 if unit.startswith("недел") else 1))
+    except (ValueError, OverflowError):
+        return None
+
+
 def parse_due(value: str) -> "date | None":
     """Разобрать срок. None — значение непригодно, «» — снятие (проверяют до вызова).
 
@@ -1689,9 +1718,11 @@ def set_due(tasks_dir: Path, task_id: str, value: str,
     if path is None:
         return {"ok": False, "error": f"Файл задачи не найден: {task_id}"}
     value = (value or "").strip()
-    if value and parse_due(value) is None:
+    parsed = parse_due_input(value) if value else None
+    if value and parsed is None:
         return {"ok": False,
-                "error": f"Не разобрал срок: {value} (нужен формат ГГГГ-ММ-ДД)"}
+                "error": f"Не разобрал срок: {value}. Нужна дата ГГГГ-ММ-ДД или число и единица: 2 дня, 3 недели, 1 месяц."}
+    value = parsed.isoformat() if parsed else ""
     was = _one_line(_read_meta(path).get(DUE_FIELD))
     was = "" if was == EMPTY else was
     _set_fields(path, {DUE_FIELD: value or EMPTY})
@@ -2962,8 +2993,8 @@ def main() -> None:
                         help="оценить объём задачи: S | M | L | XL (пусто — снять)")
     parser.add_argument("--sizes", action="store_true",
                         help="каталог размеров задачи (JSON)")
-    parser.add_argument("--due", dest="task_due", metavar="ГГГГ-ММ-ДД", default=None,
-                        help="срок задачи (пусто — снять)")
+    parser.add_argument("--due", dest="task_due", metavar="СРОК", default=None,
+                        help="дата ГГГГ-ММ-ДД или число дней, недель, месяцев (пусто — снять)")
     parser.add_argument("--due-slice", dest="due_slice", nargs="?", const=7,
                         type=int, metavar="ДНЕЙ", default=None,
                         help="что просрочено и что горит в ближайшие N дней (JSON, по умолчанию 7)")

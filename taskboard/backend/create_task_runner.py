@@ -71,6 +71,8 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
     # ней свои задачи: форма доски и агент метки не передают
     if payload.get("origin"):
         args += ["--origin", payload["origin"]]
+    if payload.get("due"):
+        args += ["--due", payload["due"]]
     if payload.get("task_type"):
         args += ["--type", payload["task_type"]]
     elif "task_type" in payload:
@@ -104,6 +106,9 @@ def create_task(tasks_dir: Path, cfg: dict, payload: dict) -> dict:
         return {"ok": False, "error": str(exc)}
 
     if result.returncode != 0:
+        if payload.get("due") and _unknown_flag(result, "--due"):
+            return {"ok": False, "error": "Скрипт создания не поддерживает --due",
+                    "user_error": "Задача не создана: обновите окружение проекта в Taskmark, чтобы задавать срок из чата."}
         return {"ok": False, "error": (result.stderr or result.stdout).strip()}
 
     # Имя автора запоминается **после** записи в файл, а не до: список

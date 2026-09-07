@@ -394,8 +394,15 @@ def create_task(
     section: str | None = None,
     author: str | None = None,
     origin: str | None = None,
+    due: str | None = None,
 ) -> None:
     """Главная функция создания задачи."""
+    # Проверяем до любой записи: неверный срок не должен дать задачу без срока.
+    due_value = (due or "").strip()
+    if due_value:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", due_value):
+            raise ValueError("Срок нужен в формате ГГГГ-ММ-ДД")
+        due_value = datetime.strptime(due_value, "%Y-%m-%d").date().isoformat()
     print("\n=== Создание новой задачи ===\n")
 
     interactive = _is_interactive(title is not None)
@@ -456,7 +463,7 @@ title: {title}
 epic: {epic_value}
 type: {task_type or "~"}
 size: ~
-due: ~
+due: {due_value or "~"}
 status: {status_key}
 created: {created_date}
 author: {author_value}
@@ -582,6 +589,7 @@ if __name__ == "__main__":
         default=None,
         help="Откуда пришла задача: метка источника (например, telegram:<чат>)",
     )
+    parser.add_argument("--due", default=None, help="Срок: дата ГГГГ-ММ-ДД")
     args = parser.parse_args()
 
     try:
@@ -595,6 +603,7 @@ if __name__ == "__main__":
             section=args.section,
             author=args.author,
             origin=args.origin,
+            due=args.due,
         )
     except KeyboardInterrupt:
         print("\n[CANCEL] Отменено пользователем")

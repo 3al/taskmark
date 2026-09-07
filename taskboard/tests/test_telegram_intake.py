@@ -306,6 +306,65 @@ class HandleTest(unittest.TestCase):
         self.assertNotEqual(first, self.argv())
 
 
+class DueFromChatTest(HandleTest):
+    def test_past_due_refuses_without_creating(self):
+        from datetime import date, timedelta
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        result = self.handle(message(f"#задача Сделать X @kostya #срок {yesterday}"))
+        self.assertFalse(result["ok"])
+        self.assertIn("прошлом", self.sent[-1][1])
+        self.assertFalse((self.tasks / "argv.json").exists())
+
+    def test_today_is_allowed(self):
+        from datetime import date
+        result = self.handle(message(f"#задача Сделать X @kostya #срок {date.today().isoformat()}"))
+        self.assertTrue(result["ok"], result)
+
+    def test_repeat_of_created_task_is_allowed_after_due(self):
+        from datetime import date, timedelta
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        known = {"id": "TASK-042", "title": "Сделать X", "project": "Первый"}
+        with mock.patch.object(intake, "_recall", return_value=known):
+            result = self.handle(message(f"#задача Сделать X @kostya #срок {yesterday}"))
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(result["repeat"])
+        self.assertFalse((self.tasks / "argv.json").exists())
+
+    def test_due_reaches_creation_script(self):
+        result = self.handle(message("#задача Сделать X @kostya #срок 2026-09-12"))
+        self.assertTrue(result["ok"])
+        argv = self.argv()
+        self.assertEqual("2026-09-12", argv[argv.index("--due") + 1])
+        self.assertEqual("Сделать X", argv[argv.index("-t") + 1])
+
+    def test_relative_due_and_remaining_text(self):
+        from datetime import date, timedelta
+        parsed = intake.parse("#задача Сделать до пятницы #СРОК 3 недели @kostya\nПодробности", self.cfg())
+        self.assertEqual((date.today() + timedelta(days=21)).isoformat(), parsed["due"])
+        self.assertEqual("Сделать до пятницы", parsed["title"])
+        self.assertEqual("Подробности", parsed["description"])
+
+    def test_bad_due_refuses_without_creating(self):
+        for value in ("завтра", "12.09", "5д", "2 часа", "", "2026-02-30",
+                      "1 месяц #срок 2 дня", "2026-09-12T12:00"):
+            result = self.handle(message("#задача Сделать X @kostya #срок " + value))
+            self.assertFalse(result["ok"], value)
+            self.assertIn("ГГГГ-ММ-ДД", self.sent[-1][1])
+            self.assertFalse((self.tasks / "argv.json").exists())
+
+    def test_bad_due_for_someone_else_is_silent(self):
+        self.handle(message("#задача Сделать X @petya #срок завтра"))
+        self.assertEqual([], self.sent)
+
+    def test_old_script_refuses_due_with_update_hint(self):
+        (self.tasks / "create_task.py").write_text(
+            'import sys\nprint("unrecognized arguments: --due", file=sys.stderr)\nsys.exit(2)\n',
+            encoding="utf-8")
+        result = self.handle(message("#задача Сделать X @kostya #срок 2 дня"))
+        self.assertFalse(result["ok"])
+        self.assertIn("обновите окружение", self.sent[-1][1])
+
+
 class AuthorFromChatTest(HandleTest):
     """Автором задачи становится тот, кто бросил её в чат (TASK-220).
 
