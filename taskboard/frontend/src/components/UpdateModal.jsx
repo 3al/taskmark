@@ -371,14 +371,18 @@ export default function UpdateModal({ onClose, onOpenSettings }) {
               {status.command ? (
                 <div className="mt-3">
                   <div className="text-zinc-400 mb-1">
-                    {plan?.ok ? 'Или вручную:' : 'Обновиться одной командой:'}
+                    {plan?.ok ? 'Или вручную:' : 'Обновиться вручную:'}
                   </div>
+                  {/* Команды разделены переносом строки, а не `&&`: штатный для
+                      Windows 10 PowerShell 5.1 такого разделителя не знает и
+                      падает на нём до запуска git (TASK-256). Отсюда
+                      `whitespace-pre-wrap` — переносы должны дожить до экрана */}
                   <div className="flex items-start gap-2 rounded-lg bg-zinc-950 border border-zinc-800 px-3 py-2">
-                    <code className="flex-1 text-xs text-zinc-300 break-all">{status.command}</code>
-                    <CopyButton text={status.command} title="Скопировать команду" />
+                    <code className="flex-1 text-xs text-zinc-300 break-all whitespace-pre-wrap">{status.command}</code>
+                    <CopyButton text={status.command} title="Скопировать команды" />
                   </div>
                   <p className="text-xs text-zinc-400 mt-2">
-                    Выполните её в папке инструмента и перезапустите сервер:
+                    Выполните их по очереди в папке инструмента и перезапустите сервер:
                     Настройки → «Сервер». Если git откажет — значит в копии есть
                     свои правки или коммиты; тогда обновляйтесь вручную, чтобы их не потерять.
                   </p>

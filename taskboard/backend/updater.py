@@ -99,12 +99,18 @@ def install_kind(root: Path) -> str:
 
 
 def update_command(tag: str) -> str:
-    """Команда ручного обновления для git-установки.
+    """Команда ручного обновления для git-установки: две строки, без `&&`.
 
     Обновляемся на тег, а не на ветку: между релизными коммитами `main` может
     содержать исходники фронтенда без пересобранного `dist`.
+
+    Разделитель `&&` появился только в PowerShell 7, а Windows 10 открывает
+    Windows PowerShell 5.1 — там парсер падает на нём до запуска git
+    (`The token '&&' is not a valid statement separator`), и пользователь
+    остаётся без обновления. Перенос строки понимают все оболочки: обе
+    версии PowerShell, cmd и bash (TASK-256).
     """
-    return f"git fetch origin main --tags && git merge --ff-only {tag}"
+    return f"git fetch origin main --tags\ngit merge --ff-only {tag}"
 
 
 # --- Кэш -------------------------------------------------------------------

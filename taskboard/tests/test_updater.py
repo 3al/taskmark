@@ -230,6 +230,24 @@ class TestStatus(Base):
         self.assertEqual(status["command"], "")
 
 
+class TestUpdateCommand(Base):
+    """Команду человек копирует в свою оболочку — она обязана в ней выполниться."""
+
+    def test_ведёт_на_тег_а_не_на_ветку(self):
+        cmd = updater.update_command("v1.2.3")
+        self.assertIn("v1.2.3", cmd)
+        self.assertIn("--ff-only", cmd)
+
+    def test_команды_разделены_переносом_строки_а_не_амперсандами(self):
+        # `&&` — разделитель PowerShell 7+; в Windows PowerShell 5.1, штатной
+        # оболочке Windows 10, парсер падает до запуска git (TASK-256)
+        cmd = updater.update_command("v1.2.3")
+        self.assertNotIn("&&", cmd)
+        self.assertEqual(
+            cmd.splitlines(),
+            ["git fetch origin main --tags", "git merge --ff-only v1.2.3"])
+
+
 class TestManifestUrl(Base):
 
     def test_адрес_берётся_из_конфига(self):
