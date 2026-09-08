@@ -128,9 +128,18 @@ def deps_installed() -> bool:
 
 
 def _git(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    """git для накатки обновления: без консоли и без вопросов пользователю.
+
+    Процесс обновления отсоединён и консоли не имеет, поэтому запрос логина и
+    пароля (HTTPS-remote без сохранённых учётных данных) ждать некому: git
+    висел бы до таймаута, а человек видел бы зависшую накатку без причины.
+    `GIT_TERMINAL_PROMPT=0` и пустые askpass-хелперы превращают это в обычный
+    отказ с текстом, который доедет до окна обновления.
+    """
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS="")
     return subprocess.run(["git", *args], cwd=str(root), capture_output=True,
                           text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout, creationflags=NO_WINDOW)
+                          timeout=timeout, creationflags=NO_WINDOW, env=env)
 
 
 def _pip_install() -> bool:
@@ -179,52 +188,69 @@ def apply_update(root: Path, request: dict, install_deps=_pip_install,
         return done(False, f"{reason}. Код возвращён к прежней версии, "
                            f"но установленные зависимости откату не подлежат")
 
-    # Тег пришёл по сети: проверяем как данные, до любого вызова git
-    if not TAG_RE.match(tag):
-        return done(False, f"Тег не похож на релизный: {tag!r}")
-    if not head:
-        return done(False, "Не записан HEAD — откатывать было бы некуда")
+    def failed(exc: BaseException) -> dict:
+        """Непредвиденный сбой: у процесса без консоли это единственный голос.
 
-    # Remote берётся из локального репозитория, а не из манифеста: обновляемся
-    # только оттуда, откуда клонировались
+        Ошибка запуска git, таймаут, оборванная сеть — что угодно, вылетевшее
+        мимо `done()`, оставило бы пользователя с «нажал кнопку, ничего не
+        произошло»: запрос уже прочитан и удалён, файла итога нет, окну нечего
+        показать. Поэтому ловим широко и всегда договариваем.
+        """
+        reason = f"Обновление прервалось: {type(exc).__name__}: {exc}".strip()
+        try:
+            return rollback(reason)
+        except (OSError, subprocess.SubprocessError):
+            return done(False, reason)
+
     try:
-        remotes = _git(root, "remote").stdout.split()
-    except (OSError, subprocess.SubprocessError) as exc:
-        return done(False, f"git недоступен: {exc}")
-    if not remotes:
-        return done(False, "У репозитория нет remote — неоткуда получать обновление")
-    remote = "origin" if "origin" in remotes else remotes[0]
+        # Тег пришёл по сети: проверяем как данные, до любого вызова git
+        if not TAG_RE.match(tag):
+            return done(False, f"Тег не похож на релизный: {tag!r}")
+        if not head:
+            return done(False, "Не записан HEAD — откатывать было бы некуда")
 
-    log(f"Обновление до {target}: получаю {tag} из {remote} ...")
-    fetched = _git(root, "fetch", remote, "main", "--tags")
-    if fetched.returncode != 0:
-        return done(False, f"Не удалось получить обновление: {fetched.stderr.strip()}")
+        # Remote берётся из локального репозитория, а не из манифеста: обновляемся
+        # только оттуда, откуда клонировались
+        try:
+            remotes = _git(root, "remote").stdout.split()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return done(False, f"git недоступен: {exc}")
+        if not remotes:
+            return done(False, "У репозитория нет remote — неоткуда получать обновление")
+        remote = "origin" if "origin" in remotes else remotes[0]
 
-    ref = f"refs/tags/{tag}"
-    if _git(root, "rev-parse", "-q", "--verify", ref).returncode != 0:
-        return done(False, f"Тега {tag} нет в {remote} — обновляться не на что")
+        log(f"Обновление до {target}: получаю {tag} из {remote} ...")
+        fetched = _git(root, "fetch", remote, "main", "--tags")
+        if fetched.returncode != 0:
+            return done(False, f"Не удалось получить обновление: {fetched.stderr.strip()}")
 
-    # Потомок HEAD? merge --ff-only это и обеспечит, но отказ должен быть внятным
-    if _git(root, "merge-base", "--is-ancestor", "HEAD", ref).returncode != 0:
-        return done(False, f"{tag} не является продолжением вашей истории: "
-                           f"есть локальные коммиты или другая ветка")
+        ref = f"refs/tags/{tag}"
+        if _git(root, "rev-parse", "-q", "--verify", ref).returncode != 0:
+            return done(False, f"Тега {tag} нет в {remote} — обновляться не на что")
 
-    merged = _git(root, "merge", "--ff-only", ref)
-    if merged.returncode != 0:
-        return done(False, f"Обновление не применилось: {merged.stderr.strip()}")
+        # Потомок HEAD? merge --ff-only это и обеспечит, но отказ должен быть внятным
+        if _git(root, "merge-base", "--is-ancestor", "HEAD", ref).returncode != 0:
+            return done(False, f"{tag} не является продолжением вашей истории: "
+                               f"есть локальные коммиты или другая ветка")
 
-    if not install_deps():
-        return rollback("Не удалось установить зависимости новой версии")
+        merged = _git(root, "merge", "--ff-only", ref)
+        if merged.returncode != 0:
+            return done(False, f"Обновление не применилось: {merged.stderr.strip()}")
 
-    # Верификация: стартовать половину обновления хуже, чем не обновиться
-    if local_version(root) != target:
-        return rollback(f"После обновления версия {local_version(root)}, "
-                        f"а ожидалась {target}")
-    if not (root / "taskboard" / "frontend" / "dist" / "index.html").is_file():
-        return rollback("В новой версии нет собранного интерфейса")
+        if not install_deps():
+            return rollback("Не удалось установить зависимости новой версии")
 
-    log(f"Обновление применено: {target}")
-    return done(True)
+        # Верификация: стартовать половину обновления хуже, чем не обновиться
+        if local_version(root) != target:
+            return rollback(f"После обновления версия {local_version(root)}, "
+                            f"а ожидалась {target}")
+        if not (root / "taskboard" / "frontend" / "dist" / "index.html").is_file():
+            return rollback("В новой версии нет собранного интерфейса")
+
+        log(f"Обновление применено: {target}")
+        return done(True)
+    except Exception as exc:  # noqa: BLE001 — молчание хуже любого текста
+        return failed(exc)
 
 
 def read_update_request() -> dict:

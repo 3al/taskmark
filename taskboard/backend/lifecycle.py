@@ -95,9 +95,12 @@ def _console_less_python() -> str:
 def _spawn_detached(port: int, tasks_dir: str | None,
                     extra: list[str] | None = None) -> None:
     """Запустить отсоединённый процесс лаунчера, переживающий текущий."""
+    # `--yes`: у отсоединённого процесса нет ни консоли, ни stdin — вопрос
+    # «установить зависимости?» он задал бы в пустоту и, не дождавшись ответа,
+    # вышел бы, не сделав того, ради чего запущен
     cmd = [
         _console_less_python(), str(LAUNCHER),
-        "--port", str(port), "--no-browser", "--respawn",
+        "--port", str(port), "--no-browser", "--respawn", "--yes",
     ]
     if tasks_dir:
         cmd += ["--tasks-dir", tasks_dir]

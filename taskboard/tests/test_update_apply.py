@@ -337,8 +337,8 @@ def load_launcher():
 
 
 @unittest.skipIf(GIT is None, "git не найден в PATH")
-class ApplyTest(RepoTest):
-    """Сама git-операция: fast-forward на тег, верификация, откат."""
+class ApplyBase(RepoTest):
+    """Подготовка накатки: подменённое глобальное состояние, выпуск, вызов."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -375,6 +375,10 @@ class ApplyTest(RepoTest):
 
     def version_file(self) -> str:
         return (self.repo / "taskboard" / "VERSION").read_text(encoding="utf-8").strip()
+
+
+class ApplyTest(ApplyBase):
+    """Сама git-операция: fast-forward на тег, верификация, откат."""
 
     def test_fast_forward_updates_the_copy(self) -> None:
         self.publish()
@@ -469,6 +473,100 @@ class ApplyTest(RepoTest):
         self.assertEqual("9.9.9", saved["version"])
 
 
+class SilentDeathTest(ApplyBase):
+    """Провал накатки обязан быть объяснимым.
+
+    Процесс без консоли пишет наружу единственным способом — файлом итога.
+    Исключение, вылетевшее мимо него, оставляет пользователя с «нажал кнопку,
+    ничего не произошло»: файл запроса уже удалён, сервер не поднят, сказать
+    нечего ни ему, ни поддержке.
+    """
+
+    def break_git(self, step: str, error: Exception):
+        """Заставить один шаг git упасть, остальные оставить настоящими."""
+        original = self.launcher._git
+
+        def fake(root, *args, **kwargs):
+            if args and args[0] == step:
+                raise error
+            return original(root, *args, **kwargs)
+
+        self.launcher._git = fake
+        self.addCleanup(setattr, self.launcher, "_git", original)
+
+    def test_таймаут_git_становится_итогом_а_не_смертью(self) -> None:
+        self.publish()
+        self.break_git("fetch", subprocess.TimeoutExpired(cmd="git fetch", timeout=120))
+
+        result = self.apply()
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["error"], "провал остался без объяснения")
+        self.assertTrue(self.launcher.UPDATE_RESULT.is_file(),
+                        "итог не записан — окну нечего показать")
+
+    def test_ошибка_запуска_git_становится_итогом(self) -> None:
+        self.publish()
+        self.break_git("merge", OSError("git пропал из PATH"))
+
+        result = self.apply()
+
+        self.assertFalse(result["ok"])
+        self.assertIn("git", result["error"].lower())
+
+    def test_непредвиденный_сбой_тоже_доезжает_до_пользователя(self) -> None:
+        """Ловим не только известные ошибки: молчание хуже любого текста."""
+        self.publish()
+
+        def boom() -> bool:
+            raise RuntimeError("неожиданное")
+
+        result = self.launcher.apply_update(
+            self.repo, {"tag": "v9.9.9", "version": "9.9.9",
+                        "head": git(self.repo, "rev-parse", "HEAD")},
+            install_deps=boom)
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["error"])
+        self.assertTrue(self.launcher.UPDATE_RESULT.is_file())
+
+    def test_после_сбоя_копия_возвращается_к_прежнему_коммиту(self) -> None:
+        self.publish()
+        head = git(self.repo, "rev-parse", "HEAD")
+
+        def boom() -> bool:
+            raise RuntimeError("неожиданное")
+
+        self.launcher.apply_update(
+            self.repo, {"tag": "v9.9.9", "version": "9.9.9", "head": head},
+            install_deps=boom)
+
+        self.assertEqual(head, git(self.repo, "rev-parse", "HEAD"))
+
+
+class GitPromptTest(unittest.TestCase):
+    """У процесса накатки нет консоли: спросить пароль git не у кого."""
+
+    def test_git_не_спрашивает_учётные_данные(self) -> None:
+        launcher = load_launcher()
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        original = launcher.subprocess.run
+        launcher.subprocess.run = fake_run
+        try:
+            launcher._git(Path("."), "fetch", "origin", "main")
+        finally:
+            launcher.subprocess.run = original
+
+        env = seen.get("env") or {}
+        self.assertEqual("0", env.get("GIT_TERMINAL_PROMPT"),
+                         "git будет ждать логин в процессе без консоли")
+
+
 class ResultVisibilityTest(RepoTest):
     """Плашка об итоге показывается только когда итог есть."""
 
@@ -523,6 +621,13 @@ class WiringTest(unittest.TestCase):
         self.assertLess(text.index("apply_update(ROOT, request)"),
                         text.index("from backend.app import app"),
                         "backend импортируется до обновления")
+
+    def test_отсоединённый_лаунчер_ничего_не_спрашивает(self) -> None:
+        """Вопрос в процесс без stdin — это выход, не сделав работы."""
+        text = (ROOT / "backend" / "lifecycle.py").read_text(encoding="utf-8")
+        cmd = text[text.index("cmd = ["):text.index("if tasks_dir:")]
+
+        self.assertIn('"--yes"', cmd)
 
     def test_lifecycle_spawns_launcher_with_the_flag(self) -> None:
         text = (ROOT / "backend" / "lifecycle.py").read_text(encoding="utf-8")
