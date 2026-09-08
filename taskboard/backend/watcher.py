@@ -10,6 +10,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from backend import console
 from backend.fs_browse import readable
 from backend.scaffold import RULES_FILES, agentic_paths
 
@@ -67,8 +68,7 @@ class TasksWatcher:
             try:
                 self._start_observer()
             except Exception as exc:
-                print(f"[taskboard] watcher: наблюдение не поднято ({path}): {exc}",
-                      flush=True)
+                console.log(f"watcher: наблюдение не поднято ({path}): {exc}")
         self._ensure_monitor()
 
     def stop(self) -> None:
@@ -123,15 +123,13 @@ class TasksWatcher:
             # при `start()` — отказ там валит подъём целиком, вместе с путями,
             # которые читаются прекрасно
             if not readable(Path(path)):
-                print(f"[taskboard] watcher: путь без наблюдения ({path}): нет доступа",
-                      flush=True)
+                console.log(f"watcher: путь без наблюдения ({path}): нет доступа")
                 continue
             try:
                 fresh.schedule(_Handler(self._on_change, set(only) if only else None, path),
                                path, recursive=recursive)
             except OSError as exc:
-                print(f"[taskboard] watcher: путь без наблюдения ({path}): {exc}",
-                      flush=True)
+                console.log(f"watcher: путь без наблюдения ({path}): {exc}")
                 continue
             taken += 1
         if not taken:
@@ -169,8 +167,8 @@ class TasksWatcher:
                 if dead:
                     try:
                         if self._start_observer():
-                            print("[taskboard] watcher: наблюдатель перезапущен "
-                                  f"({self._watched})", flush=True)
+                            console.log("watcher: наблюдатель перезапущен "
+                                        f"({self._watched})")
                     except Exception:
                         pass  # повторим на следующем тике
 

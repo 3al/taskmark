@@ -26,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.resolve()
 TOOL_DIR = ROOT / "taskboard"
+
 VENV_DIR = TOOL_DIR / ".venv"
 DIST_DIR = TOOL_DIR / "frontend" / "dist"
 REQUIREMENTS = TOOL_DIR / "requirements.txt"
@@ -55,12 +56,42 @@ UPDATE_RESULT = UPDATE_DIR / "update_result.json"
 TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 
 
+def _load_console():
+    """Формат сообщений — из поставки, но отдельным модулем, а не импортом.
+
+    Строка сообщения собирается в одном месте на весь инструмент
+    (`backend/console.py`), и писать её здесь второй раз незачем. Обычный
+    `from backend import console` при этом не годится: этот же процесс после
+    накатки обновления стартует сервер, и модуль, загруженный ДО git-операции,
+    остался бы в `sys.modules` старым — сервер работал бы на смеси версий.
+    Отдельное имя развязывает два экземпляра: лаунчерский и серверный.
+
+    Модуль намеренно без зависимостей и на старом синтаксисе: лаунчер грузит
+    его до создания venv и до проверки версии Python.
+    """
+    import importlib.util
+    path = TOOL_DIR / "backend" / "console.py"
+    spec = importlib.util.spec_from_file_location("taskboard_console", path)
+    module = importlib.util.module_from_spec(spec) if spec and spec.loader else None
+    try:
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    except (AttributeError, OSError):
+        # Единственное сообщение инструмента мимо общего формата: собирать его
+        # нечем — сломан как раз тот файл, который этим и занимается
+        print(f"taskboard: повреждена поставка, не читается {path}")
+        sys.exit(1)
+    return module
+
+
+console = _load_console()
+
+
 def log(msg: str) -> None:
-    print(f"[taskboard] {msg}")
+    console.log(msg)
 
 
 def fail(msg: str) -> None:
-    print(f"[taskboard] ОШИБКА: {msg}")
+    console.log(f"ОШИБКА: {msg}")
     sys.exit(1)
 
 
@@ -324,7 +355,9 @@ def ensure_frontend(assume_yes: bool) -> None:
 
 def _confirm(question: str) -> bool:
     try:
-        return input(f"[taskboard] {question} [y/n]: ").strip().lower() in ("y", "yes", "д", "да", "")
+        # Приглашение ввода — не событие лога: метка времени в вопросе не нужна,
+        # а префикс берётся оттуда же, где собираются остальные строки
+        return input(f"[{console.PREFIX}] {question} [y/n]: ").strip().lower() in ("y", "yes", "д", "да", "")
     except EOFError:
         return False
 

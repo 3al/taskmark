@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend import (autostart, baseline, changelog, due_watch, help_docs,
+from backend import (autostart, baseline, changelog, console, due_watch, help_docs,
                      lifecycle, notify_watch, registry, telegram_intake,
                      telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
@@ -1342,9 +1342,9 @@ def _startup() -> None:
     # целиком, и инструмент перестаёт запускаться вовсе (TASK-254)
     try:
         if autostart.refresh_if_outdated(ROOT_DIR):
-            print("[taskboard] автозапуск: запись обновлена", flush=True)
+            console.log("автозапуск: запись обновлена")
     except Exception as exc:
-        print(f"[taskboard] автозапуск: запись не обновлена — {exc}", flush=True)
+        console.log(f"автозапуск: запись не обновлена — {exc}")
     # Разовая чистка: прежние версии писали в глобальный конфиг слепок всех
     # дефолтов, и правки поставки переставали доезжать (TASK-088)
     migrate_global_config()

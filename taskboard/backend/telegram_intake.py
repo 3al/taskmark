@@ -30,11 +30,10 @@
 from __future__ import annotations
 
 import re
-import sys
 from datetime import date
 from pathlib import Path
 
-from . import registry, telegram_notify, telegram_source
+from . import console, registry, telegram_notify, telegram_source
 from .config import load_global_config, load_project_config
 from .create_task_runner import create_task
 from .due_input import parse_due_input
@@ -346,7 +345,7 @@ def handle(message: dict, cfg: dict | None = None,
     })
     if not result.get("ok"):
         error = str(result.get("error") or "").strip()
-        _log(f"[taskboard] telegram: задача из чата не заведена — {error}")
+        console.log(f"telegram: задача из чата не заведена — {error}")
         reply(message["chat_id"], result.get("user_error") or FAILED_TEXT,
               message.get("message_id"))
         return {"ok": False, "error": result.get("error")}
@@ -357,17 +356,6 @@ def handle(message: dict, cfg: dict | None = None,
     reply(message["chat_id"], _reply_text(done["id"], done["title"], done["project"]),
           message.get("message_id"))
     return {"ok": True, **done}
-
-
-def _log(text: str) -> None:
-    """Написать в лог, не уронив разбор.
-
-    В сообщение попадает вывод чужого процесса, а у консоли Windows своя
-    кодировка: `print` с символом, которого в ней нет, падает исключением — и
-    сообщение оставалось бы необработанным из-за строчки в логе.
-    """
-    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
-    print(text.encode(encoding, "replace").decode(encoding, "replace"), flush=True)
 
 
 def _reply_text(task_id: str, title: str, project: str) -> str:
