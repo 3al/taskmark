@@ -31,6 +31,7 @@ import urllib.request
 from typing import Callable
 from urllib.parse import unquote, urlsplit
 
+from . import console
 from .config import GLOBAL_DIR
 
 API_ROOT = "https://api.telegram.org"
@@ -568,23 +569,45 @@ def send_message(tok: str, chat_id: int, text: str, reply_to: int | None = None,
 
 # --- Поллер -----------------------------------------------------------------
 
-# О чём поллер уже пожаловался. Опрос идёт каждые пять секунд, и без этого
-# неверный адрес прокси залил бы лог одной и той же строкой
-_LAST_COMPLAINT = ""
+# Идёт ли сейчас полоса неудач и сколько их подряд. Опрос ходит каждые пять
+# секунд, и подряд идущие отказы не должны заливать лог — ни одинаковые, ни
+# разные: обрыв связи редко даёт одну и ту же ошибку (таймаут рукопожатия и
+# отказ DNS чередуются), и подавление «по последнему сообщению» на такой паре
+# не работает вовсе
+_FAILING = False
+_FAILURES = 0
 
 
 def _complain(exc: Exception) -> None:
-    """Сказать в лог, почему опрос не удался, — но не повторяться.
+    """Назвать причину первой неудачи и замолчать до восстановления.
 
     Ошибка настройки (прокси не разобран, токен отвергнут) сама не пройдёт, и
-    молчащая интеграция выглядит сломанной без объяснений.
+    молчащая интеграция выглядит сломанной без объяснений. Но сказать об этом
+    достаточно один раз: полоса неудач — одно событие, а не сотня.
     """
-    global _LAST_COMPLAINT
-    message = f"{type(exc).__name__}: {exc}"
-    if message == _LAST_COMPLAINT:
+    global _FAILING, _FAILURES
+    _FAILURES += 1
+    if _FAILING:
         return
-    _LAST_COMPLAINT = message
-    print(f"[taskboard] telegram: опрос не удался — {message}", flush=True)
+    _FAILING = True
+    console.log(f"telegram: опрос не удался — {type(exc).__name__}: {exc}")
+
+
+def _recovered() -> None:
+    """Сказать, что связь вернулась.
+
+    Без этой строки по логу не отличить «отвалилось насовсем» от «поднялось
+    через минуту»: последняя запись про неудачу выглядит одинаково в обоих
+    случаях. Счётчик заодно показывает, насколько долгой была полоса.
+    """
+    global _FAILING, _FAILURES
+    if not _FAILING:
+        _FAILURES = 0
+        return
+    console.log(f"telegram: опрос снова работает (неудач подряд: {_FAILURES})")
+    _FAILING = False
+    _FAILURES = 0
+
 
 def poll_once(cfg: dict, handle: Callable | None = None,
               fetch: Callable | None = None) -> int:
@@ -606,6 +629,7 @@ def poll_once(cfg: dict, handle: Callable | None = None,
         # двигаем: подтверждённое Telegram удаляет навсегда
         _complain(exc)
         return 0
+    _recovered()
     if handle is None:
         # Слой источника есть, разбора ещё нет: подтверждать нечего.
         # Сообщения подождут в очереди Telegram (около суток)

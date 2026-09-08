@@ -187,6 +187,71 @@ class TestCursor(Base):
         self.assertEqual(ts.read_state()["offset"], 6)
 
 
+class TestComplaints(Base):
+    """Жалобы поллера: сказать один раз — и сказать, когда отпустило.
+
+    Опрос идёт каждые пять секунд, а обрыв связи редко даёт одну и ту же
+    ошибку: у пользователя чередовались таймаут рукопожатия и отказ DNS.
+    Подавление «по последнему сообщению» на такой паре не работало вовсе.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for name, value in (("_FAILING", False), ("_FAILURES", 0)):
+            patch = mock.patch.object(ts, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.said: list[str] = []
+        patch = mock.patch.object(ts.console, "log", self.said.append)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def fail_once(self, error: str) -> None:
+        ts.poll_once(self.cfg(), handle=lambda m: None,
+                     fetch=Fake(urllib.error.URLError(error)))
+
+    def succeed(self) -> None:
+        ts.poll_once(self.cfg(), handle=lambda m: None,
+                     fetch=Fake({"ok": True, "result": []}))
+
+    def test_первая_неудача_названа(self):
+        self.fail_once("getaddrinfo failed")
+
+        self.assertEqual(1, len(self.said))
+        self.assertIn("getaddrinfo failed", self.said[0])
+
+    def test_чередование_разных_ошибок_не_заливает_лог(self):
+        self.fail_once("handshake operation timed out")
+        self.fail_once("getaddrinfo failed")
+        self.fail_once("handshake operation timed out")
+
+        self.assertEqual(1, len(self.said), self.said)
+
+    def test_восстановление_названо_и_считает_неудачи(self):
+        self.fail_once("getaddrinfo failed")
+        self.fail_once("handshake operation timed out")
+
+        self.succeed()
+
+        self.assertEqual(2, len(self.said), self.said)
+        self.assertIn("снова работает", self.said[1])
+        self.assertIn("2", self.said[1])
+
+    def test_молчание_пока_всё_хорошо(self):
+        self.succeed()
+        self.succeed()
+
+        self.assertEqual([], self.said)
+
+    def test_новая_неудача_после_восстановления_снова_названа(self):
+        self.fail_once("getaddrinfo failed")
+        self.succeed()
+
+        self.fail_once("getaddrinfo failed")
+
+        self.assertEqual(3, len(self.said), self.said)
+
+
 class TestDisabled(Base):
     """Пока возможность не включена, обращений в сеть нет вовсе."""
 
