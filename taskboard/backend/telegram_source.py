@@ -29,7 +29,7 @@ import threading
 import urllib.error
 import urllib.request
 from typing import Callable
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from . import console
 from .config import GLOBAL_DIR
@@ -147,6 +147,14 @@ def seen_chats() -> list[dict]:
 # годится**: он прокси протокола MTProto, к нему подключаются клиенты Telegram,
 # а не HTTP-клиенты, и ссылки `tg://proxy?...` тут бесполезны.
 
+class ProxyNameUnsupported(TelegramError):
+    """SOCKS5-прокси не понимает имён хостов (код 0x08).
+
+    Отдельный класс, потому что это единственный отказ, после которого имеет
+    смысл повторить заход: остальные коды означают, что повтор не поможет.
+    """
+
+
 def parse_proxy(url: str) -> dict | None:
     """Строка человека → разобранный адрес. Пусто — прямое соединение.
 
@@ -159,8 +167,8 @@ def parse_proxy(url: str) -> dict | None:
     if "://" not in raw:
         raise TelegramError(
             "Прокси: не указана схема — нужен адрес вида socks5://хост:порт")
-    parts = urlsplit(raw)
-    scheme = parts.scheme.lower()
+    scheme, _, rest = raw.partition("://")
+    scheme = scheme.lower()
     if scheme in ("mtproto", "tg"):
         raise TelegramError(
             "Прокси: MTProto не подходит — бот ходит в Bot API по HTTPS. "
@@ -169,22 +177,36 @@ def parse_proxy(url: str) -> dict | None:
         raise TelegramError(
             f"Прокси: схема «{scheme}» не поддерживается — "
             "нужен http, https, socks5 или socks5h")
+    # Логин с паролем отделяем **сами**, до `urlsplit`: конец адреса он ищет по
+    # первому `/`, `?` или `#`, а в пароле провайдера эти символы обычны — и
+    # весь адрес разваливался с жалобой на порт, уводя человека чинить не то.
+    # Граница userinfo — **последняя** `@`, поэтому `@` в пароле тоже переживает
+    userinfo, _, hostport = rest.rpartition("@")
+    for tail in ("/", "?", "#"):
+        hostport = hostport.split(tail)[0]
+    parts = urlsplit(f"{scheme}://{hostport}")
     try:
         port = parts.port or PROXY_SCHEMES[scheme]
     except ValueError:
         raise TelegramError("Прокси: порт должен быть числом") from None
     if not parts.hostname:
         raise TelegramError("Прокси: не указан адрес прокси-сервера")
+    user, _, password = userinfo.partition(":")
     return {"scheme": scheme, "host": parts.hostname, "port": int(port),
-            "user": unquote(parts.username or ""),
-            "password": unquote(parts.password or "")}
+            "user": unquote(user), "password": unquote(password)}
 
 
 def _proxy_address(parsed: dict) -> str:
-    """Адрес для `ProxyHandler`: логин и пароль едут в самой строке."""
+    """Адрес для `ProxyHandler`: логин и пароль едут в самой строке.
+
+    Кодируем обратно, потому что строку `ProxyHandler` декодирует сам:
+    раскодированные дважды логин и пароль молча становятся другими, прокси
+    отвечает 407, а виноватым выглядит бот.
+    """
     auth = ""
     if parsed["user"]:
-        auth = f"{parsed['user']}:{parsed['password']}@"
+        auth = (f"{quote(parsed['user'], safe='')}:"
+                f"{quote(parsed['password'], safe='')}@")
     return f"{parsed['scheme']}://{auth}{parsed['host']}:{parsed['port']}"
 
 
@@ -202,14 +224,20 @@ def _recv_exact(sock, size: int) -> bytes:
     return chunks
 
 
-def _socks5_handshake(sock, host: str, port: int, parsed: dict) -> None:
+def _socks5_handshake(sock, host: str, port: int, parsed: dict,
+                      by_name: bool = True) -> None:
     """Довести сокет до туннеля к `host:port` (RFC 1928/1929).
 
     Своя реализация, а не пакет: SOCKS5 CONNECT — три коротких обмена, а
     зависимость пришлось бы доставлять всем пользователям ради них.
 
-    `socks5h` отдаёт прокси **имя**, `socks5` разрешает его локально: разница
-    существенна там, где имя не разрешается вовсе.
+    **Имя разрешает прокси, а не мы** — и у `socks5h`, и у `socks5`. Разрешать
+    локально в нашем случае бессмысленно: прокси берут ровно там, где сеть до
+    Telegram сломана, а адрес, полученный в этой сломанной сети, указывает на
+    дата-центр, до которого у зарубежного прокси нет маршрута. Туннель
+    открывался в никуда и молчал до таймаута (TASK-260).
+
+    `by_name=False` — запасной заход для прокси, который имён не понимает.
     """
     user, password = parsed.get("user") or "", parsed.get("password") or ""
     methods = b"\x00\x02" if user else b"\x00"  # 0x00 — без авторизации, 0x02 — логин
@@ -229,7 +257,7 @@ def _socks5_handshake(sock, host: str, port: int, parsed: dict) -> None:
     elif answer[1] != 0:
         raise TelegramError(f"Прокси выбрал неизвестный способ авторизации "
                             f"({answer[1]})")
-    if parsed["scheme"] == "socks5h":
+    if by_name:
         name = host.encode("idna")
         target = bytes([3, len(name)]) + name
     else:
@@ -239,6 +267,9 @@ def _socks5_handshake(sock, host: str, port: int, parsed: dict) -> None:
             raise TelegramError(f"Имя {host} не разрешилось: {exc}") from None
     _send(sock, b"\x05\x01\x00" + target + port.to_bytes(2, "big"))
     reply = _recv_exact(sock, 4)
+    if reply[1] == 0x08 and by_name:
+        # Единственный отказ, после которого повтор имеет смысл: тип адреса
+        raise ProxyNameUnsupported("Прокси не принял имя хоста")
     if reply[1] != 0:
         raise TelegramError(f"Прокси ответил отказом на соединение (код {reply[1]})")
     # Дочитать адрес привязки: он не нужен, но оставленный в сокете испортит ответ
@@ -333,6 +364,35 @@ class _HttpsProxyHandler(urllib.request.HTTPSHandler):
                             context=self._context)
 
 
+def _socks5_open(parsed: dict, host: str, port: int, timeout: float):
+    """TCP до прокси и туннель до `host:port` — сокет, готовый под TLS.
+
+    Прокси, который имён не понимает, получает второй заход с адресом.
+    Соединение при этом открывается заново: после отказа продолжать по тому же
+    сокету нельзя, а лишний заход случается только на таком прокси.
+    """
+    def reach(by_name: bool):
+        try:
+            sock = socket.create_connection((parsed["host"], parsed["port"]),
+                                            timeout)
+        except OSError as exc:
+            # Иначе человек читает «конечный компьютер отверг запрос» и ищет
+            # причину в боте, хотя не отозвался прокси
+            raise TelegramError(f"Прокси {parsed['host']}:{parsed['port']} "
+                                f"не отвечает: {exc}") from None
+        try:
+            _socks5_handshake(sock, host, port, parsed, by_name)
+        except Exception:
+            sock.close()
+            raise
+        return sock
+
+    try:
+        return reach(True)
+    except ProxyNameUnsupported:
+        return reach(False)
+
+
 def _socks5_connection(parsed: dict):
     """Класс соединения, открывающий HTTPS через SOCKS5.
 
@@ -342,20 +402,8 @@ def _socks5_connection(parsed: dict):
 
     class Socks5Connection(http.client.HTTPSConnection):
         def connect(self) -> None:
-            try:
-                raw = socket.create_connection((parsed["host"], parsed["port"]),
-                                               self.timeout or TIMEOUT)
-            except OSError as exc:
-                # Иначе человек читает «конечный компьютер отверг запрос» и ищет
-                # причину в боте, хотя не отозвался прокси
-                raise TelegramError(
-                    f"Прокси {parsed['host']}:{parsed['port']} "
-                    f"не отвечает: {exc}") from None
-            try:
-                _socks5_handshake(raw, self.host, self.port, parsed)
-            except Exception:
-                raw.close()
-                raise
+            raw = _socks5_open(parsed, self.host, self.port,
+                               self.timeout or TIMEOUT)
             self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
 
     return Socks5Connection
@@ -443,7 +491,13 @@ def fetcher(proxy_url: str = "") -> Callable:
         try:
             with opener.open(_request(url, payload), timeout=TIMEOUT) as response:
                 return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError:
+        except urllib.error.HTTPError as exc:
+            if exc.code == 407:
+                # Отвечает сам прокси, до Bot API запрос не дошёл: пропустить
+                # этот код как ответ API значит назвать виноватым бота
+                raise TelegramError(
+                    f"Прокси {parsed['host']}:{parsed['port']} не принял "
+                    f"логин или пароль") from None
             raise  # прокси дошёл: это ответ Bot API, а не беда с прокси
         except urllib.error.URLError as exc:
             raise _explain(exc, url, parsed) from None

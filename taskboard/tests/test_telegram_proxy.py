@@ -14,6 +14,7 @@ import unittest
 import urllib.error
 import urllib.request
 from unittest import mock
+from urllib.parse import unquote
 
 from backend import telegram_source as ts
 
@@ -41,6 +42,21 @@ class TestРазборАдреса(unittest.TestCase):
         self.assertEqual(parsed["port"], 1080)
         self.assertEqual(parsed["user"], "вася")
         self.assertEqual(parsed["password"], "секрет")
+
+    def test_пароль_со_спецсимволами(self):
+        """Логин с паролем кончаются на последней `@`, а не на первом `/`.
+
+        Пароль провайдера — набор символов, и `/`, `?`, `#` в нём обычны. Разбор
+        адреса целиком принимал их за начало пути и отказывал про порт, уводя
+        человека чинить не то.
+        """
+        for password in ("па/роль", "па?роль", "па#роль", "па@роль"):
+            with self.subTest(password=password):
+                parsed = ts.parse_proxy(f"socks5://вася:{password}@p.example:1080")
+                self.assertEqual(parsed["host"], "p.example")
+                self.assertEqual(parsed["port"], 1080)
+                self.assertEqual(parsed["user"], "вася")
+                self.assertEqual(parsed["password"], password)
 
     def test_порт_по_умолчанию_у_каждой_схемы(self):
         self.assertEqual(ts.parse_proxy("http://p")["port"], 80)
@@ -88,11 +104,25 @@ class TestВыборТранспорта(unittest.TestCase):
         self.assertEqual(proxies, [{"http": "http://10.0.0.1:3128",
                                     "https": "http://10.0.0.1:3128"}])
 
-    def test_авторизация_едет_в_адресе_прокси(self):
-        opener = ts._opener_for(ts.parse_proxy("http://вася:секрет@p:3128"))
-        proxies = [h.proxies for h in opener.handlers
-                   if isinstance(h, urllib.request.ProxyHandler)][0]
-        self.assertIn("вася:секрет@", proxies["https"])
+    def test_авторизация_доезжает_до_ProxyHandler_без_искажений(self):
+        """`ProxyHandler` декодирует строку сам — кодируем ровно один раз.
+
+        Логин и пароль уходят в него строкой адреса, и раскодированные дважды
+        они молча превращаются в другие: прокси отвечает 407, а виноватым
+        выглядит бот.
+        """
+        for raw, password in (("http://вася:секрет@p:3128", "секрет"),
+                              ("http://вася:па%40роль@p:3128", "па@роль"),
+                              ("http://вася:па/роль@p:3128", "па/роль"),
+                              ("http://вася:100%25@p:3128", "100%")):
+            with self.subTest(raw=raw):
+                parsed = ts.parse_proxy(raw)
+                self.assertEqual(parsed["password"], password)
+                _, user, secret, hostport = urllib.request._parse_proxy(
+                    ts._proxy_address(parsed))
+                self.assertEqual(unquote(user), "вася")
+                self.assertEqual(unquote(secret), password)
+                self.assertEqual(hostport, "p:3128")
 
     def test_socks5_не_ходит_через_ProxyHandler(self):
         """`urllib` SOCKS не умеет: подмена идёт на уровне соединения."""
@@ -153,6 +183,16 @@ class TestНедоступныйПрокси(unittest.TestCase):
         with self.assertRaises(ts.TelegramError) as caught:
             fetch("https://api.telegram.org/botX/getMe", {})
         self.assertNotIn("подмен", str(caught.exception).lower())
+
+    def test_407_называет_прокси_а_не_бота(self):
+        """407 отдаёт сам прокси: до Bot API запрос не дошёл, и бот ни при чём."""
+        fetch = self._fetch_through(
+            "http://вася:секрет@10.0.0.1:3128",
+            urllib.error.HTTPError("url", 407, "Proxy Authentication Required",
+                                   {}, None))
+        with self.assertRaises(ts.TelegramError) as caught:
+            fetch("https://api.telegram.org/botX/getMe", {})
+        self.assertIn("прокси", str(caught.exception).lower())
 
     def test_ответ_api_остаётся_ответом_api(self):
         """Прокси дошёл, отказал сам Telegram — подменять смысл ошибки нельзя."""
@@ -316,11 +356,34 @@ class TestХендшейкSocks5(unittest.TestCase):
                              ts.parse_proxy("socks5h://p:1080"))
         self.assertIn(b"api.telegram.org", self.seen)
 
-    def test_socks5_разрешает_имя_локально(self):
+    def test_socks5_тоже_отдаёт_имя_прокси(self):
+        """Схема без `h` больше не резолвит сама: в закрытой сети это не работает.
+
+        Прокси берут там, где Telegram недоступен, а локальный резолвер отдаёт
+        адрес того дата-центра, до которого у зарубежного прокси нет маршрута:
+        туннель открывается в никуда и молчит до таймаута.
+        """
+        self._proxy(b"\x05\x00", self.OK)
+        with mock.patch.object(ts.socket, "gethostbyname") as resolve:
+            ts._socks5_handshake(self.ours, "api.telegram.org", 443,
+                                 ts.parse_proxy("socks5://p:1080"))
+        resolve.assert_not_called()
+        self.assertIn(b"\x05\x01\x00\x03", self.seen)
+        self.assertIn(b"api.telegram.org", self.seen)
+
+    def test_отказ_от_имён_отделён_от_прочих(self):
+        """Код 0x08 — «имён не понимаю», и по нему заход стоит повторить."""
+        self._proxy(b"\x05\x00", b"\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00")
+        with self.assertRaises(ts.ProxyNameUnsupported):
+            ts._socks5_handshake(self.ours, "api.telegram.org", 443,
+                                 ts.parse_proxy("socks5://p:1080"))
+
+    def test_повтор_по_адресу_шлёт_ip(self):
+        """Запасной заход: имя разрешаем сами и шлём адрес."""
         self._proxy(b"\x05\x00", self.OK)
         with mock.patch.object(ts.socket, "gethostbyname", return_value="1.2.3.4"):
             ts._socks5_handshake(self.ours, "api.telegram.org", 443,
-                                 ts.parse_proxy("socks5://p:1080"))
+                                 ts.parse_proxy("socks5://p:1080"), by_name=False)
         self.assertIn(b"\x05\x01\x00\x01" + bytes((1, 2, 3, 4)), self.seen)
         self.assertNotIn(b"api.telegram.org", self.seen)
 
@@ -358,6 +421,54 @@ class TestХендшейкSocks5(unittest.TestCase):
         with self.assertRaises(ts.TelegramError):
             ts._socks5_handshake(self.ours, "api.telegram.org", 443,
                                  ts.parse_proxy("socks5h://p:1080"))
+
+
+class TestОткатНаАдрес(unittest.TestCase):
+    """Прокси, который имён не понимает, получает второй заход — с адресом.
+
+    После отказа продолжать по тому же сокету нельзя, поэтому соединение
+    открывается заново: проверяется и это.
+    """
+
+    def setUp(self):
+        self.seen: list[bytearray] = []
+
+    def _create_connection(self, address, timeout=None):
+        """Фейковый прокси: первый заход отвергает имя, второй пускает."""
+        ours, theirs = socket.socketpair()
+        self.addCleanup(ours.close)
+        self.addCleanup(theirs.close)
+        first = not self.seen
+        replies = ([b"\x05\x00", b"\x05\x08\x00\x01\x00\x00\x00\x00\x00\x00"] if first
+                   else [b"\x05\x00", b"\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x50"])
+        got = bytearray()
+        self.seen.append(got)
+
+        def serve() -> None:
+            for reply in replies:
+                try:
+                    got.extend(theirs.recv(4096))
+                    theirs.sendall(reply)
+                except OSError:
+                    return
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 1)
+        return ours
+
+    def test_второй_заход_идёт_по_адресу(self):
+        with mock.patch.object(ts.socket, "create_connection",
+                               self._create_connection), \
+             mock.patch.object(ts.socket, "gethostbyname", return_value="1.2.3.4"):
+            sock = ts._socks5_open(ts.parse_proxy("socks5://p:1080"),
+                                   "api.telegram.org", 443, 5)
+        sock.close()
+        self.assertEqual(len(self.seen), 2)
+        self.assertIn(b"api.telegram.org", bytes(self.seen[0]))
+        self.assertIn(b"\x05\x01\x00\x01" + bytes((1, 2, 3, 4)),
+                      bytes(self.seen[1]))
+        self.assertNotIn(b"api.telegram.org", bytes(self.seen[1]))
 
 
 class TestПрокиВызовахAPI(unittest.TestCase):
