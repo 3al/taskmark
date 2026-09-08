@@ -61,6 +61,20 @@ class SavedSettingsTest(unittest.TestCase):
         self.assertEqual(saved["telegram_token"], "123:AAH")
         self.assertEqual(saved["telegram_chats"], {"-100": ["Проект"]})
 
+    def test_снятый_путь_доезжает_до_файла(self):
+        """`False` — такое же значение, как остальные, и теряться ему нельзя.
+
+        Ключ, которого нет в реестре, обработчик молча выбрасывает: галочка
+        снимается, сохраняется — и возвращается на место.
+        """
+        with mock.patch.object(app_module, "restart_telegram_poller"):
+            self.save({"telegram_route": False,
+                       "telegram_proxy": "socks5://p:1080"})
+        saved = self.stored()
+        self.assertIs(saved["telegram_route"], False)
+        self.assertEqual(saved["telegram_proxy"], "socks5://p:1080",
+                         "адрес должен пережить выключение пути")
+
     def test_сохранение_перезапускает_поллер(self):
         """Иначе включённая возможность ждёт перезапуска сервера — а человек
         уже нажал «Сохранить» и ждёт, что бот заработает."""
@@ -153,6 +167,64 @@ class SettingsUiTest(unittest.TestCase):
         checkbox = block[block.index('type="checkbox"'):]
         self.assertIn("accent-sky-500", checkbox[:200],
                       "галочка возможности оформлена не как остальные")
+
+    def proxy_field(self) -> str:
+        """Разметка поля прокси: от подсказки в нём до конца строки полей."""
+        text = self.source()
+        start = text.index('placeholder="прокси:')
+        return text[start:text.index('placeholder="свой адрес Bot API', start)]
+
+    def test_путь_до_telegram_выключается_галочкой(self):
+        """Иначе отказаться от прокси можно только стерев адрес."""
+        text = self.source()
+        self.assertIn("telegram_route", text, "выключателя пути нет")
+
+    def test_пароль_прокси_показан_звёздочками(self):
+        """Логин с паролем живут прямо в адресе — на экране их видно всем."""
+        text = self.source()
+        self.assertIn("maskProxy", text, "пароль в адресе прокси показан открыто")
+
+    def test_поле_прокси_остаётся_редактируемым(self):
+        """Нередактируемое поле ничем не отличается на вид.
+
+        Человек тычет в него, ничего не происходит, и причину он не узнаёт —
+        поэтому адрес правится всегда, а прячется он по уходу из поля.
+        """
+        block = self.proxy_field()
+        self.assertNotIn("readOnly", block, "поле прокси нельзя править вслепую")
+        self.assertIn("onFocus", block, "в поле человек должен видеть, что правит")
+        self.assertIn("onBlur", block, "маска не возвращается после правки")
+
+    def test_пароль_открывается_только_на_время(self):
+        """Показ по удержанию: снятая на секунду маска не остаётся снятой.
+
+        Переключатель «показать/скрыть» этим и плох — после него вставленный
+        следующим адрес тоже оказывался открытым.
+        """
+        block = self.proxy_field()
+        self.assertIn("onMouseDown", block, "глазка с удержанием нет")
+        self.assertIn("onMouseUp", block, "показ не гасится по отпусканию")
+        self.assertIn("onMouseLeave", block,
+                      "уведённая с кнопки мышь оставила бы пароль открытым")
+
+    def test_проверка_идёт_тем_же_путём(self):
+        """Кнопка «Проверить» проверяет то, чем бот ходит сейчас."""
+        text = self.source()
+        block = text[text.index("const checkTelegram"):text.index("const chatBinding")]
+        self.assertIn("telegram_route", block,
+                      "проверка не учитывает выключенный путь")
+
+    def test_значения_перед_рендером_переживают_пустой_конфиг(self):
+        """Конфиг приезжает запросом, и на первом рендере его ещё нет.
+
+        Разметка окна защищена `{config && …}`, а строки над `return` считаются
+        **всегда**: обращение к полю без `?.` роняет всё окно в чёрный экран.
+        """
+        text = self.source()
+        head = text[text.index("const field = "):text.index("\n  return (")]
+        self.assertNotRegex(
+            head, r"\bconfig\.\w",
+            "обращение к конфигу до загрузки — окно упадёт на первом рендере")
 
     def test_список_чатов_обновляется_сам(self):
         """Человеку сказано «напишите в чат — он появится здесь»: значит сам,

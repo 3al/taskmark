@@ -82,6 +82,10 @@ DEFAULTS: dict = {
     # машины и человека, а не репозитория (в PROJECT_KEYS их нет)
     "telegram": False,
     "telegram_token": "",
+    # Применять ли свой путь до Bot API — прокси и свой адрес разом. Выключенный
+    # означает «ходить напрямую», **не стирая** оба поля: отказ от прокси обычно
+    # временный, а стёртый адрес человеку потом взять неоткуда
+    "telegram_route": True,
     # Прокси для Bot API: пусто — напрямую. Схемы http, https, socks5, socks5h;
     # **MTProto-прокси не подходит** — бот ходит обычным HTTPS, а не по MTProto
     "telegram_proxy": "",
@@ -242,9 +246,9 @@ def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
 # файл. `release_script` остаётся: это не переименование, а точка расширения
 # Ключи телеграм-интеграции. Глобальные — в PROJECT_KEYS их нет: бот один на
 # человека, а привязка чатов ссылается сразу на несколько проектов реестра
-TELEGRAM_KEYS = {"telegram", "telegram_token", "telegram_proxy",
-                 "telegram_api_root", "telegram_username", "telegram_tag",
-                 "telegram_chats", "telegram_due_days"}
+TELEGRAM_KEYS = {"telegram", "telegram_token", "telegram_route",
+                 "telegram_proxy", "telegram_api_root", "telegram_username",
+                 "telegram_tag", "telegram_chats", "telegram_due_days"}
 
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
                 "dnd_full_board", "harnesses", "vault", "delete_tasks",

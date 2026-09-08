@@ -17,6 +17,7 @@ from unittest import mock
 from urllib.parse import unquote
 
 from backend import telegram_source as ts
+from backend.config import DEFAULTS, TELEGRAM_KEYS
 
 TOKEN = "123:AAH-test"
 
@@ -503,6 +504,39 @@ class TestПрокиВызовахAPI(unittest.TestCase):
             ts.get_me(TOKEN, fetch=lambda url, payload: {"ok": True, "result": {}},
                       proxy="http://p:3128")
         build.assert_not_called()
+
+
+class TestВыключательПути(unittest.TestCase):
+    """Галочка гасит применение прокси и своего адреса, **не стирая** их.
+
+    Ходить напрямую хочется временно, а стёртый адрес взять потом неоткуда:
+    человек либо ищет его заново, либо не выключает прокси вовсе.
+    """
+
+    def test_выключенный_путь_гасит_прокси(self):
+        cfg = {"telegram_proxy": "socks5://p:1080", "telegram_route": False}
+        self.assertEqual(ts.proxy(cfg), "")
+        self.assertEqual(cfg["telegram_proxy"], "socks5://p:1080")
+
+    def test_выключенный_путь_гасит_свой_адрес(self):
+        cfg = {"telegram_api_root": "https://мой.домен", "telegram_route": False}
+        self.assertEqual(ts.api_root(cfg), ts.API_ROOT)
+        self.assertEqual(cfg["telegram_api_root"], "https://мой.домен")
+
+    def test_погашенное_поле_не_разбирается(self):
+        """Им сейчас не ходят — незачем и отказывать из-за его содержимого."""
+        self.assertEqual(ts.api_root({"telegram_api_root": "socks5://мой.домен",
+                                      "telegram_route": False}), ts.API_ROOT)
+
+    def test_по_умолчанию_путь_включён(self):
+        """Обновление не должно выключить прокси тому, кто его настроил."""
+        self.assertIs(DEFAULTS["telegram_route"], True)
+        self.assertEqual(ts.proxy({"telegram_proxy": "socks5://p:1080"}),
+                         "socks5://p:1080")
+
+    def test_ключ_перезапускает_поллер(self):
+        """Не в реестре — выключение подействует лишь после перезапуска сервера."""
+        self.assertIn("telegram_route", TELEGRAM_KEYS)
 
 
 class TestПоллерСПрокси(unittest.TestCase):

@@ -75,8 +75,20 @@ def token(cfg: dict) -> str:
     return str(cfg.get("telegram_token") or "").strip()
 
 
+def routed(cfg: dict) -> bool:
+    """Применять ли свой путь до Bot API — прокси и свой адрес разом.
+
+    Выключатель гасит **применение**, а не хранение: оба поля остаются
+    заполненными. Ходить напрямую хочется временно, и стирать ради этого адрес
+    значит терять его — вернуть потом неоткуда.
+    """
+    return cfg.get("telegram_route", True) is not False
+
+
 def proxy(cfg: dict) -> str:
     """Адрес прокси для Bot API. Пусто — прямое соединение."""
+    if not routed(cfg):
+        return ""
     return str(cfg.get("telegram_proxy") or "").strip()
 
 
@@ -87,6 +99,10 @@ def api_root(cfg: dict) -> str:
     локальный `telegram-bot-api`): третий путь туда, где `api.telegram.org`
     закрыт, и он не прокси, а корень адреса.
     """
+    if not routed(cfg):
+        # Погашенное поле и не разбирается: им сейчас не ходят, а отказ из-за
+        # его содержимого выглядел бы поломкой на ровном месте
+        return API_ROOT
     raw = str(cfg.get("telegram_api_root") or "").strip().rstrip("/")
     if not raw:
         return API_ROOT

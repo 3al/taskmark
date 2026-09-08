@@ -27,6 +27,19 @@ const SCOPE_NOTE = {
   global: 'Общие для всех проектов · ~/.taskboard/config.json',
 }
 
+// Пароль в адресе прокси показывается звёздочками: логин с паролем живут прямо
+// в строке (`socks5://имя:пароль@хост:порт`), и окно показывало их всякому, кто
+// смотрит в этот экран. Прячется **только** пароль — по схеме и хосту человек
+// узнаёт свой прокси, а без этого поле превращается в нечитаемую кашу
+const maskProxy = (value) => {
+  const scheme = value.indexOf('://')
+  const at = value.lastIndexOf('@')
+  if (scheme < 0 || at < scheme) return value
+  const colon = value.indexOf(':', scheme + 3)
+  if (colon < 0 || colon > at) return value
+  return `${value.slice(0, colon + 1)}••••••${value.slice(at)}`
+}
+
 // Модалка настроек. Свойства инструмента (порт, вид карточки) живут в
 // глобальном ~/.taskboard/config.json, настройки проекта (жизненный цикл,
 // среды, скрипт выпуска) — в <проект>/tasks/.taskboard.json
@@ -125,6 +138,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   // Проверка через прокси занимает секунды: без этого кнопка молчит, и человек
   // жмёт её повторно
   const [botChecking, setBotChecking] = useState(false)
+  // Показ пароля прокси: человек либо правит поле (тогда он и так его видит),
+  // либо держит глазок. Оба состояния разовые — в конфиг не идут
+  const [proxyFocus, setProxyFocus] = useState(false)
+  const [proxyPeek, setProxyPeek] = useState(false)
   const [telegramChats, setTelegramChats] = useState([])
   const [projectNames, setProjectNames] = useState([])
 
@@ -166,10 +183,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     setBotName(null)
     setBotError(null)
     setBotChecking(true)
+    // Проверяем **то, чем бот ходит сейчас**: при снятой галочке — напрямую, а
+    // не тем, что осталось написано в погашенных полях
+    const routed = config.telegram_route !== false
     try {
       const result = await api.telegramCheck(config.telegram_token || '',
-                                             config.telegram_proxy || '',
-                                             config.telegram_api_root || '')
+                                             routed ? config.telegram_proxy || '' : '',
+                                             routed ? config.telegram_api_root || '' : '')
       setBotName(result.username)
     } catch (e) {
       setBotError(e.message)
@@ -248,6 +268,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     review_sources: !!config.review_sources,
     telegram: !!config.telegram,
     telegram_token: (config.telegram_token || '').trim(),
+    telegram_route: config.telegram_route !== false,
     telegram_proxy: (config.telegram_proxy || '').trim(),
     telegram_api_root: (config.telegram_api_root || '').trim(),
     telegram_username: (config.telegram_username || '').trim().replace(/^@/, ''),
@@ -328,6 +349,16 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   // и `w-full` побеждает, схлопывая соседей в ноль
   const narrowField = 'bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500'
   const label = 'block text-xs text-zinc-400 mb-1'
+  // Строки считаются на **каждом** рендере, а конфиг приезжает запросом: на
+  // первом проходе его ещё нет, и обращение к полю роняло всё окно — отсюда `?.`.
+  // Прятать нечего, если пароля в адресе нет: маска совпадает с самим адресом
+  const proxyText = config?.telegram_proxy || ''
+  const proxySecret = maskProxy(proxyText) !== proxyText
+  // Настоящий адрес виден, пока человек **в поле** — править вслепую нельзя, —
+  // или пока держит глазок. Ушёл из поля: снова маска, в том числе и для
+  // вставленного только что адреса
+  const proxyOpen = !proxySecret || proxyFocus || proxyPeek
+  const routeOff = config?.telegram_route === false
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -870,18 +901,6 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         {botError && (
                           <div className="text-[11px] text-rose-400 mt-1">{botError}</div>
                         )}
-                        <input
-                          className={`${field} mt-2`}
-                          placeholder="прокси: socks5://хост:1080 — если Telegram недоступен напрямую"
-                          value={config.telegram_proxy || ''}
-                          onChange={(e) => set('telegram_proxy', e.target.value)}
-                        />
-                        <input
-                          className={`${field} mt-2`}
-                          placeholder="свой адрес Bot API: https://ваш.домен — вместо api.telegram.org"
-                          value={config.telegram_api_root || ''}
-                          onChange={(e) => set('telegram_api_root', e.target.value)}
-                        />
                         <div className="text-[11px] text-zinc-400 mt-1">
                           У @BotFather: /newbot → выключить Group Privacy → добавить бота в чат
                           {onOpenHelp && (
@@ -892,6 +911,63 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                               Подробнее
                             </button>
                           )}
+                        </div>
+                        {/* Кликается сама галочка с подписью, а не полоса во всю
+                            ширину: промах мимо текста не должен переключать путь */}
+                        <label className="inline-flex items-center gap-2 text-sm mt-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={!routeOff}
+                            onChange={(e) => set('telegram_route', e.target.checked)}
+                            className="accent-sky-500"
+                          />
+                          Свой путь до Telegram
+                        </label>
+                        <div className="text-[11px] text-zinc-400">
+                          прокси и свой адрес Bot API. Снимите — бот пойдёт
+                          напрямую, а адреса останутся на месте
+                        </div>
+                        <div className={routeOff ? 'opacity-40' : ''}>
+                          <div className="relative mt-2">
+                            <input
+                              className={`${field} ${proxySecret ? 'pr-10' : ''}`}
+                              placeholder="прокси: socks5://хост:порт — если Telegram недоступен напрямую"
+                              disabled={routeOff}
+                              value={proxyOpen ? proxyText : maskProxy(proxyText)}
+                              onFocus={() => setProxyFocus(true)}
+                              onBlur={() => setProxyFocus(false)}
+                              onChange={(e) => set('telegram_proxy', e.target.value)}
+                            />
+                            {/* Глазок показывает пароль, пока его держат: снятая
+                                на секунду маска не остаётся снятой насовсем.
+                                Фокус у поля не отбираем — иначе показ выбрасывал
+                                бы человека из строки, которую он правит */}
+                            {proxySecret && !routeOff && (
+                              <button
+                                type="button"
+                                tabIndex={-1}
+                                title="Показать пароль, пока держите"
+                                onMouseDown={(e) => { e.preventDefault(); setProxyPeek(true) }}
+                                onMouseUp={() => setProxyPeek(false)}
+                                onMouseLeave={() => setProxyPeek(false)}
+                                onTouchStart={() => setProxyPeek(true)}
+                                onTouchEnd={() => setProxyPeek(false)}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-300"
+                              >
+                                <svg viewBox="0 0 16 16" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                  <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8Z" />
+                                  <circle cx="8" cy="8" r="2" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            className={`${field} mt-2`}
+                            placeholder="свой адрес Bot API: https://ваш.домен — вместо api.telegram.org"
+                            disabled={routeOff}
+                            value={config.telegram_api_root || ''}
+                            onChange={(e) => set('telegram_api_root', e.target.value)}
+                          />
                         </div>
                       </div>
 
