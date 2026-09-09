@@ -8,19 +8,18 @@
 
 from __future__ import annotations
 
-import html
 import re
 from datetime import date
 from pathlib import Path
 
-from . import telegram_notify
+from . import telegram_messages, telegram_notify
 from .board_parser import parse_board
 from .config import load_project_config
 from .statuses import is_terminal, load_pipeline
 from .task_parser import due_left, parse_task
 
 WORK_TAG = "работа"
-MESSAGE_LIMIT = 4000
+MESSAGE_LIMIT = telegram_messages.MESSAGE_LIMIT
 
 _WORK_TAG = re.compile(r"(?<!\w)#работа(?![\w-])", re.IGNORECASE)
 # Для маршрутизации важен сам факт адресации, а не валидность Telegram-ника.
@@ -117,7 +116,7 @@ def format_messages(tasks: list[dict], owner: str, by_author: bool = False,
     """Сформировать безопасный HTML и разбить длинный список по задачам."""
     owner = "@" + str(owner or "").strip().lstrip("@")
     subject = f"Назначено вами → {owner}" if by_author else f"Работа {owner}"
-    heading = f"📋 <b>{_escape(subject)}</b>"
+    heading = telegram_messages.heading("📋", subject)
     if not tasks:
         return [f"{heading}\n\nНезавершённых задач нет."]
 
@@ -130,31 +129,27 @@ def format_messages(tasks: list[dict], owner: str, by_author: bool = False,
             current = candidate
             continue
         messages.append(current)
-        current = f"{heading} · продолжение\n\n{block}"
+        current = f"{telegram_messages.heading('📋', subject, continuation=True)}\n\n{block}"
     messages.append(current)
     return messages
 
 
 def _task_block(task: dict) -> str:
-    task_id = _escape(_clip(task.get("id"), 30))
-    title = _escape(_clip(task.get("title"), 300))
-    status = _escape(_clip(task.get("status_label") or task.get("status"), 100))
-    project = _escape(_clip(task.get("project"), 120))
-    due = _escape(_due_text(task.get("due"), task.get("due_left")))
-    assigned = _escape(_date_text(task.get("assigned")))
-    return (f"▫️ <b>{task_id} · {title}</b>\n"
-            f"Статус: {status}\n"
-            f"Срок: {due}\n"
-            f"Назначена: {assigned} · проект «{project}»")
+    task_line = telegram_messages.task_line(
+        _clip(task.get("id"), 30), _clip(task.get("title"), 300))
+    status = telegram_messages.field(
+        "Статус", _clip(task.get("status_label") or task.get("status"), 100))
+    due = telegram_messages.field(
+        "Срок", _due_text(task.get("due"), task.get("due_left")))
+    assigned = telegram_messages.field(
+        "Назначена", _date_text(task.get("assigned")))
+    project = telegram_messages.field("Проект", f"«{_clip(task.get('project'), 120)}»")
+    return f"▫️ {task_line}\n{status}\n{due}\n{assigned}\n{project}"
 
 
 def _clip(value, size: int) -> str:
     text = " ".join(str(value or "").split())
     return text if len(text) <= size else text[:size - 1].rstrip() + "…"
-
-
-def _escape(value: str) -> str:
-    return html.escape(value, quote=False)
 
 
 def _date_text(value) -> str:

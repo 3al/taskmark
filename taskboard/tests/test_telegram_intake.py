@@ -237,6 +237,14 @@ class HandleTest(unittest.TestCase):
         self.assertIn("Обновить документацию", text)
         self.assertIn("Первый", text)
         self.assertIn("бэклог", text.lower())
+        self.assertEqual("HTML", self.parse_modes[-1])
+        self.assertIn("✅ <b>", text)
+
+    def test_динамический_текст_успеха_экранирован(self):
+        self.handle(message("#задача Проверить <API> & отчёт @kostya"))
+        text = self.sent[0][1]
+        self.assertNotIn("<API>", text)
+        self.assertIn("&lt;API&gt; &amp;", text)
 
     def test_чужой_тег_проходит_молча(self):
         result = self.handle(message("#задача Сделать X @petya"))
@@ -254,6 +262,8 @@ class HandleTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertFalse((self.tasks / "argv.json").exists())
         self.assertIn("не привязан", self.sent[0][1].lower())
+        self.assertEqual("HTML", self.parse_modes[-1])
+        self.assertIn("⚠️ <b>", self.sent[0][1])
 
     def test_суффикс_выбирает_среди_привязанных(self):
         """Чат ведёт в два проекта: первый по умолчанию, суффикс берёт второй."""
@@ -447,6 +457,7 @@ class ManyMentionsTest(HandleTest):
         self.handle(message("#задача Сделать X @kostya @ivan"))
         self.assertEqual(1, len(self.sent), "ответа в чат нет")
         self.assertIn("одного", self.sent[0][1])
+        self.assertEqual("HTML", self.parse_modes[-1])
 
     def test_ответ_привязан_к_исходному_сообщению(self):
         """Реплаем, как и остальные ответы: в живом чате иначе не найти повод."""
@@ -630,7 +641,7 @@ class WorkCommandTest(HandleTest):
         self.assertTrue(result["ok"], result)
         answer = "\n".join(item[1] for item in self.sent)
         self.assertIn("Задача второго проекта", answer)
-        self.assertIn("проект «Второй»", answer)
+        self.assertIn("<b>Проект:</b> «Второй»", answer)
 
     def test_длинный_список_делится_между_сообщениями(self):
         entries = []
@@ -716,6 +727,7 @@ class FailureReplyTest(HandleTest):
         self._broken_script("что угодно")
         self.handle(message("#задача Сделать X @kostya"))
         self.assertEqual(self.sent[-1][1], intake.FAILED_TEXT)
+        self.assertEqual("HTML", self.parse_modes[-1])
 
     def test_причина_уходит_в_лог(self):
         self._broken_script("no write access")

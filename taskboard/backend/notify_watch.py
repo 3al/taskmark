@@ -19,7 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from . import notify_targets, registry, telegram_notify, telegram_source
+from . import (notify_targets, registry, telegram_messages, telegram_notify,
+               telegram_source)
 from .board_parser import parse_board
 from .config import load_project_config
 from .statuses import load_pipeline
@@ -55,19 +56,23 @@ def _snapshot(tasks_dir: Path, pipeline) -> dict:
 
 
 def _message(task_id: str, title: str, was: str, now: str,
-             mentions: list[str]) -> str:
+             mentions: list[str], project: str = "") -> str:
     """Что человек прочитает в чате.
 
     Заголовок повторяется намеренно: номер задачи ничего не говорит тому, кто
     её принёс месяц назад. Теги — в конце, чтобы сообщение читалось как фраза,
     а не начиналось с обращения.
     """
-    line = f"{task_id} · {title} · {was} → {now}"
-    return f"{line}\n{' '.join(mentions)}" if mentions else line
+    fields = [("Статус", f"{was} → {now}")]
+    if project:
+        fields.append(("Проект", f"«{project}»"))
+    return telegram_messages.card(
+        "🔄", "Статус задачи изменён", task_id=task_id, task_title=title,
+        fields=fields, mentions=mentions)
 
 
 def check_project(tasks_dir: Path, cfg: dict, project_cfg: dict, state: dict,
-                  send: Callable | None = None) -> int:
+                  send: Callable | None = None, project_name: str = "") -> int:
     """Один проход по проекту. Возвращает число отправленных уведомлений.
 
     Снимок сдвигается **всегда** — даже когда отправка не удалась и когда
@@ -105,14 +110,16 @@ def check_project(tasks_dir: Path, cfg: dict, project_cfg: dict, state: dict,
         if not targets:
             continue
         text = _message(task_id, str(meta.get("title") or task_id), was, now,
-                        targets["mentions"])
+                        targets["mentions"], project_name or tasks_dir.parent.name)
         try:
             if send is not None:
-                reply(targets["chat_id"], text)
+                reply(targets["chat_id"], text,
+                      parse_mode=telegram_messages.PARSE_MODE)
             else:
                 reply(telegram_source.token(cfg), targets["chat_id"], text,
                       proxy=telegram_source.proxy(cfg),
-                      api_root=telegram_source.api_root(cfg))
+                      api_root=telegram_source.api_root(cfg),
+                      parse_mode=telegram_messages.PARSE_MODE)
             sent += 1
         except Exception:  # noqa: BLE001 — сеть, отказ API: снимок уже сдвинут
             pass
@@ -130,7 +137,8 @@ def check_all(cfg: dict, state: dict, projects: list[dict] | None = None) -> int
             continue
         try:
             total += check_project(tasks_dir, cfg, load_project_config(tasks_dir),
-                                   state)
+                                   state,
+                                   project_name=str(project.get("name") or ""))
         except Exception:  # noqa: BLE001 — один битый проект не должен
             continue      # останавливать остальные
     return total

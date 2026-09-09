@@ -33,7 +33,8 @@ import re
 from datetime import date
 from pathlib import Path
 
-from . import console, registry, telegram_notify, telegram_source, telegram_work
+from . import (console, registry, telegram_messages, telegram_notify,
+               telegram_source, telegram_work)
 from .config import load_global_config, load_project_config
 from .create_task_runner import create_task
 from .due_input import parse_due_input
@@ -61,26 +62,32 @@ _DUE_VALUE = re.compile(
     r"(?:день|дня|дней|неделя|недели|недель|месяц|месяца|месяцев))(?=$|\s|[.!?,;])",
     re.IGNORECASE,
 )
-DUE_ERROR = ("Не разобрал срок. Укажите один #срок и дату ГГГГ-ММ-ДД "
-             "или число и единицу: 2 дня, 3 недели, 1 месяц.")
+DUE_ERROR = telegram_messages.card(
+    "⚠️", "Срок не распознан",
+    body=("Укажите один #срок и дату ГГГГ-ММ-ДД или число и единицу: "
+          "2 дня, 3 недели, 1 месяц."))
 
 # Задачу ставят одному. Тегнули двоих — это не «задача на двоих», а сообщение,
 # которое у каждого тегнутого завелось бы своей задачей со своим номером: доски
 # локальные, общей правды нет, и «одна задача» распалась бы на две молча.
 # Формулировка без числа намеренно: «тегнуто несколько» не требует согласования
 # с количеством, а человеку хватает и этого
-MANY_TEXT = ("Задача заводится на одного, а в сообщении тегнуто несколько. "
-             "Пришлите отдельное сообщение каждому.")
+MANY_TEXT = telegram_messages.card(
+    "⚠️", "Нужен один исполнитель",
+    body=("Задача заводится на одного, а в сообщении тегнуто несколько. "
+          "Пришлите отдельное сообщение каждому."))
 
 # Неудача заведения — такой же отказ, как остальные, и говорит он то же, что
 # все они: что случилось и что делать. Подстановок из внутренностей здесь нет
 # намеренно — `usage` argparse и трассировка адресованы тому, кто чинит
 # инструмент, и уходят в лог сервера
-FAILED_TEXT = ("Задачу завести не удалось. Загляните в лог Taskmark — "
-               "причина записана там.")
+FAILED_TEXT = telegram_messages.card(
+    "❌", "Задача не создана",
+    body="Загляните в лог Taskmark — причина записана там.")
 
-WORK_FAILED_TEXT = ("Список работы собрать не удалось. Загляните в лог Taskmark — "
-                    "причина записана там.")
+WORK_FAILED_TEXT = telegram_messages.card(
+    "❌", "Список работы не собран",
+    body="Загляните в лог Taskmark — причина записана там.")
 
 # Конец предложения: точка (или «!»/«?») и пробел за ней. Пробел обязателен —
 # иначе «версия 1.2 сломалась» разрежется по номеру версии
@@ -110,10 +117,22 @@ def _intent_conflict(text: str, cfg: dict) -> bool:
 
 def _intent_conflict_text(cfg: dict) -> str:
     task_tag = "#" + tag(cfg)
-    return ("В одном сообщении нельзя одновременно создавать или менять задачу "
-            "и запрашивать список работы. Отправьте команды отдельно:\n"
-            f"{task_tag} Текст задачи @ник #срок 3 дня\n"
-            "#работа @ник")
+    return telegram_messages.card(
+        "⚠️", "Команды нельзя совмещать",
+        body=("В одном сообщении нельзя одновременно создавать или менять задачу "
+              "и запрашивать список работы. Отправьте команды отдельно:\n"
+              f"{task_tag} Текст задачи @ник #срок 3 дня\n"
+              "#работа @ник"))
+
+
+def _send(reply, message: dict, text: str) -> None:
+    """Все ответы верхнего слоя — безопасный HTML и реплай к сообщению."""
+    reply(message["chat_id"], text, message.get("message_id"),
+          parse_mode=telegram_messages.PARSE_MODE)
+
+
+def _warning(title: str, body: str) -> str:
+    return telegram_messages.card("⚠️", title, body=body)
 
 
 def _my_username(cfg: dict) -> str:
@@ -316,7 +335,7 @@ def handle(message: dict, cfg: dict | None = None,
             return {"ok": False, "skipped": "не нам"}
         if _intent_conflict(text, cfg):
             error = _intent_conflict_text(cfg)
-            reply(message["chat_id"], error, message.get("message_id"))
+            _send(reply, message, error)
             return {"ok": False, "error": error}
         return _handle_work(message, work, cfg, projects, reply)
 
@@ -330,11 +349,11 @@ def handle(message: dict, cfg: dict | None = None,
         # Отвечают **все** тегнутые: бот у каждого свой, и молчание одного из
         # них выглядело бы как «у него получилось». Дубли в чате — цена того,
         # что сообщение не сработало ни у кого
-        reply(message["chat_id"], MANY_TEXT, message.get("message_id"))
+        _send(reply, message, MANY_TEXT)
         return {"ok": False, "error": MANY_TEXT}
 
     if parsed.get("error"):
-        reply(message["chat_id"], parsed["error"], message.get("message_id"))
+        _send(reply, message, parsed["error"])
         return {"ok": False, "error": parsed["error"]}
 
     known = _recall(message.get("update_id"))
@@ -342,21 +361,20 @@ def handle(message: dict, cfg: dict | None = None,
         # То же самое сообщение уже разбирали: задача есть, а вот ответ мог
         # не уйти — падение между созданием и ответом выглядит для человека
         # молчанием, и он пришлёт сообщение заново
-        reply(message["chat_id"], _reply_text(known["id"], known["title"],
-                                              known["project"]),
-              message.get("message_id"))
+        _send(reply, message, _reply_text(known["id"], known["title"],
+                                         known["project"]))
         return {"ok": True, **known, "repeat": True}
 
     # Проверка только при новом создании: повтор уже принятого сообщения
     # должен подтвердить существующую задачу и после наступления её срока.
     if parsed["due"] and date.fromisoformat(parsed["due"]) < date.today():
         error = "Срок в прошлом. Укажите сегодняшнюю или будущую дату — задача не создана."
-        reply(message["chat_id"], error, message.get("message_id"))
+        _send(reply, message, _warning("Срок в прошлом", error))
         return {"ok": False, "error": error}
 
     project, error = resolve_project(parsed, message, cfg, projects)
     if error:
-        reply(message["chat_id"], error, message.get("message_id"))
+        _send(reply, message, _warning("Задача не создана", error))
         return {"ok": False, "error": error}
 
     tasks_dir = Path(project["tasks_dir"])
@@ -382,15 +400,15 @@ def handle(message: dict, cfg: dict | None = None,
     if not result.get("ok"):
         error = str(result.get("error") or "").strip()
         console.log(f"telegram: задача из чата не заведена — {error}")
-        reply(message["chat_id"], result.get("user_error") or FAILED_TEXT,
-              message.get("message_id"))
+        user_error = result.get("user_error")
+        _send(reply, message,
+              _warning("Задача не создана", user_error) if user_error else FAILED_TEXT)
         return {"ok": False, "error": result.get("error")}
 
     done = {"id": result.get("id"), "title": parsed["title"],
             "project": str(project.get("name", ""))}
     _remember(message.get("update_id"), done)
-    reply(message["chat_id"], _reply_text(done["id"], done["title"], done["project"]),
-          message.get("message_id"))
+    _send(reply, message, _reply_text(done["id"], done["title"], done["project"]))
     return {"ok": True, **done}
 
 
@@ -400,7 +418,9 @@ def _reply_text(task_id: str, title: str, project: str) -> str:
     Статус и раздел доски здесь не нужны: задача из чата всегда попадает в
     бэклог, и повторять это в каждом ответе — шум, а не сведения.
     """
-    return f"{task_id} · {title} → бэклог проекта «{project}»"
+    return telegram_messages.card(
+        "✅", "Задача создана", task_id=task_id, task_title=title,
+        fields=[("Проект", f"«{project}»"), ("Статус", "Бэклог")])
 
 
 def _handle_work(message: dict, parsed: dict, cfg: dict,
@@ -408,7 +428,7 @@ def _handle_work(message: dict, parsed: dict, cfg: dict,
     """Вернуть локальную часть списка работы этого персонального бота."""
     selected, error = _work_projects(message, cfg, projects)
     if error:
-        reply(message["chat_id"], error, message.get("message_id"))
+        _send(reply, message, _warning("Список работы не собран", error))
         return {"ok": False, "error": error}
 
     by_author = not bool(parsed.get("mentions"))
@@ -419,12 +439,12 @@ def _handle_work(message: dict, parsed: dict, cfg: dict,
             tasks, _my_username(cfg), by_author=by_author)
     except Exception as exc:  # noqa: BLE001 — битые пользовательские файлы
         console.log(f"telegram: список работы не собран — {type(exc).__name__}: {exc}")
-        reply(message["chat_id"], WORK_FAILED_TEXT, message.get("message_id"))
+        _send(reply, message, WORK_FAILED_TEXT)
         return {"ok": False, "error": str(exc)}
 
     for text in messages:
         reply(message["chat_id"], text, message.get("message_id"),
-              parse_mode="HTML")
+              parse_mode=telegram_messages.PARSE_MODE)
     return {"ok": True, "command": telegram_work.WORK_TAG,
             "count": len(tasks), "messages": len(messages)}
 

@@ -19,7 +19,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
-from . import registry, telegram_notify, telegram_source
+from . import registry, telegram_messages, telegram_notify, telegram_source
 from .board_parser import parse_board
 from .config import load_project_config
 from .statuses import is_terminal, load_pipeline
@@ -146,14 +146,19 @@ def _phrase(left: int) -> str:
     return f"до срока {left} {word}"
 
 
-def _message(event: dict, mentions: list[str]) -> str:
+def _message(event: dict, mentions: list[str], project: str = "") -> str:
     """Что человек прочитает в чате.
 
     Дата стоит рядом со словами: «через три дня» отвечает на вопрос «когда
     браться», а сама дата — на вопрос «а какое там число».
     """
-    line = f"{event['id']} · {event['title']} · {_phrase(event['left'])} ({event['due']})"
-    return f"{line}\n{' '.join(mentions)}" if mentions else line
+    fields = [("Срок", f"{_phrase(event['left'])} · {event['due']}")]
+    if project:
+        fields.append(("Проект", f"«{project}»"))
+    return telegram_messages.card(
+        "⏰", "Срок задачи приближается",
+        task_id=event["id"], task_title=event["title"],
+        fields=fields, mentions=mentions)
 
 
 def load_marks() -> dict:
@@ -168,7 +173,7 @@ def save_marks(marks: dict) -> None:
 
 def check_project(tasks_dir: Path, cfg: dict, project_cfg: dict, marks: dict,
                   send: Callable | None = None,
-                  today: date | None = None) -> int:
+                  today: date | None = None, project_name: str = "") -> int:
     """Один проход по проекту. Возвращает число отправленных напоминаний.
 
     Ключ отметки — **срок задачи вместе с пройденной границей**: пока задача
@@ -202,14 +207,17 @@ def check_project(tasks_dir: Path, cfg: dict, project_cfg: dict, marks: dict,
         targets = telegram_notify.targets(event["meta"], cfg)
         if not targets:
             continue
-        text = _message(event, targets["mentions"])
+        text = _message(event, targets["mentions"],
+                        project_name or tasks_dir.parent.name)
         try:
             if send is not None:
-                reply(targets["chat_id"], text)
+                reply(targets["chat_id"], text,
+                      parse_mode=telegram_messages.PARSE_MODE)
             else:
                 reply(telegram_source.token(cfg), targets["chat_id"], text,
                       proxy=telegram_source.proxy(cfg),
-                      api_root=telegram_source.api_root(cfg))
+                      api_root=telegram_source.api_root(cfg),
+                      parse_mode=telegram_messages.PARSE_MODE)
             sent += 1
         except Exception:  # noqa: BLE001 — сеть, отказ API: отметка уже стоит
             pass
@@ -242,7 +250,8 @@ def check_all(cfg: dict, state: dict, projects: list[dict] | None = None,
             continue
         try:
             total += check_project(tasks_dir, cfg, load_project_config(tasks_dir),
-                                   marks, send=send, today=today)
+                                   marks, send=send, today=today,
+                                   project_name=str(project.get("name") or ""))
         except Exception:  # noqa: BLE001 — один битый проект не должен
             continue      # останавливать остальные
     save_marks(marks)

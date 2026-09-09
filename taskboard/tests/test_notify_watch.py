@@ -65,6 +65,7 @@ class Base(unittest.TestCase):
 
     def send(self, chat_id, text, reply_to=None, **kw):
         self.sent.append((chat_id, text))
+        self.parse_mode = kw.get("parse_mode")
 
     def write_board(self, section: str) -> None:
         board = BOARD
@@ -126,6 +127,17 @@ class TestДвижение(Base):
         self.assertIn("Done", text)
         self.assertIn("@kostya", text)
         self.assertIn("@petya", text)
+        self.assertEqual("HTML", self.parse_mode)
+        self.assertIn("🔄 <b>", text)
+        self.assertIn("<b>Проект:</b> «project»", text)
+
+    def test_динамический_текст_экранирован(self):
+        text = notify_watch._message(
+            "TASK-<&", "Заголовок <b>&", "До <", "После &",
+            ["@a&b"], "Проект <x>")
+        self.assertNotIn("<x>", text)
+        self.assertIn("Заголовок &lt;b&gt;&amp;", text)
+        self.assertIn("Проект &lt;x&gt;", text)
 
     def test_переезд_мимо_настроенных_статусов_молчит(self):
         self.write_board("Development")

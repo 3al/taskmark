@@ -81,6 +81,7 @@ class Base(unittest.TestCase):
 
     def send(self, chat_id, text, reply_to=None, **kw):
         self.sent.append((chat_id, text))
+        self.parse_mode = kw.get("parse_mode")
 
     def write_board(self, section: str) -> None:
         row = ("- TASK-014 · [Починить импорт](TASK-014-pochinit-import.md)"
@@ -118,6 +119,17 @@ class TestОкноПорога(Base):
         self.assertIn("2026-09-12", text)
         self.assertIn("@kostya", text)
         self.assertIn("@petya", text)
+        self.assertEqual("HTML", self.parse_mode)
+        self.assertIn("⏰ <b>", text)
+        self.assertIn("<b>Проект:</b> «project»", text)
+
+    def test_динамический_текст_экранирован(self):
+        event = {"id": "TASK-<&", "title": "Заголовок <b>&",
+                 "left": 2, "due": "2026-09-12"}
+        text = due_watch._message(event, ["@a&b"], "Проект <x>")
+        self.assertNotIn("<x>", text)
+        self.assertIn("Заголовок &lt;b&gt;&amp;", text)
+        self.assertIn("Проект &lt;x&gt;", text)
 
     def test_срок_дальше_порога_молчит(self):
         self.write_task(due="2026-09-20")
