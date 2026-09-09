@@ -33,7 +33,7 @@ import re
 from datetime import date
 from pathlib import Path
 
-from . import console, registry, telegram_notify, telegram_source
+from . import console, registry, telegram_notify, telegram_source, telegram_work
 from .config import load_global_config, load_project_config
 from .create_task_runner import create_task
 from .due_input import parse_due_input
@@ -79,6 +79,9 @@ MANY_TEXT = ("Задача заводится на одного, а в сооб�
 FAILED_TEXT = ("Задачу завести не удалось. Загляните в лог Taskmark — "
                "причина записана там.")
 
+WORK_FAILED_TEXT = ("Список работы собрать не удалось. Загляните в лог Taskmark — "
+                    "причина записана там.")
+
 # Конец предложения: точка (или «!»/«?») и пробел за ней. Пробел обязателен —
 # иначе «версия 1.2 сломалась» разрежется по номеру версии
 _SENTENCE_END = re.compile(r"[.!?]+\s")
@@ -91,6 +94,26 @@ SENTENCE_MIN = 12
 def tag(cfg: dict) -> str:
     """Слово-хэштег, по которому сообщение считается задачей."""
     return str(cfg.get("telegram_tag") or "задача").strip().lstrip("#")
+
+
+def _has_task_tag(text: str, cfg: dict) -> bool:
+    word = re.escape(tag(cfg))
+    return bool(re.search(rf"(?<!\w)#{word}(?:-\S+)?(?!\w)",
+                          text or "", re.IGNORECASE))
+
+
+def _intent_conflict(text: str, cfg: dict) -> bool:
+    """`#работа` нельзя смешивать с созданием и его модификаторами."""
+    return (telegram_work.parse(text) is not None
+            and (_has_task_tag(text, cfg) or bool(_DUE_TAG.search(text or ""))))
+
+
+def _intent_conflict_text(cfg: dict) -> str:
+    task_tag = "#" + tag(cfg)
+    return ("В одном сообщении нельзя одновременно создавать или менять задачу "
+            "и запрашивать список работы. Отправьте команды отдельно:\n"
+            f"{task_tag} Текст задачи @ник #срок 3 дня\n"
+            "#работа @ник")
 
 
 def _my_username(cfg: dict) -> str:
@@ -279,12 +302,25 @@ def handle(message: dict, cfg: dict | None = None,
     # из того же конфига. Иначе за прокси сообщения принимаются, задача
     # создаётся, а подтверждение не уходит — и человек, для которого молчание
     # значит «не доехало», присылает сообщение заново, получая вторую задачу
-    reply = send or (lambda chat_id, text, reply_to=None: telegram_source.send_message(
+    reply = send or (lambda chat_id, text, reply_to=None, parse_mode=None:
+                     telegram_source.send_message(
         telegram_source.token(cfg), chat_id, text, reply_to,
         proxy=telegram_source.proxy(cfg),
+        parse_mode=parse_mode or "",
         api_root=telegram_source.api_root(cfg)))
 
-    parsed = parse(message.get("text", ""), cfg)
+    text = message.get("text", "")
+    work = telegram_work.parse(text)
+    if work is not None:
+        if not telegram_work.is_for_me(work, cfg):
+            return {"ok": False, "skipped": "не нам"}
+        if _intent_conflict(text, cfg):
+            error = _intent_conflict_text(cfg)
+            reply(message["chat_id"], error, message.get("message_id"))
+            return {"ok": False, "error": error}
+        return _handle_work(message, work, cfg, projects, reply)
+
+    parsed = parse(text, cfg)
     if parsed is None or not is_for_me(parsed, cfg):
         # Не задача или тегнули не нас. Молчим: чужой тег разберёт бот того,
         # кому он адресован, а на болтовню в чате отвечать незачем
@@ -365,3 +401,46 @@ def _reply_text(task_id: str, title: str, project: str) -> str:
     бэклог, и повторять это в каждом ответе — шум, а не сведения.
     """
     return f"{task_id} · {title} → бэклог проекта «{project}»"
+
+
+def _handle_work(message: dict, parsed: dict, cfg: dict,
+                 projects: list[dict], reply) -> dict:
+    """Вернуть локальную часть списка работы этого персонального бота."""
+    selected, error = _work_projects(message, cfg, projects)
+    if error:
+        reply(message["chat_id"], error, message.get("message_id"))
+        return {"ok": False, "error": error}
+
+    by_author = not bool(parsed.get("mentions"))
+    author = author_of(message) if by_author else ""
+    try:
+        tasks = telegram_work.collect(selected, message.get("chat_id"), author=author)
+        messages = telegram_work.format_messages(
+            tasks, _my_username(cfg), by_author=by_author)
+    except Exception as exc:  # noqa: BLE001 — битые пользовательские файлы
+        console.log(f"telegram: список работы не собран — {type(exc).__name__}: {exc}")
+        reply(message["chat_id"], WORK_FAILED_TEXT, message.get("message_id"))
+        return {"ok": False, "error": str(exc)}
+
+    for text in messages:
+        reply(message["chat_id"], text, message.get("message_id"),
+              parse_mode="HTML")
+    return {"ok": True, "command": telegram_work.WORK_TAG,
+            "count": len(tasks), "messages": len(messages)}
+
+
+def _work_projects(message: dict, cfg: dict,
+                   projects: list[dict]) -> tuple[list[dict], str]:
+    """Все проекты, привязанные к чату, в порядке настройки."""
+    allowed = bound_projects(cfg, message.get("chat_id"))
+    if not allowed:
+        return [], ("Этот чат не привязан к проекту — откройте настройки "
+                    "Taskmark и выберите, где искать задачи.")
+    selected: list[dict] = []
+    for name in allowed:
+        project = _find_project(name, projects)
+        if project is None:
+            return [], (f"Чат привязан к проекту «{name}», а его больше нет — "
+                        "поправьте привязку в настройках Taskmark.")
+        selected.append(project)
+    return selected, ""

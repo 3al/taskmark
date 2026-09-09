@@ -135,6 +135,13 @@ class TestClient(Base):
         self.assertEqual(payload["text"], "TASK-1 добавлена")
         self.assertEqual(payload["reply_to_message_id"], 17)
 
+    def test_send_message_передаёт_режим_разметки(self):
+        fake = Fake({"ok": True, "result": {}})
+        ts.send_message(TOKEN, -100, "<b>Работа</b>", parse_mode="HTML", fetch=fake)
+
+        _url, payload = fake.calls[0]
+        self.assertEqual(payload["parse_mode"], "HTML")
+
     def test_get_me_отдаёт_имя_бота(self):
         fake = Fake({"ok": True, "result": {"username": "team_tasks_bot"}})
         self.assertEqual(ts.get_me(TOKEN, fetch=fake)["username"], "team_tasks_bot")

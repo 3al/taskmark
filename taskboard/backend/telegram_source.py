@@ -629,11 +629,13 @@ def chat_title(cfg: dict, chat_id, fetch: Callable | None = None) -> str:
 
 def send_message(tok: str, chat_id: int, text: str, reply_to: int | None = None,
                  fetch: Callable | None = None, proxy: str = "",
-                 api_root: str = "") -> dict:
+                 api_root: str = "", parse_mode: str = "") -> dict:
     """Ответить в чат. `reply_to` привязывает ответ к исходному сообщению."""
     payload: dict = {"chat_id": chat_id, "text": text}
     if reply_to is not None:
         payload["reply_to_message_id"] = reply_to
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     return _call(tok, "sendMessage", payload, fetch, proxy, api_root) or {}
 
 

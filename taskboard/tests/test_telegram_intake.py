@@ -179,9 +179,11 @@ class HandleTest(unittest.TestCase):
             self.addCleanup(p.stop)
 
         self.sent: list[tuple] = []
+        self.parse_modes: list[str | None] = []
 
-    def send(self, chat_id, text, reply_to=None):
+    def send(self, chat_id, text, reply_to=None, parse_mode=None):
         self.sent.append((chat_id, text, reply_to))
+        self.parse_modes.append(parse_mode)
 
     def cfg(self, **over) -> dict:
         base = {"telegram": True, "telegram_token": "t",
@@ -475,6 +477,218 @@ class ManyMentionsTest(HandleTest):
         self.handle(msg)
         self.assertEqual(2, len(self.sent))
         self.assertFalse(self.created())
+
+
+class WorkParseTest(unittest.TestCase):
+    """Адрес `#работа` не должен теряться из-за алфавита или длины ника."""
+
+    def test_юникодные_и_короткие_упоминания_сохраняются(self):
+        from backend import telegram_work
+
+        self.assertEqual(
+            ["несуществующий_ник", "я"],
+            telegram_work.parse(
+                "#работа @несуществующий_ник @я @несуществующий_ник"
+            )["mentions"],
+        )
+
+
+class WorkCommandTest(HandleTest):
+    """`#работа` читает локальную часть общей работы из связанного чата."""
+
+    def setUp(self):
+        super().setUp()
+        from datetime import date, timedelta
+
+        due = (date.today() + timedelta(days=3)).isoformat()
+        overdue = (date.today() - timedelta(days=2)).isoformat()
+        tasks = [
+            ("TASK-001", "Сверить <API> & документацию", "backlog",
+             "@author", "telegram:-100", due, "2026-09-01 10:00"),
+            ("TASK-002", "Подготовить выпуск", "development",
+             "@other", "telegram:-100", "~", "2026-09-02 11:00"),
+            ("TASK-003", "Уже закончено", "completed",
+             "@author", "telegram:-100", due, "2026-09-03 12:00"),
+            ("TASK-004", "Из другого чата", "backlog",
+             "@author", "telegram:-999", due, "2026-09-04 13:00"),
+            ("TASK-005", "Просроченная задача", "backlog",
+             "@author", "telegram:-100", overdue, "2026-09-05 14:00"),
+        ]
+        for task_id, title, status, author, origin, task_due, created in tasks:
+            (self.tasks / f"{task_id}-test.md").write_text(
+                "---\n"
+                f"id: {task_id}\n"
+                f"title: {title}\n"
+                f"status: {status}\n"
+                f"created: {created}\n"
+                f"due: {task_due}\n"
+                f"author: {author}\n"
+                f"origin: {origin}\n"
+                "---\n\n## Описание\n",
+                encoding="utf-8")
+        (self.tasks / "board.md").write_text(
+            "# Tasks Board\n\n"
+            "## Backlog\n\n"
+            "- TASK-001 · [Сверить <API> & документацию](TASK-001-test.md)\n"
+            "- TASK-004 · [Из другого чата](TASK-004-test.md)\n\n"
+            "- TASK-005 · [Просроченная задача](TASK-005-test.md)\n\n"
+            "## Development\n\n"
+            "- TASK-002 · [Подготовить выпуск](TASK-002-test.md)\n\n"
+            "## Completed\n\n"
+            "- TASK-003 · [Уже закончено](TASK-003-test.md)\n",
+            encoding="utf-8")
+
+    def test_ник_возвращает_всю_незавершённую_работу_этого_чата(self):
+        result = self.handle(message("#работа @kostya"))
+
+        self.assertTrue(result["ok"], result)
+        answer = self.sent[-1][1]
+        self.assertIn("TASK-001", answer)
+        self.assertIn("TASK-002", answer)
+        self.assertNotIn("TASK-003", answer)
+        self.assertNotIn("TASK-004", answer)
+
+    def test_без_ника_остаётся_только_назначенное_автором_запроса(self):
+        result = self.handle(message("#работа"))
+
+        self.assertTrue(result["ok"], result)
+        answer = self.sent[-1][1]
+        self.assertIn("TASK-001", answer)
+        self.assertNotIn("TASK-002", answer)
+
+    def test_несколько_ников_разрешены_и_каждый_бот_отвечает_за_себя(self):
+        result = self.handle(message("#работа @ivan @kostya @ivan"))
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(1, len(self.sent))
+        self.assertIn("@kostya", self.sent[0][1].lower())
+
+    def test_чужие_ники_проходят_молча(self):
+        result = self.handle(message("#работа @ivan @petya"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual([], self.sent)
+
+    def test_кириллический_чужой_ник_не_становится_командой_без_адресата(self):
+        result = self.handle(message("#работа @несуществующий_ник"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual([], self.sent)
+
+    def test_короткий_чужой_ник_тоже_остаётся_адресным(self):
+        result = self.handle(message("#работа @я"))
+
+        self.assertFalse(result["ok"])
+        self.assertEqual([], self.sent)
+
+    def test_ответ_форматирован_и_экранирует_заголовок(self):
+        self.handle(message("#работа @kostya"))
+
+        answer = self.sent[-1][1]
+        self.assertEqual("HTML", self.parse_modes[-1])
+        self.assertIn("<b>", answer)
+        self.assertIn("&lt;API&gt; &amp;", answer)
+        self.assertIn("Backlog", answer)
+        self.assertIn("осталось 3", answer)
+        self.assertIn("просрочено на 2", answer)
+        self.assertIn("01.09.2026", answer)
+
+    def test_пустой_список_объяснён(self):
+        result = self.handle({**message("#работа"), "username": "nobody"})
+
+        self.assertTrue(result["ok"], result)
+        answer = self.sent[-1][1].lower()
+        self.assertIn("незавершённых задач", answer)
+        self.assertIn("нет", answer)
+
+    def test_команда_не_создаёт_задачу(self):
+        self.handle(message("#работа @kostya"))
+
+        self.assertFalse((self.tasks / "argv.json").exists())
+
+    def test_список_собирается_из_всех_привязанных_проектов(self):
+        (self.other / "TASK-010-test.md").write_text(
+            "---\n"
+            "id: TASK-010\n"
+            "title: Задача второго проекта\n"
+            "status: backlog\n"
+            "created: 2026-09-06 10:00\n"
+            "due: ~\n"
+            "author: @other\n"
+            "origin: telegram:-100\n"
+            "---\n\n## Описание\n",
+            encoding="utf-8")
+        (self.other / "board.md").write_text(
+            "# Tasks Board\n\n## Backlog\n\n"
+            "- TASK-010 · [Задача второго проекта](TASK-010-test.md)\n",
+            encoding="utf-8")
+
+        result = self.handle(
+            message("#работа @kostya"),
+            telegram_chats={"-100": ["Первый", "Второй"]})
+
+        self.assertTrue(result["ok"], result)
+        answer = "\n".join(item[1] for item in self.sent)
+        self.assertIn("Задача второго проекта", answer)
+        self.assertIn("проект «Второй»", answer)
+
+    def test_длинный_список_делится_между_сообщениями(self):
+        entries = []
+        for number in range(100, 150):
+            task_id = f"TASK-{number}"
+            title = "Очень длинная задача " * 8
+            (self.tasks / f"{task_id}-test.md").write_text(
+                "---\n"
+                f"id: {task_id}\n"
+                f"title: {title}\n"
+                "status: backlog\n"
+                "created: 2026-09-01 10:00\n"
+                "due: ~\n"
+                "author: @other\n"
+                "origin: telegram:-100\n"
+                "---\n\n## Описание\n",
+                encoding="utf-8")
+            entries.append(f"- {task_id} · [{title}]({task_id}-test.md)")
+        board = (self.tasks / "board.md")
+        content = board.read_text(encoding="utf-8")
+        content = content.replace("## Development", "\n".join(entries) +
+                                  "\n\n## Development")
+        board.write_text(content, encoding="utf-8")
+
+        result = self.handle(message("#работа @kostya"))
+
+        self.assertTrue(result["ok"], result)
+        self.assertGreater(len(self.sent), 1)
+        self.assertTrue(all(len(item[1]) <= 4096 for item in self.sent))
+        self.assertTrue(all(mode == "HTML" for mode in self.parse_modes))
+
+
+class IntentConflictTest(HandleTest):
+    """Получение списка несовместимо с созданием, а срок остаётся модификатором."""
+
+    def test_работа_с_созданием_и_сроком_отклоняется_до_записи(self):
+        result = self.handle(message(
+            "#задача Проверить отчёт @kostya #срок 3 дня #работа"))
+
+        self.assertFalse(result["ok"])
+        self.assertFalse((self.tasks / "argv.json").exists())
+        answer = self.sent[-1][1]
+        self.assertIn("нельзя", answer.lower())
+        self.assertIn("#задача", answer)
+        self.assertIn("#работа", answer)
+
+    def test_работа_со_сроком_без_создания_тоже_конфликт(self):
+        result = self.handle(message("#работа @kostya #срок 3 дня"))
+
+        self.assertFalse(result["ok"])
+        self.assertFalse((self.tasks / "argv.json").exists())
+        self.assertIn("#срок", self.sent[-1][1])
+
+    def test_создание_со_сроком_остаётся_совместимым(self):
+        result = self.handle(message("#задача Проверить отчёт @kostya #срок 3 дня"))
+
+        self.assertTrue(result["ok"], result)
+        self.assertTrue((self.tasks / "argv.json").exists())
 
 
 class FailureReplyTest(HandleTest):
