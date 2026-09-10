@@ -1,4 +1,4 @@
-"""Напоминание о подходящем сроке задачи.
+"""Напоминания о подходящем и уже прошедшем сроке задачи.
 
 **Повод и канал разведены.** `due_events()` отвечает на один вопрос — у каких
 задач срок попадает в окно порога — и про телеграм не знает вовсе: тот же повод
@@ -9,7 +9,8 @@
 наблюдатель за статусами. Но ходит он **реже цикла**: срок меряется днями, а
 тик у поллера — секунды, и открывать на каждом файлы всех задач незачем.
 
-Просрочка сюда не входит: у неё своё сообщение и свои правила повтора.
+Просрочка — соседний повод в том же проходе: у неё своё сообщение и свой ритм
+повтора, но общий отбор задач, канал, расписание и постоянные отметки.
 """
 
 from __future__ import annotations
@@ -32,9 +33,15 @@ from .task_parser import due_left, parse_task
 # Пусто — осознанное «молчим», как у свежести карточки
 THRESHOLD_KEY = "telegram_due_days"
 
+# Как повторять сообщение о просрочке: ежедневно, раз в семь дней от первого
+# дня просрочки либо один раз за весь срок. Значение глобальное, как и бот.
+OVERDUE_REPEAT_KEY = "telegram_overdue_repeat"
+OVERDUE_REPEATS = {"daily", "weekly", "once"}
+
 # Отметки о посланном в файле состояния:
-# `{папка задач: {TASK-NNN: "срок@граница"}}`. Рядом с курсором очереди и **не в
-# конфиге**: конфиг хранит выбор человека, а не служебную память инструмента
+# `{папка задач: {TASK-NNN: "срок@период"}}`. Период — граница приближения либо
+# окно повтора просрочки. Рядом с курсором очереди и **не в конфиге**: конфиг
+# хранит выбор человека, а не служебную память инструмента
 MARKS_KEY = "due_notified"
 
 # Как часто проходить по задачам. Чаще незачем: срок меняется днями, а не
@@ -66,6 +73,17 @@ def thresholds(cfg: dict) -> list[int]:
     return sorted(found, reverse=True)
 
 
+def overdue_repeat(cfg: dict) -> str:
+    """Ритм просрочки из настроек.
+
+    Эффективный конфиг всегда приносит дефолт ``daily``. Если функцию вызвали
+    со старым конфигом без ключа, ведём себя так же. Неизвестное значение из
+    правленного руками файла безопасно сводим к одному сообщению, а не к спаму.
+    """
+    raw = str(cfg.get(OVERDUE_REPEAT_KEY, "daily") or "").strip().lower()
+    return raw if raw in OVERDUE_REPEATS else "once"
+
+
 def _bucket(left: int, ladder: list[int]) -> int | None:
     """Ближайшая граница, которую задача уже прошла: наименьшая из `>= left`.
 
@@ -77,25 +95,12 @@ def _bucket(left: int, ladder: list[int]) -> int | None:
     return min(passed) if passed else None
 
 
-def due_events(tasks_dir: Path, project_cfg: dict, days: int,
-               today: date | None = None) -> list[dict]:
-    """Задачи, чей срок наступает в пределах порога. Повод, без каналов.
-
-    Конец маршрута и съезды пропускаются целиком: у задачи, которая уже никуда
-    не поедет, срок ничего не значит. Терминальность берётся из пайплайна
-    **этого** проекта — имена статусов у всех свои.
-
-    Просроченные не возвращаются: «скоро» и «уже поздно» — разные поводы.
-
-    **Заведённая сегодня задача — ещё не повод.** Иначе задача, попавшая в окно
-    сразу при создании (срок завтра, срок через два дня), получала бы
-    напоминание через минуту после того, как человек сам её принёс. Дата
-    заведения есть не у всех — у старых задач поля нет, и молчать из-за этого
-    не надо.
-    """
+def _deadline_events(tasks_dir: Path, project_cfg: dict,
+                     today: date | None = None) -> list[dict]:
+    """Незавершённые задачи с читаемым сроком. Общий этаж двух поводов."""
     tasks_dir = Path(tasks_dir)
     board = tasks_dir / "board.md"
-    if days <= 0 or not board.is_file():
+    if not board.is_file():
         return []
     pipeline = load_pipeline(project_cfg)
     try:
@@ -115,14 +120,42 @@ def due_events(tasks_dir: Path, project_cfg: dict, days: int,
                 meta = (parse_task(tasks_dir, task_id) or {}).get("meta") or {}
                 due = str(meta.get("due", "") or "").strip()
                 left = due_left(due, today)
-                if left is None or not 0 <= left <= days:
-                    continue
-                if _made_today(meta, today):
+                if left is None:
                     continue
                 found.append({"id": task_id, "due": due, "left": left,
                               "title": str(meta.get("title") or task_id),
                               "meta": meta})
     return found
+
+
+def due_events(tasks_dir: Path, project_cfg: dict, days: int,
+               today: date | None = None) -> list[dict]:
+    """Задачи, чей срок наступает в пределах порога. Повод, без каналов.
+
+    Конец маршрута и съезды пропускаются целиком: у задачи, которая уже никуда
+    не поедет, срок ничего не значит. Терминальность берётся из пайплайна
+    **этого** проекта — имена статусов у всех свои.
+
+    Просроченные не возвращаются: «скоро» и «уже поздно» — разные поводы.
+
+    **Заведённая сегодня задача — ещё не повод.** Иначе задача, попавшая в окно
+    сразу при создании (срок завтра, срок через два дня), получала бы
+    напоминание через минуту после того, как человек сам её принёс. Дата
+    заведения есть не у всех — у старых задач поля нет, и молчать из-за этого
+    не надо.
+    """
+    if days <= 0:
+        return []
+    return [event for event in _deadline_events(tasks_dir, project_cfg, today)
+            if 0 <= event["left"] <= days
+            and not _made_today(event["meta"], today)]
+
+
+def overdue_events(tasks_dir: Path, project_cfg: dict,
+                   today: date | None = None) -> list[dict]:
+    """Задачи с уже прошедшим сроком. Повод без знания о каналах."""
+    return [event for event in _deadline_events(tasks_dir, project_cfg, today)
+            if event["left"] < 0]
 
 
 def _made_today(meta: dict, today: date | None = None) -> bool:
@@ -161,6 +194,39 @@ def _message(event: dict, mentions: list[str], project: str = "") -> str:
         fields=fields, mentions=mentions)
 
 
+def _overdue_phrase(left: int) -> str:
+    """Сколько дней задача просрочена — с русским склонением."""
+    days = abs(left)
+    last, teen = days % 10, 11 <= days % 100 <= 14
+    word = "день" if not teen and last == 1 else (
+        "дня" if not teen and 2 <= last <= 4 else "дней")
+    return f"просрочено на {days} {word}"
+
+
+def _overdue_message(event: dict, mentions: list[str], project: str = "") -> str:
+    """Карточка состояния «срок прошёл» для человека в чате."""
+    fields = [("Дедлайн", f"{event['due']} · {_overdue_phrase(event['left'])}")]
+    if project:
+        fields.append(("Проект", f"«{project}»"))
+    return telegram_messages.card(
+        "🔴", "Задача просрочена",
+        task_id=event["id"], task_title=event["title"],
+        fields=fields, mentions=mentions)
+
+
+def _overdue_mark(event: dict, repeat: str) -> str:
+    """Отметка периода повтора внутри одной серии (одного значения due)."""
+    overdue_days = abs(int(event["left"]))
+    if repeat == "daily":
+        slot = overdue_days
+    elif repeat == "weekly":
+        # Первая неделя — дни 1…7, следующая начинается на восьмой день.
+        slot = (overdue_days - 1) // 7
+    else:
+        slot = "once"
+    return f"{event['due']}@overdue:{repeat}:{slot}"
+
+
 def load_marks() -> dict:
     """Отметки о посланном с прошлых запусков."""
     return telegram_source.read_state().get(MARKS_KEY) or {}
@@ -176,39 +242,48 @@ def check_project(tasks_dir: Path, cfg: dict, project_cfg: dict, marks: dict,
                   today: date | None = None, project_name: str = "") -> int:
     """Один проход по проекту. Возвращает число отправленных напоминаний.
 
-    Ключ отметки — **срок задачи вместе с пройденной границей**: пока задача
-    стоит на одной ступени лестницы, напоминание одно. Шагнула на следующую —
-    приходит новое; перенесли срок — тоже, это уже другое обещание. Отметки
-    задач, ушедших из окна, на проходе пропадают, иначе файл состояния рос бы
-    вечно.
+    Ключ отметки — **срок задачи вместе с периодом повтора**. Для подходящего
+    срока это ступень лестницы, для просрочки — день, семидневное окно или одна
+    отметка на всю серию. Перенесли срок — ключ серии изменился, и отсчёт
+    начинается заново. Отметки задач без активного повода пропадают, иначе файл
+    состояния рос бы вечно.
 
     Отметка ставится и при неудачной отправке: иначе упавшая сеть повторяла бы
     одно и то же сообщение каждым проходом.
     """
     tasks_dir = Path(tasks_dir)
     ladder = thresholds(cfg)
-    if not ladder or not telegram_source.enabled(cfg):
+    repeat = overdue_repeat(cfg)
+    if not telegram_source.enabled(cfg):
         return 0
-    events = due_events(tasks_dir, project_cfg, ladder[0], today)
+    candidates = _deadline_events(tasks_dir, project_cfg, today)
 
     key = str(tasks_dir)
     before = marks.get(key) or {}
     fresh: dict[str, str] = {}
     reply = send or telegram_source.send_message
     sent = 0
-    for event in events:
-        step = _bucket(event["left"], ladder)
-        if step is None:
+    for event in candidates:
+        if event["left"] < 0:
+            mark = _overdue_mark(event, repeat)
+            message = _overdue_message
+        elif (not ladder or event["left"] > ladder[0]
+              or _made_today(event["meta"], today)):
             continue
-        mark = f"{event['due']}@{step}"
+        else:
+            step = _bucket(event["left"], ladder)
+            if step is None:
+                continue
+            mark = f"{event['due']}@{step}"
+            message = _message
         fresh[event["id"]] = mark
         if before.get(event["id"]) == mark:
             continue
         targets = telegram_notify.targets(event["meta"], cfg)
         if not targets:
             continue
-        text = _message(event, targets["mentions"],
-                        project_name or tasks_dir.parent.name)
+        text = message(event, targets["mentions"],
+                       project_name or tasks_dir.parent.name)
         try:
             if send is not None:
                 reply(targets["chat_id"], text,

@@ -58,7 +58,8 @@ def cfg(**over) -> dict:
     base = {"telegram": True, "telegram_token": "t",
             "telegram_username": "kostya",
             "telegram_chats": {"-100": "Первый"},
-            "telegram_due_days": [7, 3, 1]}
+            "telegram_due_days": [7, 3, 1],
+            "telegram_overdue_repeat": "daily"}
     base.update(over)
     return base
 
@@ -144,6 +145,10 @@ class TestОкноПорога(Base):
         self.check(config=cfg(telegram_due_days=[]))
         self.assertEqual([], self.sent)
 
+    def test_пустая_лестница_не_выключает_просрочку(self):
+        self.write_task(due="2026-09-08")
+        self.assertEqual(1, self.check(config=cfg(telegram_due_days=[])))
+
     def test_задача_без_срока_молчит(self):
         self.write_task(due="")
         self.check()
@@ -170,11 +175,11 @@ class TestКогоНеТрогаем(Base):
         self.check()
         self.assertEqual([], self.sent)
 
-    def test_просроченная_молчит(self):
-        # Просрочка — соседняя задача со своим сообщением и своими правилами
+    def test_просроченная_не_попадает_в_повод_приближения_срока(self):
+        # Просрочка — соседний повод со своим сообщением и своими правилами
         self.write_task(due="2026-09-08")
-        self.check()
-        self.assertEqual([], self.sent)
+        self.assertEqual([], due_watch.due_events(
+            self.tasks, self.PIPELINE, 7, TODAY))
 
     def test_выключенная_интеграция_молчит(self):
         self.check(config=cfg(telegram=False))
@@ -291,6 +296,98 @@ class TestПоводБезКанала(Base):
                                                   TODAY))
 
 
+class TestПросрочкаПоводБезКанала(Base):
+    """Просрочка — состояние задачи; ограничение чата остаётся в канале."""
+
+    def test_просроченная_задача_не_из_чата_тоже_является_событием(self):
+        self.write_task(due="2026-09-08", origin="")
+        events = due_watch.overdue_events(self.tasks, self.PIPELINE, TODAY)
+        self.assertEqual(["TASK-014"], [e["id"] for e in events])
+        self.assertEqual(-2, events[0]["left"])
+
+    def test_срок_сегодня_ещё_не_просрочен(self):
+        self.write_task(due="2026-09-10")
+        self.assertEqual([], due_watch.overdue_events(
+            self.tasks, self.PIPELINE, TODAY))
+
+    def test_конец_маршрута_не_считается_просрочкой(self):
+        self.write_board("Done")
+        self.write_task(due="2026-09-08", status="done")
+        self.assertEqual([], due_watch.overdue_events(
+            self.tasks, self.PIPELINE, TODAY))
+
+
+class TestПросрочкаКанал(Base):
+    """Канал фильтрует происхождение, строит карточку и соблюдает ритм."""
+
+    def overdue(self, repeat="daily", today=TODAY):
+        return self.check(config=cfg(telegram_overdue_repeat=repeat), today=today)
+
+    def test_просрочка_даёт_отдельную_карточку_с_тегами(self):
+        self.write_task(due="2026-09-08")
+        self.assertEqual(1, self.overdue())
+        chat_id, text = self.sent[0]
+        self.assertEqual(-100, chat_id)
+        self.assertIn("Задача просрочена", text)
+        self.assertIn(
+            "<b>Дедлайн:</b> 2026-09-08 · просрочено на 2 дня", text)
+        self.assertIn("@kostya", text)
+        self.assertIn("@petya", text)
+        self.assertEqual("HTML", self.parse_mode)
+
+    def test_не_чатовая_просрочка_не_отправляется(self):
+        self.write_task(due="2026-09-08", origin="")
+        self.overdue()
+        self.assertEqual([], self.sent)
+
+    def test_ежедневный_режим_не_повторяется_в_тот_же_день(self):
+        self.write_task(due="2026-09-08")
+        self.overdue(today=date(2026, 9, 10))
+        self.overdue(today=date(2026, 9, 10))
+        self.assertEqual(1, len(self.sent))
+
+    def test_ежедневный_режим_повторяется_на_следующий_день(self):
+        self.write_task(due="2026-09-08")
+        self.overdue(today=date(2026, 9, 10))
+        self.overdue(today=date(2026, 9, 11))
+        self.assertEqual(2, len(self.sent))
+
+    def test_еженедельный_режим_повторяется_через_семь_дней(self):
+        self.write_task(due="2026-09-08")
+        self.overdue("weekly", date(2026, 9, 9))
+        self.overdue("weekly", date(2026, 9, 15))
+        self.assertEqual(1, len(self.sent))
+        self.overdue("weekly", date(2026, 9, 16))
+        self.assertEqual(2, len(self.sent))
+
+    def test_однократный_режим_больше_не_повторяется(self):
+        self.write_task(due="2026-09-08")
+        self.overdue("once", date(2026, 9, 9))
+        self.overdue("once", date(2026, 10, 9))
+        self.assertEqual(1, len(self.sent))
+
+    def test_перенос_срока_снимает_серию_и_новая_просрочка_начинает_её_заново(self):
+        self.write_task(due="2026-09-08")
+        self.overdue("once", date(2026, 9, 10))
+        self.write_task(due="2026-09-30")
+        self.overdue("once", date(2026, 9, 10))
+        self.assertEqual({}, self.marks.get(str(self.tasks), {}))
+        self.overdue("once", date(2026, 10, 1))
+        self.assertEqual(2, len(self.sent))
+
+
+class TestРитмПросрочки(unittest.TestCase):
+    def test_известные_значения_принимаются(self):
+        for value in ("daily", "weekly", "once"):
+            with self.subTest(value=value):
+                self.assertEqual(value, due_watch.overdue_repeat(
+                    {"telegram_overdue_repeat": value}))
+
+    def test_мусор_безопасно_становится_однократным(self):
+        self.assertEqual("once", due_watch.overdue_repeat(
+            {"telegram_overdue_repeat": "часто"}))
+
+
 class TestПерезапуск(Base):
     """Отметка о посланном живёт в файле состояния и переживает перезапуск."""
 
@@ -315,6 +412,15 @@ class TestПерезапуск(Base):
         # «Перезапуск»: память процесса пуста, на диске осталась отметка
         due_watch.check_all(cfg(), {}, self.projects(), now=100.0, today=TODAY,
                             send=self.send)
+        self.assertEqual(1, len(self.sent))
+
+    def test_просрочка_в_тот_же_день_не_повторяется_после_перезапуска(self):
+        self.write_task(due="2026-09-08")
+        due_watch.check_all(cfg(), {}, self.projects(), now=100.0,
+                            today=TODAY, send=self.send)
+        self.assertEqual(1, len(self.sent))
+        due_watch.check_all(cfg(), {}, self.projects(), now=100.0,
+                            today=TODAY, send=self.send)
         self.assertEqual(1, len(self.sent))
 
 

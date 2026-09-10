@@ -55,11 +55,13 @@ class SavedSettingsTest(unittest.TestCase):
             self.save({"telegram": True, "telegram_token": "123:AAH",
                        "telegram_username": "kostya",
                        "telegram_chats": {"-100": ["Проект"]},
-                       "telegram_tag": "задача"})
+                       "telegram_tag": "задача",
+                       "telegram_overdue_repeat": "weekly"})
         saved = self.stored()
         self.assertTrue(saved["telegram"])
         self.assertEqual(saved["telegram_token"], "123:AAH")
         self.assertEqual(saved["telegram_chats"], {"-100": ["Проект"]})
+        self.assertEqual(saved["telegram_overdue_repeat"], "weekly")
 
     def test_снятый_путь_доезжает_до_файла(self):
         """`False` — такое же значение, как остальные, и теряться ему нельзя.
@@ -244,6 +246,12 @@ class SettingsUiTest(unittest.TestCase):
         self.assertIn("Group Privacy", text,
                       "без этого бот не увидит сообщения группы")
 
+    def test_частота_повтора_просрочки_выбирается_явно(self):
+        text = self.source()
+        self.assertIn("telegram_overdue_repeat", text)
+        for value in ("daily", "weekly", "once"):
+            self.assertIn(f'value="{value}"', text)
+
 
 class HelpSectionTest(unittest.TestCase):
     """Справку раздаёт сам инструмент — устаревшая врёт прямо в интерфейсе."""
@@ -264,6 +272,12 @@ class HelpSectionTest(unittest.TestCase):
                       "не сказано, что бот не видит прошлых сообщений")
         self.assertIn("нет ответа", text.lower(),
                       "не сказано, как понять, что задача не доехала")
+
+    def test_раздел_описывает_повторы_просрочки(self):
+        text = " ".join(self.section().split())
+        for phrase in ("Задача просрочена", "раз в день", "раз в неделю",
+                       "только один раз", "новая серия"):
+            self.assertIn(phrase, text)
 
     def test_readme_ссылается_на_раздел(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

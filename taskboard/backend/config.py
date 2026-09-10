@@ -110,6 +110,9 @@ DEFAULTS: dict = {
     # напоминать вовсе. Глобальный, как и сам бот, — понадобится разный ритм по
     # проектам, тогда и разведём
     "telegram_due_days": [7, 3, 1],
+    # Просрочка длится, поэтому одного сообщения по умолчанию мало, а каждый
+    # час — шум. Повторяем раз в день; человек может выбрать weekly или once.
+    "telegram_overdue_repeat": "daily",
 }
 
 # Границы вида карточки: за ними превью разваливается — заголовок перестаёт
@@ -248,7 +251,8 @@ def validate_card_style(updates: dict) -> tuple[dict, list[str]]:
 # человека, а привязка чатов ссылается сразу на несколько проектов реестра
 TELEGRAM_KEYS = {"telegram", "telegram_token", "telegram_route",
                  "telegram_proxy", "telegram_api_root", "telegram_username",
-                 "telegram_tag", "telegram_chats", "telegram_due_days"}
+                 "telegram_tag", "telegram_chats", "telegram_due_days",
+                 "telegram_overdue_repeat"}
 
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
                 "dnd_full_board", "harnesses", "vault", "delete_tasks",

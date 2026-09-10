@@ -281,6 +281,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
       .filter((n) => Number.isInteger(n) && n > 0 && n <= 365)
       .filter((n, i, all) => all.indexOf(n) === i)
       .sort((a, b) => b - a),
+    telegram_overdue_repeat: config.telegram_overdue_repeat || 'daily',
     ...(pipeline ? {
       pipeline: pipeline.pipeline.map((s) => s.key),
       actions: pipeline.actions,
@@ -1110,6 +1111,23 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                           дожила: на две недели — все три, на день — последнюю.
                           Очистите поле, чтобы убрать границу; все пустые — не
                           напоминать вовсе
+                        </div>
+                      </div>
+
+                      <div className="border-t border-zinc-800 pt-4">
+                        <span className={label}>5. Повторять напоминание о просрочке</span>
+                        <select
+                          className={`${narrowField} w-48`}
+                          value={config.telegram_overdue_repeat || 'daily'}
+                          onChange={(e) => set('telegram_overdue_repeat', e.target.value)}
+                        >
+                          <option value="daily">раз в день</option>
+                          <option value="weekly">раз в неделю</option>
+                          <option value="once">только один раз</option>
+                        </select>
+                        <div className="text-[11px] text-zinc-400 mt-1">
+                          бот пишет со следующего дня после срока. Перенесённый
+                          срок начинает новую серию напоминаний
                         </div>
                       </div>
                     </>
