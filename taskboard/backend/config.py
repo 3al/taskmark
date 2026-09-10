@@ -39,7 +39,11 @@ DEFAULTS: dict = {
     # Жизненный цикл задачи: порядок статусов и цели действий скиллов.
     # Разбор и дефолты оформления — в backend/statuses.py
     "pipeline": ["backlog", "queued", "development", "review", "testing", "completed"],
-    "actions": {"create": "backlog", "start": "development"},
+    "actions": {"create": "backlog", "start": "development",
+                # Необязательные роли: дефолт называет статус библиотеки,
+                # а маршрут без него роль просто теряет (`load_pipeline`)
+                "review": "review", "release_draft": "release_notes",
+                "release_lock": "to_release"},
     "theme": "dark",
     # Проверка обновлений. Единственное место, где инструмент ходит в сеть,
     # поэтому по умолчанию «ask» — пока пользователь не ответил, запросов нет
@@ -149,13 +153,14 @@ CARD_LIMITS: dict[str, tuple[int, int]] = {
 # commits: False — у работы этого типа коммитов не бывает, и напоминание о
 # пустой «Истории коммитов» к ней не относится. Хранится **исключение**, а не
 # белый список: новый тип поставки коммиты даёт и молча выпасть не может.
-# skip_statuses — статусы библиотеки, которые этому виду работы не нужны:
-# у обсуждения и код-ревью нет релизного хвоста, выпускать по ним нечего.
-# Список меняет только **рекомендацию** следующего шага (`set_status.py
-# --targets`), а не состав достижимых статусов: маршрут остаётся маршрутом,
-# а не забором. Своих статусов проекта здесь быть не может — тип константа
-# поставки и про них не знает; такой статус просто не пропускается.
-RELEASE_TAIL = ("ready_for_release", "release_notes", "to_release", "ready_to_deploy")
+# skip_roles — **роли** этапов, которые этому виду работы не нужны: у обсуждения
+# и код-ревью нет ни ревью (они сами им и являются), ни выпуска — выпускать по
+# ним нечего. Роли, а не имена: маршрут настраивается per-project, и зашитое имя
+# статуса неверно для половины пользователей — задача-ревью так и уезжала на
+# ревью (TASK-272). Набор меняет только **рекомендацию** следующего шага
+# (`set_status.py --targets`), а не состав достижимых статусов: маршрут остаётся
+# маршрутом, а не забором. Роль, которой проект не объявил, ничего не пропускает.
+SKIP_ROLES = ("review", "release")
 
 TASK_TYPES: dict[str, dict] = {
     "feature":    {"label": "Новый функционал", "section": "Новый функционал",
@@ -168,12 +173,12 @@ TASK_TYPES: dict[str, dict] = {
                    "letter": "У", "color": "emerald"},
     "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
                    "letter": "О", "color": "amber", "commits": False,
-                   "skip_statuses": RELEASE_TAIL},
+                   "skip_roles": SKIP_ROLES},
     "design":     {"label": "Дизайн",           "section": "Дизайн",
                    "letter": "Д", "color": "fuchsia"},
     "review":     {"label": "Код-ревью",        "section": "Код-ревью",
                    "letter": "К", "color": "lime", "commits": False,
-                   "skip_statuses": RELEASE_TAIL},
+                   "skip_roles": SKIP_ROLES},
 }
 
 DEFAULT_TASK_TYPE = "feature"

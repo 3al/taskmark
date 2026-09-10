@@ -94,7 +94,11 @@ DEFAULTS = {
     "queue_section": "Queue",
     "queued_status": "queued",
     "pipeline": ["backlog", "queued", "development", "review", "testing", "completed"],
-    "actions": {"create": "backlog", "start": "development"},
+    "actions": {"create": "backlog", "start": "development",
+                # Необязательные роли: дефолт называет статус библиотеки,
+                # а маршрут без него роль просто теряет (`actions_of`)
+                "review": "review", "release_draft": "release_notes",
+                "release_lock": "to_release"},
 }
 
 # Каталог статусов — дубль backend/statuses.py (см. выше про автономность).
@@ -151,10 +155,13 @@ CATALOG = {
 # section — заголовок рубрики бэклога, куда create_task.py кладёт новую задачу
 # commits: False — у работы этого типа коммитов не бывает, и пустая «История
 # коммитов» у неё норма, а не долг (см. finish_reminders)
-# skip_statuses — статусы, которые этому виду работы не нужны: у обсуждения и
-# код-ревью нет релизного хвоста. Пропуск меняет только ожидаемый следующий
-# шаг (`--targets`), достижимость статусов остаётся прежней
-RELEASE_TAIL = ("ready_for_release", "release_notes", "to_release", "ready_to_deploy")
+# skip_roles — **роли** этапов, которые этому виду работы не нужны: у обсуждения
+# и код-ревью нет ни ревью (они сами им и являются), ни выпуска — выпускать по
+# ним нечего. Роль, а не имя статуса: маршрут настраивается per-project, и
+# зашитое имя неверно для половины пользователей (TASK-272). Пропуск меняет
+# только ожидаемый следующий шаг (`--targets`), достижимость статусов остаётся
+# прежней
+SKIP_ROLES = ("review", "release")
 
 TASK_TYPES = {
     "feature":    {"label": "Новый функционал", "section": "Новый функционал",
@@ -167,12 +174,12 @@ TASK_TYPES = {
                    "letter": "У", "color": "emerald"},
     "discussion": {"label": "Обсуждение",       "section": "Обсуждения",
                    "letter": "О", "color": "amber", "commits": False,
-                   "skip_statuses": RELEASE_TAIL},
+                   "skip_roles": SKIP_ROLES},
     "design":     {"label": "Дизайн",           "section": "Дизайн",
                    "letter": "Д", "color": "fuchsia"},
     "review":     {"label": "Код-ревью",        "section": "Код-ревью",
                    "letter": "К", "color": "lime", "commits": False,
-                   "skip_statuses": RELEASE_TAIL},
+                   "skip_roles": SKIP_ROLES},
 }
 
 
@@ -272,11 +279,23 @@ def pipeline_of(cfg: dict) -> list[dict]:
     return out
 
 
+# Необязательные роли: этап, которого у проекта может не быть вовсе. В отличие
+# от обязательных их не подменяют соседним статусом — отсутствие роли и значит
+# «такого этапа здесь нет»
+OPTIONAL_ACTIONS = ("review", "release_draft", "release_lock")
+
+
 def actions_of(cfg: dict, pipeline: list[dict]) -> dict:
     """Цели действий скиллов: создать, взять из очереди, начать, вернуть."""
     keys = [s["key"] for s in pipeline]
     actions = dict(DEFAULTS["actions"])
     actions.update({k: v for k, v in (cfg.get("actions") or {}).items() if v})
+
+    # Дефолт роли называет статус библиотеки, а маршрут проекта его может не
+    # содержать: такая роль не «сломана», её просто нет
+    for name in OPTIONAL_ACTIONS:
+        if actions.get(name) not in keys:
+            actions.pop(name, None)
 
     if actions.get("create") not in keys:
         actions["create"] = keys[0] if keys else None
@@ -295,15 +314,51 @@ def actions_of(cfg: dict, pipeline: list[dict]) -> dict:
     return actions
 
 
-def directions(pipeline: list[dict], status: str, task_type: str = "") -> dict:
+def release_zone(cfg: dict, pipeline: list[dict]) -> list[str]:
+    """Статусы, существующие ради выпуска версий: пул готового и всё за ним.
+
+    Границу задаёт роль, а не имя: `release_draft` (подготовка текстов) и
+    `release_lock` (утверждённый состав). Пул готового своей роли не несёт, но
+    работой автора тоже не является — он стоит ровно перед подготовкой текстов,
+    и та же граница уже отделяет конец работы (`work_done_status`).
+
+    Ролей выпуска проект не объявил — зоны нет: пропускать статус по имени
+    значит гадать, а маршрут у каждого свой. Терминал в зону не входит — где-то
+    задачу всё равно надо закрыть.
+    """
+    keys = [s["key"] for s in pipeline if not s.get("offramp")]
+    actions = actions_of(cfg, pipeline)
+    marks = [keys.index(actions[name]) for name in ("release_draft", "release_lock")
+             if actions.get(name) in keys]
+    if not marks:
+        return []
+    return keys[max(min(marks) - 1, 0):len(keys) - 1]
+
+
+def skipped_for_type(cfg: dict, pipeline: list[dict], task_type: str) -> set[str]:
+    """Статусы, которые этому виду работы не нужны, — по ролям его каталога."""
+    roles = (TASK_TYPES.get((task_type or "").strip().lower(), {})
+             .get("skip_roles") or ())
+    skip: set[str] = set()
+    if "review" in roles:
+        target = actions_of(cfg, pipeline).get("review")
+        if target:
+            skip.add(target)
+    if "release" in roles:
+        skip.update(release_zone(cfg, pipeline))
+    return skip
+
+
+def directions(pipeline: list[dict], status: str, task_type: str = "",
+               cfg: dict | None = None) -> dict:
     """Куда можно двинуть задачу: вперёд, назад и ожидаемый следующий шаг.
 
     Запретов нет — пайплайн описывает маршрут, а не забор: прыжок вперёд
     (простая задача, ночной хотфикс) законен. Ожидаемым считается ближайший
     следующий статус; съезды (cancelled) доступны всегда, но не ожидаемы.
 
-    Тип задачи сужает **только** ожидаемый шаг: у обсуждения и код-ревью нет
-    релизного хвоста, и вести их туда рекомендацией значит звать в работу,
+    Тип задачи сужает **только** ожидаемый шаг: у обсуждения и код-ревью нет ни
+    ревью, ни выпуска, и вести их туда рекомендацией значит звать в работу,
     которой не будет. Достижимость статусов тип не трогает — там, где человек
     решит иначе, забором стоять нечему.
     """
@@ -320,8 +375,7 @@ def directions(pipeline: list[dict], status: str, task_type: str = "") -> dict:
     offramps = [s["key"] for s in pipeline
                 if s.get("offramp") and s["key"] != status and s["key"] not in later]
     ahead = [s["key"] for s in pipeline[idx + 1:] if not s.get("offramp")]
-    skip = set(TASK_TYPES.get((task_type or "").strip().lower(), {})
-               .get("skip_statuses") or ())
+    skip = skipped_for_type(cfg or {}, pipeline, task_type)
     # Пропуск сдвигает рекомендацию вперёд, но не отменяет её: пустой `next`
     # читается как конец маршрута (is_terminal), а вид работы его не задаёт
     wanted = [k for k in ahead if k not in skip] or ahead
@@ -2936,7 +2990,7 @@ def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
         out["task"] = task_id
         out["current"] = status
         out["type"] = task_type
-        out.update(directions(pipeline, status or "", task_type))
+        out.update(directions(pipeline, status or "", task_type, cfg))
         # Долг по каждой цели — тем же вызовом, которым скилл и так спрашивает
         # маршрут: второй команде «а можно ли туда» взяться неоткуда
         blocked: dict[str, list[dict]] = {}

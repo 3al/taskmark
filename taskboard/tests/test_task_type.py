@@ -261,36 +261,42 @@ class TypeCatalogTest(unittest.TestCase):
         self.assertEqual(backend, in_script)
 
     def test_types_without_release_tail_marked(self) -> None:
-        """Тип называет статусы, которые ему не нужны (TASK-151).
+        """Тип называет **роли** этапов, которые ему не нужны (TASK-151, TASK-272).
 
         Как и `commits`, это **исключение**: новый тип поставки идёт маршрутом
-        целиком и молча выпасть из него не может.
+        целиком и молча выпасть из него не может. Роль, а не имя статуса:
+        маршрут у каждого проекта свой, и зашитое имя неверно для половины
+        пользователей.
         """
-        skipping = {k for k, m in TASK_TYPES.items() if m.get("skip_statuses")}
+        skipping = {k for k, m in TASK_TYPES.items() if m.get("skip_roles")}
         self.assertEqual({"discussion", "review"}, skipping)
         for key in skipping:
-            self.assertEqual(["ready_for_release", "release_notes", "to_release",
-                              "ready_to_deploy"],
-                             list(TASK_TYPES[key]["skip_statuses"]))
+            self.assertEqual(["review", "release"],
+                             list(TASK_TYPES[key]["skip_roles"]))
+
+    def test_no_type_skips_statuses_by_name(self) -> None:
+        """Имён статусов в пропуске не осталось: они не переживают переименование."""
+        for key, meta in TASK_TYPES.items():
+            self.assertNotIn("skip_statuses", meta,
+                             f"тип {key} пропускает статусы по имени")
 
     def test_script_skips_same_statuses(self) -> None:
         """Рекомендацию считает скрипт — его каталог обязан совпасть."""
         from tests.test_set_status_script import load_script
 
         script = load_script()
-        backend = {k: list(m.get("skip_statuses") or []) for k, m in TASK_TYPES.items()}
-        in_script = {k: list(m.get("skip_statuses") or [])
+        backend = {k: list(m.get("skip_roles") or []) for k, m in TASK_TYPES.items()}
+        in_script = {k: list(m.get("skip_roles") or [])
                      for k, m in script.TASK_TYPES.items()}
         self.assertEqual(backend, in_script)
 
-    def test_skipped_statuses_exist_in_catalog(self) -> None:
-        """Пропуск называет статус библиотеки: опечатка не сработала бы молча."""
-        from backend.statuses import CATALOG
-
+    def test_skipped_roles_are_known(self) -> None:
+        """Пропуск называет известную роль: опечатка не сработала бы молча."""
+        known = {"review", "release"}
         for key, meta in TASK_TYPES.items():
-            for status in meta.get("skip_statuses") or []:
-                self.assertIn(status, CATALOG,
-                              f"тип {key} пропускает неизвестный статус {status}")
+            for role in meta.get("skip_roles") or []:
+                self.assertIn(role, known,
+                              f"тип {key} пропускает неизвестную роль {role}")
 
     def test_frontend_catalog_matches(self) -> None:
         text = (FRONTEND / "taskTypes.js").read_text(encoding="utf-8")

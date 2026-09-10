@@ -86,7 +86,9 @@ CATALOG: dict[str, dict] = {
 }
 
 DEFAULT_PIPELINE = ["backlog", "queued", "development", "review", "testing", "completed"]
-DEFAULT_ACTIONS = {"create": "backlog", "start": "development"}
+DEFAULT_ACTIONS = {"create": "backlog", "start": "development",
+                   "review": "review", "release_draft": "release_notes",
+                   "release_lock": "to_release"}
 
 # Готовые маршруты: собирать пайплайн с нуля в каждом проекте — работа руками
 # ради того, что у всех примерно одинаково. Это не ограничение, а стартовая
@@ -105,7 +107,8 @@ PRESETS: tuple[dict, ...] = (
         "pipeline": ["backlog", "todo", "development", "review", "testing",
                      "done", "cancelled"],
         "actions": {"create": "backlog", "pick": "todo",
-                    "start": "development", "return": "development"},
+                    "start": "development", "return": "development",
+                    "review": "review"},
     },
     {
         "name": "Полный",
@@ -114,7 +117,11 @@ PRESETS: tuple[dict, ...] = (
                      "review", "to_testing", "testing", "ready_to_deploy",
                      "done", "cancelled"],
         "actions": {"create": "backlog", "pick": "todo",
-                    "start": "development", "return": "to_fix"},
+                    "start": "development", "return": "to_fix",
+                    "review": "review",
+                    # Выкатка объявлена ролью, а не опознаётся по имени: без неё
+                    # работа без выпуска (обсуждение, ревью) поехала бы на стенд
+                    "release_lock": "ready_to_deploy"},
     },
     {
         "name": "С релизами",
@@ -123,7 +130,7 @@ PRESETS: tuple[dict, ...] = (
                      "ready_for_release", "release_notes", "to_release",
                      "done", "cancelled"],
         "actions": {"create": "backlog", "pick": "todo", "start": "development",
-                    "return": "development",
+                    "return": "development", "review": "review",
                     # Точки расширения для скилла выпуска: он спрашивает цель
                     # у конфига, а не знает имена статусов
                     "release_draft": "release_notes", "release_lock": "to_release"},
@@ -371,6 +378,13 @@ def load_pipeline(cfg: dict) -> Pipeline:
     # Значение может стать None: пайплайн бывает пустым, и действию некуда вести
     actions: dict[str, str | None] = dict(DEFAULT_ACTIONS)
     actions.update({k: v for k, v in (cfg.get("actions") or {}).items() if v})
+
+    # Необязательные роли: этапа может не быть вовсе, и соседним статусом его
+    # не подменяют — отсутствие роли и значит «такого этапа здесь нет». Дефолт
+    # называет статус библиотеки, которого в маршруте проекта может не оказаться
+    for name in ("review", "release_draft", "release_lock"):
+        if actions.get(name) not in known:
+            actions.pop(name, None)
 
     # Действие, указывающее в никуда, хуже отсутствующего: чинимся по составу
     if actions.get("create") not in known:

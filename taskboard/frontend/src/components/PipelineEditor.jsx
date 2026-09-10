@@ -8,6 +8,7 @@ const ACTION_LABEL = {
   pick: 'очередь',
   start: 'в работу',
   return: 'возврат',
+  review: 'ревью',
   release_draft: 'черновик релиза',
   release_lock: 'в релиз',
 }
@@ -19,6 +20,7 @@ const ACTION_FIELDS = [
   { name: 'start', title: 'Взять в работу' },
   { name: 'return', title: 'Вернуть после замечаний' },
   { name: 'pick', title: 'Брать работу из', empty: 'авто (перед «в работу»)' },
+  { name: 'review', title: 'Ревью задач', empty: 'не используется' },
   { name: 'release_draft', title: 'Готовить заметки релиза', empty: 'не используется' },
   { name: 'release_lock', title: 'Отобрано в релиз', empty: 'не используется' },
 ]

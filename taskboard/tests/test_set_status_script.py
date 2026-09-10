@@ -57,6 +57,95 @@ patch: ~
 """
 
 
+class TypeSkipsByRoleTest(unittest.TestCase):
+    """Пропуск этапов задаётся ролью статуса, а не его именем (TASK-272).
+
+    Маршрут у каждого проекта свой, поэтому статусы здесь названы по-своему
+    (`code_review` вместо `review` из библиотеки): рекомендация обязана
+    считаться по ролям `actions`, а не по совпадению ключа.
+    """
+
+    PIPELINE = ["backlog", "todo", "development", "code_review", "testing",
+                "ready_for_release", "release_notes", "to_release", "done",
+                "cancelled"]
+    ACTIONS = {"create": "backlog", "pick": "todo", "start": "development",
+               "return": "development", "review": "code_review",
+               "release_draft": "release_notes", "release_lock": "to_release"}
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.tasks = self.root / "tasks"
+        self.tasks.mkdir()
+        self.cfg = {"pipeline": self.PIPELINE, "actions": self.ACTIONS}
+        (self.tasks / ".taskboard.json").write_text(json.dumps(self.cfg),
+                                                    encoding="utf-8")
+        (self.tasks / "board.md").write_text(render_board(self.cfg), encoding="utf-8")
+        self.mod = load_script()
+
+    def _task(self, task_id: str, task_type: str, status: str) -> None:
+        """Файл задачи нужного типа сразу в нужном статусе."""
+        text = TASK_FILE.format(task_id=task_id, title="Тестовая", status=status)
+        text = text.replace("patch: ~", f"type: {task_type}" + chr(10) + "patch: ~")
+        (self.tasks / f"{task_id}-test.md").write_text(text, encoding="utf-8")
+
+    def _next(self, task_id: str) -> str | None:
+        return self.mod.describe(self.tasks, task_id)["next"]
+
+    def test_review_task_is_not_sent_to_review(self) -> None:
+        """Задача-ревью сама и есть ревью — вести её на ревью незачем."""
+        self._task("TASK-001", "review", "development")
+        self.assertEqual("testing", self._next("TASK-001"))
+
+    def test_discussion_is_not_sent_to_review(self) -> None:
+        self._task("TASK-002", "discussion", "development")
+        self.assertEqual("testing", self._next("TASK-002"))
+
+    def test_ordinary_work_still_goes_through_review(self) -> None:
+        """Исключение хранится у исключения: обычный тип идёт маршрутом целиком."""
+        self._task("TASK-003", "feature", "development")
+        self.assertEqual("code_review", self._next("TASK-003"))
+
+    def test_release_zone_skipped_whole(self) -> None:
+        """Выпускать по обсуждению нечего — весь релизный участок мимо.
+
+        Пул готового (`ready_for_release`) — часть выпуска, а не работы автора:
+        граница та же, по которой считается конец работы.
+        """
+        self._task("TASK-004", "discussion", "testing")
+        self.assertEqual("done", self._next("TASK-004"))
+
+    def test_release_zone_kept_for_ordinary_work(self) -> None:
+        self._task("TASK-005", "feature", "testing")
+        self.assertEqual("ready_for_release", self._next("TASK-005"))
+
+    def test_check_by_human_is_never_skipped(self) -> None:
+        """Проверку человеком не пропускает ни один тип: она не про выпуск."""
+        for task_type in ("review", "discussion"):
+            with self.subTest(type=task_type):
+                self._task("TASK-006", task_type, "development")
+                self.assertEqual("testing", self._next("TASK-006"))
+
+    def test_skipping_does_not_close_the_road(self) -> None:
+        """Тип сужает подсказку, а не маршрут: дойти можно куда угодно."""
+        self._task("TASK-007", "review", "development")
+        info = self.mod.describe(self.tasks, "TASK-007")
+        self.assertIn("code_review", info["forward"])
+        self.assertIn("release_notes", info["forward"])
+
+    def test_project_without_release_roles_keeps_the_tail(self) -> None:
+        """Роль не объявлена — пропускать нечего: имя статуса ничего не значит."""
+        cfg = {"pipeline": ["backlog", "todo", "development", "testing",
+                            "ready_for_release", "done", "cancelled"],
+               "actions": {"create": "backlog", "pick": "todo",
+                           "start": "development", "return": "development"}}
+        (self.tasks / ".taskboard.json").write_text(json.dumps(cfg), encoding="utf-8")
+        (self.tasks / "board.md").write_text(render_board(cfg), encoding="utf-8")
+        self._task("TASK-008", "discussion", "testing")
+        self.assertEqual("ready_for_release", self._next("TASK-008"))
+
+
 class SetStatusTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

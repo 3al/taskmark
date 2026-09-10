@@ -159,6 +159,62 @@ class ActionsTest(unittest.TestCase):
         self.assertEqual("development", p.action("return"))
 
 
+class OptionalActionsTest(unittest.TestCase):
+    """Необязательные роли: этапа может не быть вовсе (TASK-272).
+
+    Обязательные роли чинятся соседним статусом — маршрут без начала работы
+    бессмыслен. У ревью и выпуска смысл обратный: отсутствие роли и значит,
+    что такого этапа в проекте нет, и подменять его нечем.
+    """
+
+    def test_review_role_defaults_to_library_status(self) -> None:
+        """Проект с ревью получает роль, ничего не настраивая."""
+        p = load_pipeline({"pipeline": ["backlog", "development", "review",
+                                        "testing", "done"]})
+        self.assertEqual("review", p.action("review"))
+
+    def test_review_role_disappears_without_the_stage(self) -> None:
+        """Ревью в маршруте нет — нет и роли: соседним статусом её не подменяют."""
+        p = load_pipeline({"pipeline": ["backlog", "development", "testing", "done"]})
+        self.assertIsNone(p.action("review"))
+
+    def test_review_role_may_point_to_custom_status(self) -> None:
+        """Статус переименован — роль указывает на своё имя, и этап опознан."""
+        p = load_pipeline({
+            "pipeline": ["backlog", "development", "code_review", "testing", "done"],
+            "actions": {"start": "development", "review": "code_review"},
+            "statuses": {"code_review": {"label": "Разбор", "section": "Разбор",
+                                         "color": "violet"}},
+        })
+        self.assertEqual("code_review", p.action("review"))
+
+    def test_release_roles_disappear_without_the_tail(self) -> None:
+        p = load_pipeline({"pipeline": ["backlog", "development", "testing", "done"]})
+        self.assertIsNone(p.action("release_draft"))
+        self.assertIsNone(p.action("release_lock"))
+
+
+class PresetActionsTest(unittest.TestCase):
+    """Пресет объявляет ролью каждый свой этап, а не полагается на имена."""
+
+    def test_presets_with_review_declare_the_role(self) -> None:
+        from backend.statuses import PRESETS
+
+        for preset in PRESETS:
+            if "review" not in preset["pipeline"]:
+                continue
+            with self.subTest(preset=preset["name"]):
+                self.assertEqual("review", preset["actions"].get("review"),
+                                 "этап ревью не объявлен ролью")
+
+    def test_deploy_stage_is_declared_as_release(self) -> None:
+        """Выкатка — часть выпуска: без роли работа без релиза поехала бы на стенд."""
+        from backend.statuses import PRESETS
+
+        full = next(p for p in PRESETS if "ready_to_deploy" in p["pipeline"])
+        self.assertEqual("ready_to_deploy", full["actions"].get("release_lock"))
+
+
 class PresentationTest(unittest.TestCase):
     def test_defaults_come_from_catalog(self) -> None:
         p = load_pipeline({"pipeline": ["backlog", "development", "completed"]})
