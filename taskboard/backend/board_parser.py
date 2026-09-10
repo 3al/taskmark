@@ -9,6 +9,7 @@ from pathlib import Path
 from backend.config import DEFAULTS
 from backend.stall import is_terminal
 from backend.statuses import Pipeline
+from backend.task_parser import parse_frontmatter
 
 # Строка задачи: - TASK-NNN · [Заголовок](файл.md) · агент · дата
 # Допускается зачёркивание ~~...~~ вокруг всей записи
@@ -115,6 +116,16 @@ def _edited_days_ago(path: Path, today: date) -> int | None:
     return None if edited is None else (today - edited.date()).days
 
 
+def _created_date(path: Path) -> date | None:
+    """Дата заведения задачи из frontmatter (None — узнать не удалось)."""
+    try:
+        content = path.read_text(encoding="utf-8-sig")
+        created = str(parse_frontmatter(content)[0].get("created", "") or "").strip()
+        return datetime.fromisoformat(created).date()
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
 def annotate_age(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
                  today: date | None = None) -> dict:
     """Проставить карточкам возраст в статусе — только залежавшимся.
@@ -129,9 +140,10 @@ def annotate_age(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
     перехода, и по времени правки файла задачи. Показывается при этом возраст
     в статусе — то, что он и означает; работающая задача просто молчит.
 
-    Молчим и там, где возраст неизвестен: задачу ни разу не двигали (даты в
-    строке нет), дату испортили руками или она из будущего — залежалостью это
-    не является. Время правки из будущего (съехали часы) молчит по той же
+    До первого перехода возраст считается от `created`: задача всё это время
+    стоит в исходном статусе. После перехода дата из строки доски остаётся
+    главным источником. Молчим, когда нужной даты нет, её испортили руками или
+    она из будущего. Время правки из будущего (съехали часы) молчит по той же
     причине: ложная метка «залежалась» хуже её отсутствия.
 
     Молчим и в конце маршрута: в терминальном статусе и в съезде задача стоит
@@ -151,16 +163,23 @@ def annotate_age(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
             continue
         for group in column.get("groups", []):
             for task in group.get("tasks", []):
+                task_path = tasks_dir / task.get("file", "")
                 moved = task.get("moved") or ""
-                try:
-                    days = (today - date.fromisoformat(moved)).days
-                except ValueError:
-                    continue
+                if moved:
+                    try:
+                        since = date.fromisoformat(moved)
+                    except ValueError:
+                        continue
+                else:
+                    since = _created_date(task_path)
+                    if since is None:
+                        continue
+                days = (today - since).days
                 if days < threshold or days < 0:
                     continue
                 # Файла нет — строка осталась от удалённой задачи; молчать не
                 # за что, возраст стоит на одной дате перехода
-                edited = _edited_days_ago(tasks_dir / task.get("file", ""), today)
+                edited = _edited_days_ago(task_path, today)
                 if edited is not None and edited < threshold:
                     continue
                 task["stale_days"] = days

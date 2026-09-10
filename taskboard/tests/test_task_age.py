@@ -167,7 +167,8 @@ class AgeCaseMixin:
 
     def _annotated(self, moved: str, cfg: dict | None = None,
                    today: date | None = None, section: str = "Development",
-                   pipeline=None, touched: date | None = None) -> dict:
+                   pipeline=None, touched: date | None = None,
+                   created: str = "2026-01-01 10:00") -> dict:
         """Разобрать доску с одной задачей и проставить возраст.
 
         `touched` — когда последний раз правили файл задачи; None означает
@@ -181,9 +182,11 @@ class AgeCaseMixin:
             f"- TASK-001 · [Заголовок](TASK-001-x.md){tail}\n", encoding="utf-8")
         if touched is not None:
             task_file = self.tasks_dir / "TASK-001-x.md"
-            task_file.write_text(
-                TASK_FILE.format(id="TASK-001", title="Заголовок",
-                                 status="development"), encoding="utf-8")
+            content = TASK_FILE.format(id="TASK-001", title="Заголовок",
+                                       status="development")
+            content = content.replace("created: 2026-01-01 10:00",
+                                      f"created: {created}")
+            task_file.write_text(content, encoding="utf-8")
             stamp = datetime.combine(touched, time(12, 0)).timestamp()
             os.utime(task_file, (stamp, stamp))
         board = parse_board(path, pipeline)
@@ -224,9 +227,32 @@ class AnnotateAgeTest(AgeCaseMixin, unittest.TestCase):
         self.assertEqual(DEFAULTS["card_stale_days"], 7)
         self.assertEqual(78, task["stale_days"])
 
-    def test_task_without_date_is_silent(self) -> None:
-        """Задачу не двигали ни разу — возраст в статусе неизвестен."""
+    def test_task_without_move_date_uses_created(self) -> None:
+        """Не двигали ни разу — задача стоит в первом статусе с заведения."""
+        task = self._annotated("", touched=date(2026, 1, 2))
+
+        self.assertEqual(78, task["stale_days"])
+
+    def test_move_date_has_priority_over_created(self) -> None:
+        """После первого перехода возраст по-прежнему считается от него."""
+        task = self._annotated("2026-03-18", touched=date(2026, 1, 2))
+
+        self.assertNotIn("stale_days", task)
+
+    def test_missing_file_without_move_date_is_silent(self) -> None:
+        """Без строки перехода и файла дату заведения узнать неоткуда."""
         task = self._annotated("")
+
+        self.assertNotIn("stale_days", task)
+
+    def test_broken_created_date_is_silent(self) -> None:
+        task = self._annotated("", touched=date(2026, 1, 2), created="неизвестно")
+
+        self.assertNotIn("stale_days", task)
+
+    def test_future_created_date_is_silent(self) -> None:
+        task = self._annotated("", touched=date(2026, 1, 2),
+                               created="2026-04-01 10:00")
 
         self.assertNotIn("stale_days", task)
 
@@ -272,6 +298,12 @@ class EditFreshnessTest(AgeCaseMixin, unittest.TestCase):
 
     def test_recently_edited_task_is_silent(self) -> None:
         task = self._annotated("2026-03-01", {"card_stale_days": 7},
+                               touched=date(2026, 3, 20))
+
+        self.assertNotIn("stale_days", task)
+
+    def test_recently_edited_unmoved_task_is_silent(self) -> None:
+        task = self._annotated("", {"card_stale_days": 7},
                                touched=date(2026, 3, 20))
 
         self.assertNotIn("stale_days", task)
