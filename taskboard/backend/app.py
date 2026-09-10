@@ -27,6 +27,7 @@ from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, TELEGRAM
                             validate_card_style)
 from backend.create_task_runner import create_task
 from backend.fs_browse import browse_dir
+from backend.log_files import log_kind, read_log_text
 from backend.epics import (annotate_epics, epic_name, epic_tasks, list_epics,
                            register_epic, set_task_epic)
 from backend.migrations import (apply_config_migrations, migrate_global_config,
@@ -1225,7 +1226,7 @@ def api_log(name: str) -> dict:
         raise HTTPException(400, "Недопустимое имя файла")
     if not path.is_file():
         raise HTTPException(404, "Лог не найден")
-    return {"name": name, "content": path.read_text(encoding="utf-8", errors="replace")}
+    return {"name": name, "content": read_log_text(path), "kind": log_kind(name)}
 
 
 # --- Жизненный цикл сервера ---
