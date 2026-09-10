@@ -11,12 +11,16 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend import app as app_module  # noqa: E402
 from backend.config import (CARD_LIMITS, DEFAULTS, card_style,  # noqa: E402
                             validate_card_style)
 
@@ -24,7 +28,9 @@ SRC = Path(__file__).resolve().parent.parent / "frontend" / "src"
 CARD = SRC / "components" / "TaskCard.jsx"
 APP_JSX = SRC / "App.jsx"
 SETTINGS = SRC / "components" / "SettingsModal.jsx"
+API_JS = SRC / "api.js"
 APP_PY = Path(__file__).resolve().parent.parent / "backend" / "app.py"
+HELP = Path(__file__).resolve().parent.parent.parent / "docs" / "help" / "02-board.md"
 
 
 class DefaultsTest(unittest.TestCase):
@@ -115,6 +121,38 @@ class ApiTest(unittest.TestCase):
                       "сохранение не проверяет границы — форма осталась одна")
 
 
+class ApiSaveTest(unittest.TestCase):
+    """Ноль сохраняется, а ошибки доезжают до конкретного поля формы."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patch = mock.patch.object(
+            app_module.registry, "get_active",
+            return_value={"name": "test", "tasks_dir": self.tmp.name})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_zero_age_threshold_survives_reload(self) -> None:
+        app_module.api_save_config(
+            app_module.ConfigIn(updates={"card_stale_days": 0}))
+
+        self.assertEqual(0, app_module.api_get_config()["card_stale_days"])
+        stored = json.loads(
+            (Path(self.tmp.name) / ".taskboard.json").read_text(encoding="utf-8"))
+        self.assertEqual(0, stored["card_stale_days"])
+
+    def test_age_error_names_the_field_and_meaning(self) -> None:
+        with self.assertRaises(app_module.HTTPException) as raised:
+            app_module.api_save_config(
+                app_module.ConfigIn(updates={"card_stale_days": -1}))
+
+        detail = raised.exception.detail
+        self.assertEqual("invalid_card_style", detail["code"])
+        self.assertIn("возраста", detail["message"].lower())
+        self.assertIn("card_stale_days", detail["fields"])
+
+
 class FrontendTest(unittest.TestCase):
     """Числа доезжают до карточки, а форма ограничивает ввод границами."""
 
@@ -145,6 +183,23 @@ class FrontendTest(unittest.TestCase):
         self.assertIn("card_title_size", text)
         self.assertIn("min={low}", text)
         self.assertIn("max={high}", text)
+
+    def test_settings_show_card_error_next_to_its_field(self) -> None:
+        text = SETTINGS.read_text(encoding="utf-8")
+
+        self.assertIn("fieldErrors.card_stale_days", text)
+        self.assertIn("error.details?.fields", text)
+        self.assertIn("error.details = payload", API_JS.read_text(encoding="utf-8"))
+
+    def test_settings_explain_zero_age_threshold(self) -> None:
+        text = SETTINGS.read_text(encoding="utf-8")
+
+        self.assertIn("0 — не показывать возраст", text)
+
+    def test_help_explains_how_to_disable_age(self) -> None:
+        text = HELP.read_text(encoding="utf-8")
+
+        self.assertIn("Ноль отключает показ", text)
 
 
 if __name__ == "__main__":  # pragma: no cover

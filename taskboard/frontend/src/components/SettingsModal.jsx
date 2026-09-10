@@ -72,6 +72,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   const [notifyStatuses, setNotifyStatuses] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Ошибка настройки относится к конкретному вводу: общий текст внизу
+  // прокручиваемой вкладки человек не видит рядом с тем, что исправляет.
+  const [fieldErrors, setFieldErrors] = useState({})
   // Выполненные миграции после сохранения (переименования в проекте)
   const [migrations, setMigrations] = useState(null)
   // Действие с сервером: 'restart' | 'stop' | null (после вызова эндпоинта)
@@ -128,7 +131,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
       .catch(() => { /* без источников редактор работает как раньше */ })
   }, [])
 
-  const set = (key, value) => setConfig({ ...config, [key]: value })
+  const set = (key, value) => {
+    setConfig({ ...config, [key]: value })
+    if (fieldErrors[key]) {
+      setFieldErrors((current) => Object.fromEntries(
+        Object.entries(current).filter(([name]) => name !== key)))
+    }
+  }
 
   // Телеграм: чаты и проекты нужны только на своей вкладке — грузим при заходе,
   // а не при открытии окна. Имя бота живёт до закрытия окна: это ответ на
@@ -248,6 +257,16 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   // Включённое требование действует задним числом: показываем цену до сохранения
   const [gated, setGated] = useState(null)
 
+  const handleSaveError = (error) => {
+    const fields = error.details?.fields
+    if (fields && typeof fields === 'object' && Object.keys(fields).length) {
+      setFieldErrors(fields)
+      if (Object.keys(fields).some((key) => key.startsWith('card_'))) openTab('board')
+      return
+    }
+    setError(error.message)
+  }
+
   const updates = () => ({
     port: Number(config.port) || 8765,
     dnd_full_board: !!config.dnd_full_board,
@@ -301,6 +320,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   const check = async () => {
     setBusy(true)
     setError(null)
+    setFieldErrors({})
     try {
       const preview = await api.previewConfig(updates())
       if (preview.removals?.length) {
@@ -318,7 +338,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
       }
       await save()
     } catch (e) {
-      setError(e.message)
+      handleSaveError(e)
     } finally {
       setBusy(false)
     }
@@ -327,6 +347,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   const save = async (withMoves = undefined) => {
     setBusy(true)
     setError(null)
+    setFieldErrors({})
     try {
       const result = await api.saveConfig(updates(), withMoves)
       setRemovals(null)
@@ -338,7 +359,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
         onClose()
       }
     } catch (e) {
-      setError(e.message)
+      handleSaveError(e)
     } finally {
       setBusy(false)
     }
@@ -577,7 +598,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     {(() => {
                       const [low, high] = config.card_limits?.card_stale_days || []
                       const value = config.card_stale_days
-                      const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                      const number = Number(value)
+                      const bad = value !== '' && (!Number.isInteger(number) || number < low || number > high)
+                      const ageError = fieldErrors.card_stale_days
                       return (
                         <div className="mt-3">
                           <span className={label}>
@@ -591,8 +614,10 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             value={value ?? ''}
                             onChange={(e) => set('card_stale_days', e.target.value)}
                           />
-                          <span className="block text-[11px] text-zinc-400 mt-1">
-                            возраст показывается нижней строкой превью; от {low} до {high}
+                          <span className={`block text-[11px] mt-1 ${bad || ageError ? 'text-rose-400' : 'text-zinc-400'}`}>
+                            {ageError || (bad
+                              ? `Допустимо 0 или от 1 до ${high}`
+                              : `возраст показывается нижней строкой превью; 0 — не показывать возраст, от 1 до ${high}`)}
                           </span>
                         </div>
                       )

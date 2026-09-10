@@ -19,6 +19,7 @@ async function request(url, options = {}) {
     if (payload && typeof payload === 'object') {
       error.code = payload.code
       error.message = payload.message || detail
+      error.details = payload
     }
     throw error
   }

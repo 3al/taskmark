@@ -221,6 +221,11 @@ class AnnotateAgeTest(AgeCaseMixin, unittest.TestCase):
 
         self.assertNotIn("stale_days", task)
 
+    def test_zero_threshold_disables_age(self) -> None:
+        task = self._annotated("2026-01-01", {"card_stale_days": 0})
+
+        self.assertNotIn("stale_days", task)
+
     def test_default_threshold_applies_without_config(self) -> None:
         task = self._annotated("2026-01-01", {})
 
@@ -391,6 +396,9 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("card_stale_days", DEFAULTS)
         low, high = CARD_LIMITS["card_stale_days"]
         self.assertTrue(low <= DEFAULTS["card_stale_days"] <= high)
+
+    def test_zero_is_the_age_switch(self) -> None:
+        self.assertEqual(0, CARD_LIMITS["card_stale_days"][0])
 
     def test_threshold_lives_in_the_project_layer(self) -> None:
         """Темп работы — свойство репозитория, а не глаз пользователя."""

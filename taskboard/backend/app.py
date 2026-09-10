@@ -401,12 +401,23 @@ def api_save_config(body: ConfigIn) -> dict:
                *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS, *TELEGRAM_KEYS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
-    # Размеры превью проверяет бэкенд, а не только форма: за границами диапазона
-    # карточка разваливается, и «настройка» превращается в способ сломать доску
+    # Настройки вида проверяет бэкенд, а не только форма: запрос может прийти
+    # без UI. Ошибки возвращаются по полям — окно показывает их у ввода, а не
+    # общим сообщением внизу длинной вкладки.
     updates, invalid = validate_card_style(updates)
     if invalid:
-        raise HTTPException(400, {"message": "Недопустимые размеры превью",
-                                  "errors": invalid})
+        fields = {}
+        for item in invalid:
+            key, separator, message = item.partition(":")
+            fields[key] = message.strip() if separator else item
+        if set(fields) == {"card_stale_days"}:
+            summary = "Недопустимый порог возраста задачи"
+        else:
+            summary = "Недопустимые настройки вида доски"
+        raise HTTPException(400, {"code": "invalid_card_style",
+                                  "message": summary,
+                                  "errors": invalid,
+                                  "fields": fields})
 
     proj = registry.get_active()
     tasks_dir = Path(proj["tasks_dir"]) if proj else None

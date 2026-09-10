@@ -155,6 +155,10 @@ def annotate_age(tasks_dir: Path, board: dict, cfg: dict, pipeline=None,
         threshold = int(threshold)
     except (TypeError, ValueError):
         threshold = DEFAULTS["card_stale_days"]
+    if threshold == 0:
+        return board
+    if threshold < 0:
+        threshold = DEFAULTS["card_stale_days"]
     today = today or date.today()
     tasks_dir = Path(tasks_dir)
 
