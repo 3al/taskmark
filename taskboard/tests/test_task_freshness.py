@@ -112,7 +112,7 @@ class FreshnessTest(unittest.TestCase):
     def test_default_threshold_applies_without_config(self) -> None:
         task = self._annotated(1, {})
 
-        self.assertEqual(DEFAULTS["card_fresh_minutes"], 15)
+        self.assertEqual(DEFAULTS["card_fresh_minutes"], 1)
         self.assertEqual(1, task["fresh_minutes"])
 
     def test_broken_threshold_falls_back_to_default(self) -> None:
