@@ -85,7 +85,7 @@ def _utf8_console() -> None:
 # Имена, а не номер версии, — как CAPABILITIES в backend/app.py: набор
 # расширяется, не заводя таблицы соответствия версий возможностям.
 SCRIPT_CAPABILITIES = {"stall", "task_types", "task_sizes", "task_assignee",
-                       "requires", "comments", "epics", "task_due"}
+                       "requires", "comments", "epics", "task_due", "handoff"}
 
 # Дефолты дублируют backend/config.py: скрипт автономен и работает
 # без запущенного сервера, в том числе в проектах без установленного taskboard
@@ -2767,6 +2767,145 @@ def work_hint(tasks_dir: Path) -> dict:
             "hint": WORK_HINT_TEXT.format(tasks=", ".join(found))}
 
 
+# Буфер хэндоффа: файл, переживающий переход в новую сессию — в том числе в
+# другую среду, где штатного возобновления нет вовсе (у каждой своё хранилище и
+# свой внутренний формат). Лежит рядом с задачами: папка уже вне git, а доска и
+# валидатор смотрят только `TASK-*.md`.
+HANDOFF_FILE = "handoff.md"
+
+# Час — граница доверия, а не удаления: старше него буфер не подставляется молча,
+# но содержимое остаётся видно, и решает человек. Считает возраст скрипт, потому
+# что время он берёт из системы, а не из памяти агента.
+HANDOFF_FRESH_MINUTES = 60
+
+HANDOFF_BUSY = ("предыдущий хэндофф не забрали — переход не состоялся. "
+                "Прочитайте его (--handoff-read) или сотрите (--handoff-clear): "
+                "дозаписывать и затирать чужое нельзя")
+
+
+def handoff_path(tasks_dir: Path) -> Path:
+    return Path(tasks_dir) / HANDOFF_FILE
+
+
+def _handoff_body(text: str) -> str:
+    """Тело буфера — всё, что ниже шапки."""
+    if not text.startswith("---"):
+        return text
+    end = text.find("\n---", 3)
+    if end < 0:
+        return ""
+    return text[end + 4:].lstrip("\n")
+
+
+def _handoff_age(written: str) -> int | None:
+    """Возраст буфера в минутах; None — время не разобралось."""
+    try:
+        stamp = datetime.strptime(written.strip(), "%Y-%m-%d %H:%M")
+    except (ValueError, AttributeError):
+        return None
+    return max(int((datetime.now() - stamp).total_seconds() // 60), 0)
+
+
+def _handoff_task(tasks_dir: Path, task_id: str) -> dict:
+    """Названная в буфере задача — с её **сегодняшним** статусом.
+
+    Статус читается в момент чтения, а не хранится в буфере: пока тот лежал,
+    задачу могли двинуть, и записанная копия соврала бы. В буфере остаётся то,
+    чего нет больше нигде, а состояние доезжает из файла задачи.
+    """
+    path = find_task_file(Path(tasks_dir), task_id)
+    if path is None:
+        return {"id": task_id, "found": False, "status": "", "title": "", "file": ""}
+    meta = _read_meta(path)
+    return {"id": task_id, "found": True,
+            "status": str(meta.get("status", "") or ""),
+            "title": str(meta.get("title", "") or ""),
+            "file": path.name}
+
+
+def handoff_read(tasks_dir: Path) -> dict:
+    """Что лежит в буфере: возраст, свежесть и тело.
+
+    Чтение ничего не стирает — очистка отдельным вызовом, её делает тот же
+    скилл сразу после того, как контекст восстановлен.
+    """
+    path = handoff_path(tasks_dir)
+    if not path.is_file():
+        return {"exists": False, "fresh": False, "age_minutes": None, "body": "",
+                "written": "", "agent": "", "harness": "", "tasks": []}
+
+    text = path.read_text(encoding="utf-8-sig")
+    meta = _read_meta(path)
+    age = _handoff_age(str(meta.get("written", "") or ""))
+    tasks = [_handoff_task(tasks_dir, part.strip())
+             for part in str(meta.get("tasks", "") or "").split(",")
+             if part.strip() and part.strip() != "~"]
+    return {"exists": True,
+            # Неразобранное время — не повод верить буферу: свежесть требует
+            # доказательства, а не отсутствия опровержения
+            "fresh": age is not None and age < HANDOFF_FRESH_MINUTES,
+            "age_minutes": age,
+            "written": str(meta.get("written", "") or ""),
+            "agent": str(meta.get("agent", "") or ""),
+            "harness": str(meta.get("harness", "") or ""),
+            "tasks": tasks,
+            "body": _handoff_body(text),
+            "path": str(path)}
+
+
+def handoff_write(tasks_dir: Path, draft: Path, agent: str = "",
+                  harness: str = "", tasks: str = "") -> dict:
+    """Записать буфер из черновика, проставив шапку.
+
+    Черновик передаётся путём, а не через stdin: в PowerShell перенаправления
+    ввода нет, и `< файл` там не работает.
+
+    Буфер на месте и его не забрали — значит переход не состоялся. Дозаписывать
+    в него нельзя (две сессии склеятся в одну кашу), затирать тоже: чужая работа
+    исчезнет молча. Отказываем и называем причину.
+    """
+    tasks_dir = Path(tasks_dir)
+    draft = Path(draft)
+    existing = handoff_read(tasks_dir)
+    if existing["exists"]:
+        return {"ok": False, "error": HANDOFF_BUSY,
+                "age_minutes": existing["age_minutes"],
+                "path": str(handoff_path(tasks_dir))}
+    if not draft.is_file():
+        return {"ok": False, "error": f"черновик не найден: {draft}"}
+
+    body = draft.read_text(encoding="utf-8-sig").strip()
+    if not body:
+        return {"ok": False, "error": "черновик пуст — передавать нечего"}
+
+    # Задачи сессии называет агент: какие из них он трогал, знает только он, а
+    # рабочий статус этого не заменяет — в разговоре живут и уже сданные, и
+    # ждущие выпуска. Не назвал — берём хотя бы те, что в работе: это меньшее
+    # приближение, но лучше пустого поля. Статусы здесь не сохраняются: их
+    # дочитает `handoff_read` в момент чтения
+    named = [part.strip().upper() for part in str(tasks or "").replace(";", ",").split(",")
+             if part.strip()]
+    tasks_line = named or (work_hint(tasks_dir).get("in_work") or [])
+    header = ["---",
+              f"written: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+              f"agent: {agent.strip() or '~'}",
+              f"harness: {harness.strip() or '~'}",
+              f"tasks: {', '.join(tasks_line) if tasks_line else '~'}",
+              "---", ""]
+    path = handoff_path(tasks_dir)
+    path.write_text("\n".join(header) + body + "\n", encoding="utf-8")
+    return {"ok": True, "path": str(path), "tasks": tasks_line}
+
+
+def handoff_clear(tasks_dir: Path) -> dict:
+    """Стереть буфер. Нечего стирать — это не ошибка, а обычное состояние."""
+    path = handoff_path(tasks_dir)
+    if not path.is_file():
+        return {"ok": True, "existed": False, "path": str(path)}
+    path.unlink()
+    return {"ok": True, "existed": True, "path": str(path)}
+
+
 def transition_gate(tasks_dir: Path, task_id: str, target: str,
                     via: str | None, manual: str | None) -> str:
     """Текст отказа, если переход требует назвать источник. Пусто — можно идти.
@@ -3080,6 +3219,18 @@ def main() -> None:
                         help="Взять в работу стоящую задачу (блокировка/пауза)")
     parser.add_argument("--reason", default=None, metavar="ПРИЧИНА",
                         help="Причина съезда с маршрута (отмены) — обязательна")
+    parser.add_argument("--handoff-write", dest="handoff_write", metavar="ЧЕРНОВИК",
+                        default=None,
+                        help="Записать буфер хэндоффа из файла-черновика")
+    parser.add_argument("--handoff-read", dest="handoff_read", action="store_true",
+                        help="Что лежит в буфере хэндоффа: возраст и тело (JSON)")
+    parser.add_argument("--handoff-clear", dest="handoff_clear", action="store_true",
+                        help="Стереть буфер хэндоффа")
+    parser.add_argument("--harness", default="",
+                        help="Среда, из которой пишется хэндофф (claude, opencode, codex)")
+    parser.add_argument("--tasks", dest="handoff_tasks", metavar="TASK-NNN[,TASK-MMM]",
+                        default="",
+                        help="Задачи сессии для хэндоффа (по умолчанию — те, что в работе)")
     parser.add_argument("--tasks-dir", default=None,
                         help="Папка задач (default: папка этого скрипта)")
     args = parser.parse_args()
@@ -3128,6 +3279,27 @@ def main() -> None:
 
     if args.work_hint:
         print(json.dumps(work_hint(tasks_dir), ensure_ascii=False, indent=2))
+        return
+
+    if args.handoff_read:
+        print(json.dumps(handoff_read(tasks_dir), ensure_ascii=False, indent=2))
+        return
+
+    if args.handoff_write:
+        result = handoff_write(tasks_dir, Path(args.handoff_write),
+                               agent=args.agent or "", harness=args.harness or "",
+                               tasks=args.handoff_tasks or "")
+        if not result["ok"]:
+            print(f"[ERROR] {result['error']}")
+            sys.exit(1)
+        tasks = ", ".join(result["tasks"]) if result["tasks"] else "нет задач в работе"
+        print(f"[OK] хэндофф записан: {result['path']} ({tasks})")
+        return
+
+    if args.handoff_clear:
+        result = handoff_clear(tasks_dir)
+        print("[OK] буфер хэндоффа пуст"
+              if result["existed"] else "[i] буфер хэндоффа и так пуст")
         return
 
     if args.stalled:
