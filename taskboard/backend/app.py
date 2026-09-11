@@ -13,12 +13,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import (autostart, baseline, changelog, console, due_watch, help_docs,
-                     lifecycle, notify_watch, registry, telegram_intake,
+                     lifecycle, notices, notify_watch, registry, telegram_intake,
                      telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
-from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, TELEGRAM_KEYS,
-                            PROJECT_KEYS,
+from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, DEFAULTS,
+                            TELEGRAM_KEYS, PROJECT_KEYS,
                             add_assignee, add_criteria_preset, assignees,
                             card_style, criteria_presets,
                             custom_criteria_presets, load_global_config,
@@ -75,6 +75,9 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
+# Служба уведомлений едет тем же каналом, что и правки файлов задач: второй
+# путь до браузера означал бы второе переподключение и вторую точку отказа
+notices.bind(watcher.send)
 
 # Остановка фонового цикла проверки обновлений (ставится при старте)
 _stop_update_loop = None
@@ -373,11 +376,18 @@ def api_get_config() -> dict:
     """
     proj = registry.get_active()
     if not proj:
-        return {**load_global_config(), "card_limits": CARD_LIMITS,
-                "predicates": PREDICATES}
+        cfg = load_global_config()
+        return {**cfg, "card_limits": CARD_LIMITS, "predicates": PREDICATES,
+                "notice_kinds": notices.sources_state(cfg),
+                "notice_seconds_range": list(notices.SECONDS_RANGE)}
     tasks_dir = Path(proj["tasks_dir"])
     cfg = load_project_config(tasks_dir)
     cfg["card_limits"] = CARD_LIMITS
+    # Список источников уведомлений — из реестра службы, а не из перечня в JS:
+    # вид, добавленный в реестр, появляется в настройках сам
+    cfg["notice_kinds"] = notices.sources_state(cfg)
+    # Границы времени показа — оттуда же, откуда их проверяет бэкенд
+    cfg["notice_seconds_range"] = list(notices.SECONDS_RANGE)
     # Словарь предикатов: без него редактор требований знал бы список проверок
     # только из зашитого в JS перечня, и тот разошёлся бы с движком молча
     cfg["predicates"] = PREDICATES
@@ -397,13 +407,22 @@ def api_save_config(body: ConfigIn) -> dict:
     # Имён системных артефактов здесь нет: они перестали быть настройкой
     # (TASK-053) — переименование не доезжало до текстов скиллов и правил
     allowed = {"port", "theme", "tasks_dir", "update_check",
-               "release_manifest_url", "hide_empty_columns",
+               "release_manifest_url", "hide_empty_columns", "notice_sources",
+               "notice_seconds",
                *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS, *TELEGRAM_KEYS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
     # Настройки вида проверяет бэкенд, а не только форма: запрос может прийти
     # без UI. Ошибки возвращаются по полям — окно показывает их у ввода, а не
     # общим сообщением внизу длинной вкладки.
+    # Выключатели источников уведомлений: чистим до известных видов, храним
+    # только отключённые (реестр видов — поставка, а не запрос)
+    if "notice_sources" in updates:
+        updates["notice_sources"] = notices.normalize_sources(updates["notice_sources"])
+    if "notice_seconds" in updates:
+        updates["notice_seconds"] = notices.normalize_seconds(
+            updates["notice_seconds"], DEFAULTS["notice_seconds"])
+
     updates, invalid = validate_card_style(updates)
     if invalid:
         fields = {}
@@ -593,6 +612,9 @@ def api_board() -> dict:
         "dnd_full_board": cfg.get("dnd_full_board", True),
         # Размеры превью — доска рисует карточки по ним
         "card_style": card_style(cfg),
+        # Сколько висит всплывашка: считает не она сама, а настройка
+        "notice_seconds": notices.normalize_seconds(
+            cfg.get("notice_seconds"), DEFAULTS["notice_seconds"]),
     }
     return board
 
@@ -1387,7 +1409,7 @@ def _startup() -> None:
     # кэша при загрузке страницы и сама бы не зажглась (TASK-126)
     global _stop_update_loop
     _stop_update_loop = updater.start_periodic_check(
-        cfg, check=lambda c: updater.check_and_notify(c, ROOT_DIR, watcher.send))
+        cfg, check=lambda c: updater.check_and_notify(c, ROOT_DIR))
     # Задачи из чата: поллер живёт тем же способом, что и проверка обновлений —
     # потоком-демоном внутри уже работающего сервера. Конфиг обработчик читает
     # сам на каждом сообщении: привязку чатов и свой ник человек правит в

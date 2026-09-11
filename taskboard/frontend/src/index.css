@@ -120,3 +120,30 @@ select option {
 .md-tint-teal h1, .md-tint-teal h2, .md-tint-teal h3 { color: #6fac9f; }
 .md-tint-rose h1, .md-tint-rose h2, .md-tint-rose h3 { color: #bb8090; }
 .md-tint-stone h1, .md-tint-stone h2, .md-tint-stone h3 { color: #a8a29e; }
+
+/* Всплывашки службы уведомлений: приезжают справа, уезжают туда же.
+   Движение короткое — уведомление сообщает, а не показывает себя */
+@keyframes notice-in {
+  from { opacity: 0; transform: translateX(1rem); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes notice-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(1rem); }
+}
+.animate-notice-in { animation: notice-in 0.18s ease-out; }
+.animate-notice-out { animation: notice-out 0.2s ease-in forwards; }
+
+/* Полоска обратного отсчёта всплывашки: съезжает справа налево за то же время,
+   что живёт уведомление. Пауза ставится инлайном (animation-play-state) —
+   тем же наведением, что останавливает и сам таймер */
+@keyframes notice-bar {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.notice-bar {
+  transform-origin: left;
+  animation-name: notice-bar;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}

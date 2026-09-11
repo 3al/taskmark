@@ -17,6 +17,7 @@ import ReasonPrompt from './components/ReasonPrompt'
 import HelpModal from './components/HelpModal'
 import UpdateModal from './components/UpdateModal'
 import ContextMenu from './components/ContextMenu'
+import Notices from './components/Notices'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению
 // прямоугольников: для карточки важна площадь перекрытия, иначе вставка между
@@ -100,6 +101,11 @@ export default function App() {
   const [showUpdate, setShowUpdate] = useState(false)
   // Точка у кнопки обновления. Читается из кэша сервера — сеть тут не задета
   const [updateAvailable, setUpdateAvailable] = useState(false)
+  // Уведомления службы: живут только в открытой вкладке и только пока видны.
+  // Истории у них нет — повод всегда оставляет след где-то ещё (задача на
+  // доске, точка новой версии в шапке)
+  const [notices, setNotices] = useState([])
+  const noticeSeq = useRef(0)
   // Помощь: null — закрыта, иначе раздел, на котором её открыли
   const [helpSection, setHelpSection] = useState(null)
   // Живой поиск: строка ввода и результат с бэкенда (id → попадания).
@@ -358,7 +364,16 @@ export default function App() {
     () => api.updateStatus()
       .then((s) => setUpdateAvailable(!!s.update_available && s.mode !== 'off'))
       .catch(() => { /* окно обновления покажет причину, доске это не мешает */ }),
+    // Уведомление службы: свой id — у события его нет, а React нужен ключ,
+    // переживающий одинаковые сообщения подряд. Стопку держим короткой:
+    // угол экрана — не лента, и десятая карточка уже не читается
+    (notice) => setNotices((prev) => [
+      ...prev.slice(-4), { ...notice, id: ++noticeSeq.current },
+    ]),
   ), [refresh])
+
+  const closeNotice = useCallback(
+    (id) => setNotices((prev) => prev.filter((n) => n.id !== id)), [])
 
   const switchProject = async (name) => {
     if (!name) return
@@ -1003,6 +1018,10 @@ export default function App() {
         </div>
       )}
 
+      {/* Обёртка над доской — якорь для всплывашек: внутри самой доски они
+          уезжали бы вместе с её горизонтальной прокруткой, а fixed-стопка
+          у нижнего края окна пряталась под панелью задач системы */}
+      <div className="relative flex-1 min-h-0 flex flex-col">
       <main className="flex-1 overflow-x-auto overflow-y-hidden p-4">
         {report?.structure === 'unreadable' ? (
           // Читать эту папку нам не дают, значит она не наша: скорее всего
@@ -1133,6 +1152,9 @@ export default function App() {
           </div>
         )}
       </main>
+      <Notices items={notices} activeProject={projects.active}
+               seconds={board?.config?.notice_seconds} onClose={closeNotice} />
+      </div>
 
       {/* Перенос, после которого останется долг этапа. Не запрет: рука человека
           не гейтится — но он видит цену до движения, а не узнаёт её от агента

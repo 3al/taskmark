@@ -164,7 +164,7 @@ export const api = {
 }
 
 // Подписка на живые обновления (SSE)
-export function subscribeChanges(onChange, onUpdate) {
+export function subscribeChanges(onChange, onUpdate, onNotice) {
   const source = new EventSource('/api/events')
   let opened = false
   // Переподключение после обрыва (перезапуск сервера, сон машины): события,
@@ -175,9 +175,24 @@ export function subscribeChanges(onChange, onUpdate) {
     opened = true
   }
   source.onmessage = (event) => {
-    // По одному каналу едут и правки файлов задач, и находки проверки
-    // обновлений: тип события — сама строка
-    if (event.data === 'update') onUpdate?.()
+    // По одному каналу едут правки файлов задач (слово `changed`) и
+    // уведомления службы (объект). Строку от объекта отличаем по первому
+    // символу: разбирать `changed` как JSON незачем, а ловить исключение
+    // на каждом событии правки — тем более
+    if (event.data?.[0] === '{') {
+      let notice = null
+      try {
+        notice = JSON.parse(event.data)
+      } catch {
+        return  // чужая или битая строка: доске она ничем не мешает
+      }
+      if (notice?.event !== 'notice') return
+      // Точка «доступна новая версия» — второй показ того же события, а не
+      // отдельная сигнализация: канал у них общий
+      if (notice.kind === 'update') onUpdate?.()
+      onNotice?.(notice)
+      return
+    }
     if (event.data === 'changed') onChange()
   }
   return () => source.close()

@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from backend import notices
 from backend import telegram_intake as intake
 from backend import telegram_source as ts
 
@@ -316,6 +317,38 @@ class HandleTest(unittest.TestCase):
         first = self.argv()
         self.handle(message("#задача Вторая @kostya", update_id=6))
         self.assertNotEqual(first, self.argv())
+
+
+class NoticeFromChatTest(HandleTest):
+    """Задача из чата говорит о себе доске: она легла в бэклог молча."""
+
+    def setUp(self):
+        # `sent` в родителе — ответы в чат; уведомления доски копим отдельно
+        super().setUp()
+        self.shown: list[str] = []
+        notices.bind(self.shown.append)
+        self.addCleanup(notices.bind, None)
+
+    def test_созданная_задача_поднимает_уведомление(self):
+        self.handle(message("#задача Обновить документацию @kostya"))
+
+        self.assertEqual(1, len(self.shown), "доске о задаче не сказали")
+        notice = json.loads(self.shown[0])
+        self.assertEqual("task_from_chat", notice["kind"])
+        self.assertEqual("TASK-042", notice["task"])
+        self.assertIn("Обновить документацию", notice["text"])
+
+    def test_уведомление_называет_проект(self):
+        """Чат привязан к нескольким проектам, а доска открыта на одном."""
+        self.handle(message("#задача Сделать X @kostya"))
+
+        notice = json.loads(self.shown[0])
+        self.assertEqual("Первый", notice["project"])
+
+    def test_несостоявшаяся_задача_молчит(self):
+        self.handle(message("#задача Сделать X @petya"))
+
+        self.assertEqual([], self.shown, "уведомление о незаведённой задаче")
 
 
 class DueFromChatTest(HandleTest):

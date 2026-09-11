@@ -29,6 +29,7 @@ import urllib.request
 from pathlib import Path
 
 from . import changelog as changelog_text
+from . import notices
 from . import version
 from .config import GLOBAL_DIR, DEFAULTS
 from .proc import no_window_flags
@@ -278,7 +279,7 @@ def check_in_background(cfg: dict) -> None:
     threading.Thread(target=run, name="update-check", daemon=True).start()
 
 
-def check_and_notify(cfg: dict, root: Path, notify, fetch=fetch_manifest) -> dict:
+def check_and_notify(cfg: dict, root: Path, notify=None, fetch=fetch_manifest) -> dict:
     """Проверить обновления и сказать открытой доске, если версия новая.
 
     Точка «доступна новая версия» читается из кэша при загрузке страницы, и
@@ -286,7 +287,13 @@ def check_and_notify(cfg: dict, root: Path, notify, fetch=fetch_manifest) -> dic
 
     Событие поднимается **только на смену версии**: повторная находка той же
     самой ничего не шлёт — иначе доска дёргалась бы каждый час без причины.
+
+    Говорит проверка **службой уведомлений** (`notices.emit`), а не своим
+    словом в канал: точка в шапке и всплывашка — два показа одного события,
+    и второй сигнализации под обновления в инструменте не осталось. Параметр
+    `notify` подменяется в тестах — сеть и SSE им не нужны.
     """
+    notify = notices.emit if notify is None else notify
     before = read_cache().get("latest") or {}
     fresh = check_remote(cfg, fetch=fetch)
     if fresh.get("error"):
@@ -296,7 +303,8 @@ def check_and_notify(cfg: dict, root: Path, notify, fetch=fetch_manifest) -> dic
     if not latest or latest.get("version") == before.get("version"):
         return fresh
     if status(cfg, root).get("update_available"):
-        notify("update")
+        notify("update", f"Версия {latest.get('version')} — доска расскажет, как обновиться",
+               version=str(latest.get("version") or ""))
     return fresh
 
 

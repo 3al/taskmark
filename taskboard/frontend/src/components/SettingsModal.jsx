@@ -281,6 +281,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     card_show_type: config.card_show_type !== false,
     card_show_progress: config.card_show_progress !== false,
     hide_empty_columns: !!config.hide_empty_columns,
+    // Выключатели источников уведомлений: бэкенд оставит из них только
+    // выключенные известные виды
+    notice_sources: config.notice_sources || {},
+    // Пустое поле — «не меняли»: бэкенд иначе получит ноль и уведомления
+    // перестанут гаснуть сами
+    ...(config.notice_seconds === '' || config.notice_seconds == null
+      ? {} : { notice_seconds: Number(config.notice_seconds) }),
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
@@ -702,6 +709,59 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         </div>
                       </span>
                     </label>
+                  </div>
+
+                  {/* Источники уведомлений. Список приходит с бэкенда
+                      (notice_kinds) — реестр видов живёт в службе, и второй
+                      перечень здесь разошёлся бы с ним молча. Хранятся только
+                      выключенные: вид, которого в настройках нет, говорит */}
+                  <div className="mt-6">
+                    <span className={label}>Всплывающие уведомления</span>
+                    <div className="text-[11px] text-zinc-400 mb-2">
+                      сообщения в правом верхнем углу доски: о чём говорить, а о чём молчать
+                    </div>
+                    {/* Время показа: границы приходят с бэкенда, он же их и
+                        проверяет. Наведение мыши таймер останавливает при любом
+                        значении, поэтому ноль здесь — не «мгновенно», а «ждать
+                        крестика» */}
+                    {(() => {
+                      const [low, high] = config.notice_seconds_range || []
+                      const value = config.notice_seconds
+                      const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                      return (
+                        <div className="w-40 mb-3">
+                          <span className={label}>Показывать, сек</span>
+                          <input
+                            className={`${field} ${bad ? 'border-rose-500' : ''}`}
+                            type="number"
+                            min={low}
+                            max={high}
+                            value={value ?? ''}
+                            onChange={(e) => set('notice_seconds', e.target.value)}
+                          />
+                          <span className="block text-[11px] text-zinc-400 mt-1">
+                            от {low} до {high}; 0 — не гасить, пока не закроете
+                          </span>
+                        </div>
+                      )
+                    })()}
+                    {(config.notice_kinds || []).map((source) => (
+                      <label
+                        key={source.kind}
+                        className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={(config.notice_sources || {})[source.kind] !== false}
+                          onChange={(e) => set('notice_sources', {
+                            ...(config.notice_sources || {}),
+                            [source.kind]: e.target.checked,
+                          })}
+                          className="mt-0.5 accent-sky-500"
+                        />
+                        <span>{source.label}</span>
+                      </label>
+                    ))}
                   </div>
                 </>
               )}

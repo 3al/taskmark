@@ -33,7 +33,7 @@ import re
 from datetime import date
 from pathlib import Path
 
-from . import (console, registry, telegram_messages, telegram_notify,
+from . import (console, notices, registry, telegram_messages, telegram_notify,
                telegram_source, telegram_work)
 from .config import load_global_config, load_project_config
 from .create_task_runner import create_task
@@ -407,6 +407,12 @@ def handle(message: dict, cfg: dict | None = None,
 
     done = {"id": result.get("id"), "title": parsed["title"],
             "project": str(project.get("name", ""))}
+    # Задача легла в бэклог молча: человек смотрит в другую колонку — или в
+    # другой проект вовсе, ведь чат привязывают к любому из них. Имя проекта
+    # едет в уведомлении, и показывающая сторона назовёт его, когда он не
+    # открыт (служба — `notices`, канал у неё общий с правками файлов)
+    notices.emit("task_from_chat", f"{done['id']} · {done['title']}",
+                 task=done["id"], project=done["project"])
     _remember(message.get("update_id"), done)
     _send(reply, message, _reply_text(done["id"], done["title"], done["project"]))
     return {"ok": True, **done}

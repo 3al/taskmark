@@ -368,11 +368,18 @@ class TestUpdateNotice(Base):
     авто-режим тихим — сначала некому проверить, а проверил, так некому сказать.
     """
 
+    @staticmethod
+    def _recorder(sent: list):
+        """Заглушка службы уведомлений: запоминает вид поднятого события."""
+        def notify(kind, text="", **fields):
+            sent.append(kind)
+        return notify
+
     def test_новая_версия_поднимает_событие(self):
         sent = []
         updater.write_cache({"checked_at": 0, "latest": {"version": "0.0.1"}})
         updater.check_and_notify(
-            {"update_check": "auto"}, Path(self.tmp.name), notify=sent.append,
+            {"update_check": "auto"}, Path(self.tmp.name), notify=self._recorder(sent),
             fetch=lambda url: updater.parse_manifest(GOOD))
         self.assertEqual(sent, ["update"], "о новой версии никому не сказали")
 
@@ -381,7 +388,7 @@ class TestUpdateNotice(Base):
         manifest = {**GOOD, "version": current}
         sent = []
         updater.check_and_notify(
-            {"update_check": "auto"}, Path(self.tmp.name), notify=sent.append,
+            {"update_check": "auto"}, Path(self.tmp.name), notify=self._recorder(sent),
             fetch=lambda url: updater.parse_manifest(manifest))
         self.assertEqual(sent, [], "событие ушло, хотя новой версии нет")
 
@@ -389,8 +396,8 @@ class TestUpdateNotice(Base):
         sent = []
         cfg = {"update_check": "auto"}
         fetch = lambda url: updater.parse_manifest(GOOD)  # noqa: E731
-        updater.check_and_notify(cfg, Path(self.tmp.name), notify=sent.append, fetch=fetch)
-        updater.check_and_notify(cfg, Path(self.tmp.name), notify=sent.append, fetch=fetch)
+        updater.check_and_notify(cfg, Path(self.tmp.name), notify=self._recorder(sent), fetch=fetch)
+        updater.check_and_notify(cfg, Path(self.tmp.name), notify=self._recorder(sent), fetch=fetch)
         self.assertEqual(sent, ["update"], "о той же версии сказали дважды")
 
     def test_сетевая_ошибка_не_поднимает_событие(self):
@@ -399,7 +406,7 @@ class TestUpdateNotice(Base):
 
         sent = []
         updater.check_and_notify({"update_check": "auto"}, Path(self.tmp.name),
-                                 notify=sent.append, fetch=boom)
+                                 notify=self._recorder(sent), fetch=boom)
         self.assertEqual(sent, [])
 
 
