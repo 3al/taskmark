@@ -422,6 +422,15 @@ class NotifyRulesTest(unittest.TestCase):
         self.assertIn("последней реплики человека", section)
         self.assertIn("автономной работы", section)
 
+    def test_об_уведомлении_не_отчитываются_в_итоговой_реплике(self):
+        texts = [AGENTIC / "rules_section.md",
+                 AGENTIC / ".claude" / "skills" / "handoff-task" / "SKILL.md"]
+        for path in texts:
+            with self.subTest(path=path.name):
+                body = path.read_text(encoding="utf-8")
+                self.assertIn("фоновый механизм", body)
+                self.assertIn("не упоминай", body.lower())
+
     def test_передача_на_проверку_зовёт_человека(self):
         skill = AGENTIC / ".claude" / "skills" / "handoff-task" / "SKILL.md"
         text = skill.read_text(encoding="utf-8")
