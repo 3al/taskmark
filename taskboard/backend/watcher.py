@@ -216,6 +216,16 @@ class TasksWatcher:
     def _notify(self) -> None:
         self.send("changed")
 
+    def listeners(self) -> int:
+        """Сколько подписчиков SSE слушает канал прямо сейчас.
+
+        Спрашивают у канала, а не считают по журналу: у уведомлений нет
+        истории, и при нуле подписчиков сообщение не увидит уже никто —
+        сказать об этом честнее, чем отчитаться об отправке в пустоту.
+        """
+        with self._lock:
+            return len(self._subscribers)
+
     def send(self, message: str) -> None:
         """Разослать сообщение подписчикам SSE.
 

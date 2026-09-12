@@ -284,6 +284,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     // Выключатели источников уведомлений: бэкенд оставит из них только
     // выключенные известные виды
     notice_sources: config.notice_sources || {},
+    // Кто ждёт закрытия вместо таймера: бэкенд оставит только отличия от
+    // умолчания поставки
+    notice_sticky: config.notice_sticky || {},
     // Пустое поле — «не меняли»: бэкенд иначе получит ноль и уведомления
     // перестанут гаснуть сами
     ...(config.notice_seconds === '' || config.notice_seconds == null
@@ -745,23 +748,55 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         </div>
                       )
                     })()}
-                    {(config.notice_kinds || []).map((source) => (
-                      <label
-                        key={source.kind}
-                        className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2"
+                    {/* Два столбца: сам источник и его вторая настройка.
+                        Подпись «ждут закрытия» — заголовок столбца, а не повтор
+                        в каждой строке: одна и та же надпись трижды читается
+                        как три разных пункта */}
+                    <div className="grid w-max grid-cols-[auto_auto] items-center gap-x-8 gap-y-2">
+                      <span className="text-[11px] text-zinc-400">Источник</span>
+                      <span
+                        title={'Уведомления этого источника не гаснут по таймеру — '
+                          + 'висят, пока не закроете крестиком. Пригодится, если '
+                          + 'источник присылает их пачкой и стопку не успеть прочесть.'}
+                        className="text-[11px] text-zinc-400 cursor-help"
                       >
-                        <input
-                          type="checkbox"
-                          checked={(config.notice_sources || {})[source.kind] !== false}
-                          onChange={(e) => set('notice_sources', {
-                            ...(config.notice_sources || {}),
-                            [source.kind]: e.target.checked,
-                          })}
-                          className="mt-0.5 accent-sky-500"
-                        />
-                        <span>{source.label}</span>
-                      </label>
-                    ))}
+                        ждут закрытия
+                      </span>
+                      {(config.notice_kinds || []).map((source) => [
+                        <label
+                          key={`${source.kind}-on`}
+                          className="flex items-center gap-2 text-sm cursor-pointer select-none"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={(config.notice_sources || {})[source.kind] !== false}
+                            onChange={(e) => set('notice_sources', {
+                              ...(config.notice_sources || {}),
+                              [source.kind]: e.target.checked,
+                            })}
+                            className="accent-sky-500"
+                          />
+                          <span>{source.label}</span>
+                        </label>,
+                        <label
+                          key={`${source.kind}-sticky`}
+                          title={'Уведомления этого источника не гаснут по таймеру — '
+                            + 'висят, пока не закроете крестиком. Пригодится, если '
+                            + 'источник присылает их пачкой и стопку не успеть прочесть.'}
+                          className="flex justify-center cursor-pointer select-none"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!(config.notice_sticky || {})[source.kind]}
+                            onChange={(e) => set('notice_sticky', {
+                              ...(config.notice_sticky || {}),
+                              [source.kind]: e.target.checked,
+                            })}
+                            className="accent-sky-500"
+                          />
+                        </label>,
+                      ])}
+                    </div>
                   </div>
                 </>
               )}

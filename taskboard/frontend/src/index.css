@@ -127,12 +127,20 @@ select option {
   from { opacity: 0; transform: translateX(1rem); }
   to { opacity: 1; transform: translateX(0); }
 }
-@keyframes notice-out {
-  from { opacity: 1; transform: translateX(0); }
-  to { opacity: 0; transform: translateX(1rem); }
+.animate-notice-in { animation: notice-in 0.3s ease-out; }
+
+/* Уход всплывашки: карточка тает прозрачностью и **складывается** — высота с
+   отступом едут в ноль, и соседи снизу поднимаются на её место плавно, а не
+   прыжком в момент размонтирования. Высоту в пикселях ставит JS перед уходом:
+   `auto` не анимируется */
+.notice-leaving {
+  opacity: 0;
+  transform: translateX(0.5rem);
+  /* Сначала карточка тает, и только потом складывается: одновременный уход
+     прозрачности и высоты читается как рывок, даже на долгой анимации */
+  transition: opacity 0.42s ease, transform 0.42s ease,
+              height 0.3s ease 0.2s, margin-bottom 0.3s ease 0.2s;
 }
-.animate-notice-in { animation: notice-in 0.18s ease-out; }
-.animate-notice-out { animation: notice-out 0.2s ease-in forwards; }
 
 /* Полоска обратного отсчёта всплывашки: съезжает справа налево за то же время,
    что живёт уведомление. Пауза ставится инлайном (animation-play-state) —

@@ -35,6 +35,7 @@ const PART_LABEL = {
   vault: 'Волт',
   create_script: 'Скрипт',
   status_script: 'Скрипт',
+  notify_script: 'Скрипт',
   template: 'Шаблон задачи',
 }
 

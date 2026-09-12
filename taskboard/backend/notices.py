@@ -10,6 +10,11 @@
 строкой в него, а не правкой службы. Неизвестный вид — исключение: молча
 проглоченное уведомление хуже отсутствующего, потому что о нём никто не узнает.
 
+**Источник бывает и снаружи процесса.** Агент живёт в терминале, а не здесь, и
+зовёт службу через `POST /api/notify`. Такие виды помечены в реестре признаком
+`external`; остальные снаружи не шлют — голосом проверки обновлений не должен
+говорить посторонний процесс.
+
 **Транспорт — общий SSE-канал** (`watcher.send`), тот же, по которому едут
 правки файлов задач. Второй канал до браузера означал бы второе переподключение
 и вторую точку отказа; уведомление отличается от «changed» только тем, что едет
@@ -40,9 +45,22 @@ from typing import Callable
 INFO = "info"
 SUCCESS = "success"
 WARNING = "warning"
+ERROR = "error"
 
-# Виды уведомлений: ключ → уровень, заголовок всплывашки и имя источника в
-# настройках. Текст приходит от источника (в нём номер задачи, версия — то, что
+# Все известные уровни. Набор закрыт: показ рисует каждый своим цветом, и
+# уровень, которого он не знает, доехал бы до человека серой карточкой
+LEVELS = (INFO, SUCCESS, WARNING, ERROR)
+
+# Виды уведомлений: ключ → уровень, заголовок всплывашки, имя источника в
+# настройках и признаки вида: `external` — можно ли прислать снаружи,
+# `sticky` — ждут ли уведомления этого вида закрытия вместо таймера; это
+# **умолчание поставки**, человек меняет его галочкой у источника. `levels` —
+# вправе ли источник выбрать уровень сам.
+#
+# **Уровень задаёт реестр — кроме видов, где повод у каждого вызова свой.**
+# У проверки обновлений один повод и один тон, а агент одним и тем же видом
+# говорит и «работа готова», и «всё встало»: тон там принадлежит событию, а не
+# виду. Реестр остаётся хозяином — он называет умолчание и разрешает выбор. Текст приходит от источника (в нём номер задачи, версия — то, что
 # известно только на месте), заголовок задаётся здесь: он одинаков у всех
 # уведомлений вида и не должен переписываться каждым вызовом по-своему.
 #
@@ -57,6 +75,11 @@ NOTICES: dict[str, dict] = {
     # без уведомления не заметит её вовсе
     "task_from_chat": {"level": SUCCESS, "title": "Задача из чата",
                        "source": "Задачи из чата"},
+    # Агент передал ход человеку: работа отдана на проверку, нужен ответ или
+    # работа встала. Единственный вид, который приходит **снаружи** сервера —
+    # агент живёт в терминале, а не в этом процессе
+    "agent": {"level": INFO, "title": "Ход за вами",
+              "source": "Сообщения агента", "external": True, "levels": True},
 }
 
 # Сколько секунд всплывашка висит без вмешательства и границы этого времени.
@@ -68,12 +91,33 @@ SECONDS_RANGE: tuple[int, int] = (0, 60)
 # Куда уходит собранное уведомление. Подставляется при старте сервера
 # (`bind`), в тестах — своей функцией: служба не обязана знать про SSE
 _sender: Callable[[str], None] | None = None
+# Сколько слушателей у канала. Необязателен: канал, который считать не умеет,
+# отвечает «не знаю», и уведомление уходит как прежде
+_listeners: Callable[[], int] | None = None
 
 
-def bind(sender: Callable[[str], None] | None) -> None:
+def bind(sender: Callable[[str], None] | None,
+         listeners: Callable[[], int] | None = None) -> None:
     """Подключить службу к каналу доставки. `None` — отключить."""
-    global _sender
+    global _sender, _listeners
     _sender = sender
+    _listeners = listeners
+
+
+def audience() -> int | None:
+    """Сколько слушателей у канала; `None` — канал их не считает."""
+    return _listeners() if _listeners is not None else None
+
+
+def external(kind: str) -> bool:
+    """Можно ли прислать уведомление этого вида снаружи (`POST /api/notify`).
+
+    **Признак реестра, а не проверка на месте приёма.** Виды, которые рождаются
+    внутри сервера — найденная версия, задача из чата, — снаружи не шлют:
+    иначе любой локальный процесс мог бы сказать голосом проверки обновлений,
+    и человек принял бы чужое сообщение за вывод инструмента.
+    """
+    return bool((NOTICES.get(kind) or {}).get("external"))
 
 
 def enabled(kind: str, cfg: dict | None = None) -> bool:
@@ -120,27 +164,68 @@ def normalize_seconds(value, default: int) -> int:
     return max(low, min(high, seconds))
 
 
+def is_sticky(kind: str, cfg: dict | None = None) -> bool:
+    """Ждут ли уведомления источника закрытия вместо таймера.
+
+    Умолчание поставки (в реестре) перекрывается галочкой человека. В файле
+    лежат только отличия от умолчания: слепок всех источников заморозил бы
+    поставку такой, какой она была в день сохранения настроек.
+    """
+    default = bool((NOTICES.get(kind) or {}).get("sticky"))
+    if cfg is None:
+        from .config import load_global_config
+
+        cfg = load_global_config()
+    chosen = (cfg.get("notice_sticky") or {}).get(kind)
+    return bool(chosen) if isinstance(chosen, bool) else default
+
+
+def normalize_sticky(value) -> dict:
+    """Привести выбор «ждать закрытия» к хранимому виду: только отличия."""
+    if not isinstance(value, dict):
+        return {}
+    return {kind: bool(value[kind]) for kind in NOTICES
+            if isinstance(value.get(kind), bool)
+            and bool(value[kind]) != bool(NOTICES[kind].get("sticky"))}
+
+
 def sources_state(cfg: dict) -> list[dict]:
-    """Список источников для формы настроек: ключ, имя, включён ли."""
+    """Список источников для формы настроек: ключ, имя, включён ли, что ждёт."""
     return [{"kind": kind, "label": known.get("source", known["title"]),
-             "enabled": enabled(kind, cfg)}
+             "enabled": enabled(kind, cfg), "sticky": is_sticky(kind, cfg)}
             for kind, known in NOTICES.items()]
 
 
-def build(kind: str, text: str = "", **fields) -> dict:
+def level_allowed(kind: str) -> bool:
+    """Вправе ли источник выбрать уровень сам — или его задаёт реестр."""
+    return bool((NOTICES.get(kind) or {}).get("levels"))
+
+
+def build(kind: str, text: str = "", level: str = "", **fields) -> dict:
     """Собрать уведомление вида `kind`.
 
     Поля сверх текста (`task`, `version`) едут как есть: их понимает та часть
     интерфейса, которая уведомление показывает, а служба их не толкует.
+
+    `level` — тон конкретного события; принимается только у видов, которым
+    реестр это разрешил, и только из известных. Пусто — уровень вида.
     """
     known = NOTICES.get(kind)
     if known is None:
         raise ValueError(f"неизвестный вид уведомления: {kind}")
+    if level:
+        if not level_allowed(kind):
+            raise ValueError(f"вид {kind} уровень не выбирает")
+        if level not in LEVELS:
+            raise ValueError(f"неизвестный уровень уведомления: {level}")
     notice = {
         "event": "notice",
         "kind": kind,
-        "level": known["level"],
+        "level": level or known["level"],
         "title": known["title"],
+        # Ждёт закрытия, а не тает по таймеру. Считает бэкенд: это настройка
+        # человека, а показу остаётся «да» или «нет»
+        "sticky": is_sticky(kind),
         "text": str(text or "").strip(),
         # Время события, а не показа: между ними переподключение SSE и сон
         # машины, и «только что» у них разное
@@ -159,7 +244,7 @@ def encode(notice: dict) -> str:
     return json.dumps(notice, ensure_ascii=False)
 
 
-def emit(kind: str, text: str = "", **fields) -> dict | None:
+def emit(kind: str, text: str = "", level: str = "", **fields) -> dict | None:
     """Отправить уведомление. Возвращает отправленное — или `None`, если некому.
 
     **Не бросает при отказе доставки.** Уведомление вспомогательно: доска
@@ -167,13 +252,18 @@ def emit(kind: str, text: str = "", **fields) -> dict | None:
     падать из-за несказанного сообщения не должен. Неизвестный вид — другое
     дело: это ошибка в коде источника, и она поднимается.
     """
-    notice = build(kind, text, **fields)
+    notice = build(kind, text, level, **fields)
     # Выключенный источник молчит — но вид всё равно проверен реестром выше:
     # опечатка в ключе не должна выглядеть как «человек это отключил»
     if not enabled(kind):
         return None
     sender = _sender
     if sender is None:
+        return None
+    # Канал без подписчиков — это не доставка: истории у службы нет, и
+    # уведомление, ушедшее в пустую комнату, не увидит уже никто. Отчитаться
+    # об отправке значит сказать агенту, что человека позвали, — а его не звали
+    if audience() == 0:
         return None
     try:
         sender(encode(notice))

@@ -19,6 +19,7 @@ opencode читает `.claude/skills`; Codex не читает ни её, ни 
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -29,7 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from backend.config import DEFAULTS  # noqa: E402
 from backend.scaffold import (CODEX_HOOKS, detect_harnesses,  # noqa: E402
                               hook_registered, hooks_unregistered, part_targets,
-                              rules_files, scaffold_project)
+                              register_hook, rules_files, scaffold_project)
+from backend.validator import validate_project  # noqa: E402
 
 CODEX_ONLY = {"claude": False, "opencode": False, "codex": True}
 CLAUDE_CODEX = {"claude": True, "opencode": False, "codex": True}
@@ -143,7 +145,7 @@ class SkillsLayoutTest(_Project):
 
 
 class CodexHooksTest(_Project):
-    """Обработчик тот же, что у Claude Code; своя только регистрация."""
+    """Codex получает общий work-hint и свой хук запроса разрешения."""
 
     def registration(self) -> dict:
         return json.loads((self.root / CODEX_HOOKS).read_text(encoding="utf-8"))
@@ -152,7 +154,69 @@ class CodexHooksTest(_Project):
         self.deploy(CODEX_ONLY)
         self.assertTrue((self.root / ".codex" / "hooks"
                          / "work-hint.py").is_file())
+        self.assertTrue((self.root / ".codex" / "hooks"
+                         / "permission-notify.py").is_file())
         self.assertTrue(hook_registered(self.root, "codex"))
+
+    def test_permission_hook_registered_only_for_codex(self) -> None:
+        self.deploy(CODEX_ONLY)
+        entry = self.registration()["hooks"]["PermissionRequest"][0]
+
+        self.assertEqual("*", entry["matcher"])
+        handler = entry["hooks"][0]
+        self.assertIn(".codex/hooks/permission-notify.py", handler["command"])
+        self.assertTrue(handler["async"], "уведомление не должно задерживать диалог")
+
+        claude_root = Path(self._tmp.name) / "claude"
+        claude_tasks = claude_root / "tasks"
+        scaffold_project(claude_tasks, self.cfg(CLAUDE_ONLY),
+                         {"harnesses": CLAUDE_ONLY})
+        settings = json.loads((claude_root / ".claude" / "settings.json")
+                              .read_text(encoding="utf-8"))
+        self.assertNotIn("PermissionRequest", settings["hooks"])
+        self.assertFalse((claude_root / ".claude" / "hooks"
+                          / "permission-notify.py").exists())
+
+    def test_missing_permission_registration_is_reported_and_restored(self) -> None:
+        self.deploy(CODEX_ONLY)
+        data = self.registration()
+        data["hooks"].pop("PermissionRequest")
+        (self.root / CODEX_HOOKS).write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+        self.assertFalse(hook_registered(self.root, "codex"))
+        self.assertEqual([CODEX_HOOKS],
+                         hooks_unregistered(self.root, self.cfg(CODEX_ONLY)))
+
+        register_hook(self.root, self.cfg(CODEX_ONLY))
+
+        self.assertTrue(hook_registered(self.root, "codex"))
+        self.assertIn("PermissionRequest", self.registration()["hooks"])
+
+    def test_missing_permission_handler_gets_banner_and_button_restores_all(self) -> None:
+        self.deploy(CODEX_ONLY)
+        handler = self.root / ".codex" / "hooks" / "permission-notify.py"
+        handler.unlink()
+
+        issues = validate_project(self.tasks, self.cfg(CODEX_ONLY))["degraded"]
+        missing = [i for i in issues if i["code"] == "no_hooks"]
+        self.assertTrue(missing)
+        self.assertIn("codex/permission-notify.py", missing[0]["names"])
+
+        # Кнопка «Развернуть» у части hooks восстанавливает и файл, и ссылку:
+        # у старого проекта отсутствуют оба конца новой поставки.
+        data = self.registration()
+        data["hooks"].pop("PermissionRequest")
+        (self.root / CODEX_HOOKS).write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        scaffold_project(self.tasks, self.cfg(CODEX_ONLY), {"parts": ["hooks"]})
+
+        self.assertTrue(handler.is_file())
+        self.assertTrue(hook_registered(self.root, "codex"))
+        codes = [i["code"] for i in
+                 validate_project(self.tasks, self.cfg(CODEX_ONLY))["degraded"]]
+        self.assertNotIn("no_hooks", codes)
+        self.assertNotIn("no_hook_registration", codes)
 
     def test_command_path_is_relative(self) -> None:
         """`CLAUDE_PROJECT_DIR` у Codex нет, зато хук стартует из корня проекта."""
@@ -186,6 +250,55 @@ class CodexHooksTest(_Project):
         """Плагин opencode среда подхватывает из папки сама."""
         harnesses = {"claude": False, "opencode": True, "codex": False}
         self.assertEqual([], hooks_unregistered(self.root, self.cfg(harnesses)))
+
+
+class PermissionNotifyHookTest(_Project):
+    """Хук зовёт существующий скрипт и не решает запрос за человека."""
+
+    def hook(self) -> Path:
+        return (Path(__file__).resolve().parent.parent / "templates" / "agentic"
+                / ".codex" / "hooks" / "permission-notify.py")
+
+    def call(self, event: dict) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(self.hook())], input=json.dumps(event),
+            capture_output=True, text=True, encoding="utf-8", timeout=10)
+
+    def test_permission_request_notifies_without_leaking_command(self) -> None:
+        self.tasks.mkdir(parents=True)
+        called = self.tasks / "called.json"
+        (self.tasks / "notify.py").write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "Path(__file__).with_name('called.json').write_text("
+            "json.dumps(sys.argv[1:], ensure_ascii=False), encoding='utf-8')\n",
+            encoding="utf-8")
+        secret = "команда-с-секретом"
+
+        done = self.call({
+            "hook_event_name": "PermissionRequest",
+            "cwd": str(self.root),
+            "tool_name": "Bash",
+            "tool_input": {"command": secret, "description": "нужно разрешение"},
+        })
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        args = json.loads(called.read_text(encoding="utf-8"))
+        self.assertIn("--agent", args)
+        self.assertIn("Codex", args)
+        self.assertIn("--level", args)
+        self.assertIn("warning", args)
+        self.assertNotIn(secret, json.dumps(args, ensure_ascii=False))
+        self.assertEqual("", done.stdout)
+
+    def test_missing_notify_script_is_silent(self) -> None:
+        self.root.mkdir(parents=True)
+
+        done = self.call({"hook_event_name": "PermissionRequest", "cwd": str(self.root)})
+
+        self.assertEqual(0, done.returncode)
+        self.assertEqual("", done.stdout)
+        self.assertEqual("", done.stderr)
 
 
 if __name__ == "__main__":

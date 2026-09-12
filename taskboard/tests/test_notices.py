@@ -121,7 +121,53 @@ class NoticeSourcesTest(unittest.TestCase):
         src = Path(__file__).resolve().parents[1] / "backend" / "app.py"
         text = src.read_text(encoding="utf-8")
 
-        self.assertIn("notices.bind(watcher.send)", text)
+        self.assertIn("notices.bind(watcher.send", text)
+
+
+class StickySwitchTest(unittest.TestCase):
+    """Ждать закрытия или таять — выбор человека, у каждого источника свой."""
+
+    def test_по_умолчанию_всё_тает(self):
+        """Висящее до крестика просят сами — обычно когда стопку не прочесть."""
+        for kind in notices.NOTICES:
+            with self.subTest(kind=kind):
+                self.assertFalse(notices.is_sticky(kind, {}))
+
+    def test_галочка_источника_включает_ожидание(self):
+        cfg = {"notice_sticky": {"agent": True}}
+
+        self.assertTrue(notices.is_sticky("agent", cfg))
+        self.assertFalse(notices.is_sticky("update", cfg))
+
+    def test_событие_несёт_готовый_ответ(self):
+        """Показу остаётся «да» или «нет»: режим считает бэкенд."""
+        self.assertIn("sticky", notices.build("agent", "текст"))
+
+    def test_хранятся_только_отличия_от_умолчания(self):
+        """Слепок всех источников заморозил бы поставку (config-defaults-freeze)."""
+        self.assertEqual({}, notices.normalize_sticky({"agent": False}))
+        self.assertEqual({"agent": True}, notices.normalize_sticky({"agent": True}))
+
+    def test_мусор_и_чужие_ключи_отбрасываются(self):
+        self.assertEqual({}, notices.normalize_sticky({"чужое": True}))
+        self.assertEqual({}, notices.normalize_sticky({"agent": "да"}))
+        self.assertEqual({}, notices.normalize_sticky("не словарь"))
+
+    def test_форма_знает_состояние_каждого_источника(self):
+        state = {s["kind"]: s for s in notices.sources_state(
+            {"notice_sticky": {"agent": True}})}
+
+        self.assertTrue(state["agent"]["sticky"])
+        self.assertFalse(state["update"]["sticky"])
+
+    def test_настройка_объяснена_при_наведении(self):
+        source = (self.SRC / "components" / "SettingsModal.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("notice_sticky", source)
+        self.assertIn("ждут закрытия", source)
+        self.assertIn("не гаснут по таймеру", source, "подсказки при наведении нет")
+
+    SRC = Path(__file__).resolve().parent.parent / "frontend" / "src"
 
 
 class SourceSwitchTest(unittest.TestCase):
@@ -218,6 +264,15 @@ class FrontendTest(unittest.TestCase):
         self.assertIn("onMouseLeave", source)
         self.assertIn("onClick={close}", source, "крестика нет")
 
+    def test_наведение_останавливает_всю_стопку(self):
+        """Пока читают одну карточку, соседние не должны исчезать."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+        card, stack = source.split("export default function Notices", 1)
+
+        self.assertNotIn("setPaused", card, "пауза осталась локальной у карточки")
+        self.assertIn("const [paused, setPaused] = useState(false)", stack)
+        self.assertIn("paused={paused}", stack, "общая пауза не передана карточкам")
+
     def test_пауза_это_состояние_а_не_снятый_по_месту_таймер(self):
         """Тогда таймер живёт в эффекте, и остаток переживает ре-рендер."""
         source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
@@ -233,12 +288,46 @@ class FrontendTest(unittest.TestCase):
         self.assertIn("animationPlayState", source)
         self.assertIn("notice-bar", css)
 
+    def test_невидимая_доска_не_считает(self):
+        """Уведомление адресовано отошедшему: сгорев в свёрнутом окне, оно не
+        показалось бы вовсе, а вернуться к нему неоткуда — истории нет."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("visibilitychange", source, "видимость страницы не слушают")
+        self.assertIn("document.hidden", source)
+        self.assertIn("|| !visible) return", source,
+                      "таймер исчезания не останавливается на невидимой доске")
+        self.assertIn("paused || !visible", source, "полоска отсчёта не замирает")
+
+    def test_стопку_можно_убрать_одним_движением(self):
+        """Ждущие закрытия уведомления копятся — иначе крестики жмут по очереди."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("Закрыть все", source)
+        self.assertIn("closingAll", source)
+
+    def test_карточка_уходит_складываясь(self):
+        """Иначе соседи прыгают на её место в момент размонтирования."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+        css = (self.SRC / "index.css").read_text(encoding="utf-8")
+
+        self.assertIn("offsetHeight", source, "высота не фиксируется перед уходом")
+        self.assertIn("requestAnimationFrame", source)
+        self.assertIn("notice-leaving", css)
+        self.assertIn("transition:", css.split(".notice-leaving", 1)[1][:400])
+
     def test_стопка_стоит_в_окне_доски_а_не_у_края_экрана(self):
         """Нижний край окна прячется под панелью задач системы."""
         source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
 
         self.assertIn("absolute top-3 right-3", source)
         self.assertNotIn("fixed bottom", source)
+
+    def test_уведомления_выше_модальных_окон(self):
+        """Затемнение окна не должно размывать сообщение, которое зовёт человека."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("z-[60]", source)
 
     def test_стопка_не_перехватывает_мышь(self):
         """Полоса в углу не должна ломать перетаскивание задач под ней."""

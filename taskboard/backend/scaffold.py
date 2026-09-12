@@ -81,11 +81,20 @@ BACKLOG_SUBSECTIONS = tuple(meta["section"] for meta in TASK_TYPES.values())
 TASK_TEMPLATE_FILE = "_TEMPLATE.md"
 
 # Скрипты-инструменты в tasks/: (часть scaffold, ключ конфига, имя шаблона).
-# Имя в проекте переименуемо через настройки, шаблон — нет
+# Ключ конфига есть у переименуемых — их имя в проекте задаётся настройкой;
+# `None` означает постоянное имя поставки, и новых переименуемых имён мы не
+# заводим: переименование доезжало до данных, но не до текстов скиллов (TASK-053)
 TOOL_SCRIPTS = (
     ("create_script", "create_script", "create_task.py"),
     ("status_script", "status_script", "set_status.py"),
+    ("notify_script", None, "notify.py"),
 )
+
+
+def tool_script_name(part: str, cfg: dict | None = None) -> str:
+    """Имя скрипта-инструмента в проекте: настройка или постоянное имя."""
+    cfg_key, template_name = next((k, t) for p, k, t in TOOL_SCRIPTS if p == part)
+    return (cfg or {}).get(cfg_key, template_name) if cfg_key else template_name
 
 # .gitignore для разворачиваемых агентских папок: не загрязнять git-дерево проекта
 AGENTIC_GITIGNORE = (
@@ -377,7 +386,8 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     tasks_dir.mkdir(parents=True, exist_ok=True)
     project_root = tasks_dir.parent
     want = set(parts) if parts else {"board", "create_script", "status_script",
-                                     "template", "epics", "gitignore", "logs"}
+                                     "notify_script", "template", "epics",
+                                     "gitignore", "logs"}
 
     if "board" in want:
         board_name = cfg.get("board_file", "board.md")
@@ -393,10 +403,10 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     # Скрипты — инструменты, а не данные пользователя: устаревшую версию
     # обновляем до шаблонной, но только по явной команде (кнопка «Обновить»).
     # Полное развёртывание расходящийся файл не трогает — см. overwrite
-    for part, cfg_key, template_name in TOOL_SCRIPTS:
+    for part, _cfg_key, template_name in TOOL_SCRIPTS:
         if part not in want:
             continue
-        script_name = cfg.get(cfg_key, template_name)
+        script_name = tool_script_name(part, cfg)
         script_path = tasks_dir / script_name
         template_text = (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8")
         current = _read(script_path)
@@ -493,6 +503,11 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             replaced += r
             skipped += s
             diverged += d
+            # У хуков файл и регистрация образуют одну рабочую часть. Поэтому
+            # кнопка баннера «развернуть хуки» восстанавливает и обработчики,
+            # и ссылки на них в настройках выбранных сред.
+            if part == "hooks":
+                replaced += register_hook(project_root, cfg)
             # Кнопка на баннере разворачивает часть в папку, которой могло ещё
             # не быть: без .gitignore её содержимое утечёт в git проекта.
             # Проверяем независимо от того, создали ли что-то сейчас: часть
@@ -809,17 +824,26 @@ CODEX_HOOKS = ".codex/hooks.json"
 # — и он точно так же может содержать хуки пользователя, поэтому правим только
 # свою запись. opencode здесь не участвует: плагин он берёт из папки сам
 HOOK_REGISTRATION_FILE = {"claude": CLAUDE_SETTINGS, "codex": CODEX_HOOKS}
-HOOK_EVENT = "PostToolUse"
-# По этому куску пути своя запись и опознаётся: имя обработчика — константа
-# поставки, и совпасть с чужим хуком случайно оно не может
-HOOK_MARK = "work-hint"
+# У Claude поставляется подсказка о незавершённой работе. Codex получает ещё
+# уведомление перед системным запросом разрешения: этот момент возникает глубже
+# обычного хода агента и из правил/скиллов его поймать невозможно.
+HOOK_REGISTRATIONS = {
+    "claude": (
+        {"event": "PostToolUse", "matcher": "Bash", "script": "work-hint.py"},
+    ),
+    "codex": (
+        {"event": "PostToolUse", "matcher": "Bash", "script": "work-hint.py"},
+        {"event": "PermissionRequest", "matcher": "*",
+         "script": "permission-notify.py", "async": True, "timeout": 5},
+    ),
+}
 
 
 def _settings_path(project_root: Path, harness: str = "claude") -> Path:
     return Path(project_root) / HOOK_REGISTRATION_FILE[harness]
 
 
-def _hook_command(harness: str = "claude") -> str:
+def _hook_command(harness: str = "claude", script: str = "work-hint.py") -> str:
     """Чем звать обработчик. Лаунчер `py` есть только на Windows.
 
     Путь до обработчика у сред задаётся по-разному. Claude Code подставляет
@@ -829,13 +853,16 @@ def _hook_command(harness: str = "claude") -> str:
     """
     python = "py" if os.name == "nt" else "python3"
     if harness == "codex":
-        return f"{python} .codex/hooks/work-hint.py"
-    return f'{python} "${{CLAUDE_PROJECT_DIR}}/.claude/hooks/work-hint.py"'
+        return f"{python} .codex/hooks/{script}"
+    return f'{python} "${{CLAUDE_PROJECT_DIR}}/.claude/hooks/{script}"'
 
 
-def _hook_entry(harness: str = "claude") -> dict:
-    return {"matcher": "Bash",
-            "hooks": [{"type": "command", "command": _hook_command(harness)}]}
+def _hook_entry(harness: str, spec: dict) -> dict:
+    handler = {"type": "command", "command": _hook_command(harness, spec["script"])}
+    for key in ("async", "timeout"):
+        if key in spec:
+            handler[key] = spec[key]
+    return {"matcher": spec["matcher"], "hooks": [handler]}
 
 
 def _read_settings(project_root: Path, harness: str = "claude") -> dict | None:
@@ -853,28 +880,30 @@ def _read_settings(project_root: Path, harness: str = "claude") -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _is_ours(entry) -> bool:
-    return isinstance(entry, dict) and HOOK_MARK in json.dumps(entry, ensure_ascii=False)
+def _is_ours(entry, script: str) -> bool:
+    return isinstance(entry, dict) and script in json.dumps(entry, ensure_ascii=False)
 
 
-def _is_dead(entry) -> bool:
+def _is_dead(entry, expected: dict) -> bool:
     """Запись без единой команды: среда её пропускает, держать незачем.
 
     Так выглядит наша же запись, из которой вынули команду руками. Опознать её
     своей уже нельзя — имени обработчика в ней нет, — но и добавлять свою рядом
     незачем: получится дубль, где один из двух мёртв. Занимаем мёртвую.
     """
-    return (isinstance(entry, dict) and entry.get("matcher") == _hook_entry()["matcher"]
+    return (isinstance(entry, dict) and entry.get("matcher") == expected["matcher"]
             and not (entry.get("hooks") or []))
 
 
 def hook_registered(project_root: Path, harness: str = "claude") -> bool:
-    """Сослался ли файл настроек среды на наш обработчик."""
+    """Сослался ли файл настроек среды на все её обработчики поставки."""
     data = _read_settings(project_root, harness)
     if data is None:
         return False
-    entries = ((data.get("hooks") or {}).get(HOOK_EVENT) or [])
-    return any(_is_ours(entry) for entry in entries)
+    hooks = data.get("hooks") or {}
+    return all(any(_is_ours(entry, spec["script"])
+                   for entry in (hooks.get(spec["event"]) or []))
+               for spec in HOOK_REGISTRATIONS[harness])
 
 
 def hooks_unregistered(project_root: Path, cfg: dict | None = None) -> list[str]:
@@ -898,7 +927,7 @@ def register_hook(project_root: Path, cfg: dict | None = None) -> list[str]:
 
 
 def _register_one(project_root: Path, harness: str) -> bool:
-    """Запись о хуке в файле одной среды. True — файл изменился."""
+    """Записи о хуках в файле одной среды. True — файл изменился."""
     path = _settings_path(project_root, harness)
     data = _read_settings(project_root, harness)
     if data is None and path.is_file():
@@ -906,26 +935,31 @@ def _register_one(project_root: Path, harness: str) -> bool:
     if data is None:
         data = {}
 
-    entries = list((data.get("hooks") or {}).get(HOOK_EVENT) or [])
-    entry = _hook_entry(harness)
-
-    # Своё — наша запись и мёртвые оболочки от неё: команду из записи вынимают
-    # руками, и опознать её потом можно только по пустому списку. Раз мы готовы
-    # такую занять, значит признаём своей — и лишние обязаны убрать, иначе они
-    # копятся в чужом файле нашим мусором
-    mine = [i for i, item in enumerate(entries) if _is_ours(item) or _is_dead(item)]
-    if mine:
-        keep = mine[0]
-        unchanged = entries[keep] == entry and len(mine) == 1
-        if unchanged:
-            return False
-        entries[keep] = entry
-        entries = [item for i, item in enumerate(entries) if i == keep or i not in mine]
-    else:
-        entries.append(entry)
-
     hooks = dict(data.get("hooks") or {})
-    hooks[HOOK_EVENT] = entries
+    changed = False
+    for spec in HOOK_REGISTRATIONS[harness]:
+        event = spec["event"]
+        entries = list(hooks.get(event) or [])
+        entry = _hook_entry(harness, spec)
+
+        # Своё — наша запись и мёртвые оболочки от неё: команду из записи
+        # вынимают руками, и опознать её потом можно только по пустому списку.
+        mine = [i for i, item in enumerate(entries)
+                if _is_ours(item, spec["script"]) or _is_dead(item, entry)]
+        if mine:
+            keep = mine[0]
+            if entries[keep] != entry or len(mine) != 1:
+                entries[keep] = entry
+                entries = [item for i, item in enumerate(entries)
+                           if i == keep or i not in mine]
+                changed = True
+        else:
+            entries.append(entry)
+            changed = True
+        hooks[event] = entries
+
+    if not changed:
+        return False
     data["hooks"] = hooks
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
@@ -934,19 +968,25 @@ def _register_one(project_root: Path, harness: str) -> bool:
 
 
 def unregister_hook(project_root: Path, harness: str = "claude") -> bool:
-    """Убрать свою запись, ничего чужого не задев. True — файл изменился."""
+    """Убрать свои записи, ничего чужого не задев. True — файл изменился."""
     data = _read_settings(project_root, harness)
     if data is None:
         return False
-    entries = list((data.get("hooks") or {}).get(HOOK_EVENT) or [])
-    kept = [item for item in entries if not _is_ours(item)]
-    if len(kept) == len(entries):
-        return False
     hooks = dict(data.get("hooks") or {})
-    if kept:
-        hooks[HOOK_EVENT] = kept
-    else:
-        hooks.pop(HOOK_EVENT, None)
+    changed = False
+    for spec in HOOK_REGISTRATIONS[harness]:
+        event = spec["event"]
+        entries = list(hooks.get(event) or [])
+        kept = [item for item in entries if not _is_ours(item, spec["script"])]
+        if len(kept) == len(entries):
+            continue
+        changed = True
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+    if not changed:
+        return False
     data["hooks"] = hooks
     _settings_path(project_root, harness).write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -1283,7 +1323,7 @@ def _current_text(part: str, path: Path) -> str | None:
 # Части поставки из одного файла в tasks/: сравниваются и разрешаются так же,
 # как многофайловые, поэтому в окно расхождений попадают наравне с ними.
 # Имя элемента переименуемо настройкой, имя шаблона — нет
-SINGLE_FILE_PARTS = ("create_script", "status_script", "template")
+SINGLE_FILE_PARTS = ("create_script", "status_script", "notify_script", "template")
 
 
 def _single_targets(project_root: Path, part: str,
@@ -1293,8 +1333,8 @@ def _single_targets(project_root: Path, part: str,
     if part == "template":
         name = template_name = TASK_TEMPLATE_FILE
     else:
-        cfg_key, template_name = next((k, t) for p, k, t in TOOL_SCRIPTS if p == part)
-        name = cfg.get(cfg_key, template_name)
+        template_name = next(t for p, _k, t in TOOL_SCRIPTS if p == part)
+        name = tool_script_name(part, cfg)
     tasks_dir = project_root / cfg.get("tasks_dir", "tasks")
     return [(name, tasks_dir / name,
              (TASKS_TEMPLATES / template_name).read_text(encoding="utf-8"))]
@@ -1692,6 +1732,10 @@ ENV_PARTS = (
      "missing": "no_create_script", "outdated": "outdated_script"},
     {"part": "status_script", "harness": None,
      "missing": "no_status_script", "outdated": "outdated_status_script"},
+    # Уведомление человека: единственный способ агента сказать «ход за вами»,
+    # когда человек отошёл от терминала, но держит доску открытой
+    {"part": "notify_script", "harness": None,
+     "missing": "no_notify_script", "outdated": "outdated_notify_script"},
     {"part": "template", "harness": None,
      "missing": "no_template", "outdated": "outdated_template"},
     {"part": "epics", "harness": None, "missing": "no_epics", "outdated": None},

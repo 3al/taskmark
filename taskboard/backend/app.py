@@ -71,13 +71,13 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "board_repair": True, "stall": True, "update": True,
                 "epic_tasks": True, "agentic_merge": True, "task_copy": True,
                 "board_sections": True, "agentic_remove": True,
-                "telegram": True, "autostart": True}
+                "telegram": True, "autostart": True, "notify": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
 # Служба уведомлений едет тем же каналом, что и правки файлов задач: второй
 # путь до браузера означал бы второе переподключение и вторую точку отказа
-notices.bind(watcher.send)
+notices.bind(watcher.send, watcher.listeners)
 
 # Остановка фонового цикла проверки обновлений (ставится при старте)
 _stop_update_loop = None
@@ -184,6 +184,20 @@ class TelegramCheckIn(BaseModel):
 
 class AutostartIn(BaseModel):
     enabled: bool
+
+
+class NotifyIn(BaseModel):
+    text: str
+    # Вид уведомления. Умолчание — «агент»: снаружи сервера зовёт он, а
+    # остальные виды рождаются внутри и наружу не открыты (`notices.external`)
+    kind: str = "agent"
+    # Тон события: info | success | warning | error. Пусто — уровень вида
+    level: str = ""
+    # Кто зовёт: модель агента. Показ её называет — уведомление приходит
+    # от имени того, кто в этот момент работает, а не от инструмента вообще
+    agent: str | None = None
+    project: str | None = None
+    task: str | None = None
 
 
 class CriteriaPresetIn(BaseModel):
@@ -408,7 +422,7 @@ def api_save_config(body: ConfigIn) -> dict:
     # (TASK-053) — переименование не доезжало до текстов скиллов и правил
     allowed = {"port", "theme", "tasks_dir", "update_check",
                "release_manifest_url", "hide_empty_columns", "notice_sources",
-               "notice_seconds",
+               "notice_sticky", "notice_seconds",
                *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS, *TELEGRAM_KEYS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
@@ -419,6 +433,8 @@ def api_save_config(body: ConfigIn) -> dict:
     # только отключённые (реестр видов — поставка, а не запрос)
     if "notice_sources" in updates:
         updates["notice_sources"] = notices.normalize_sources(updates["notice_sources"])
+    if "notice_sticky" in updates:
+        updates["notice_sticky"] = notices.normalize_sticky(updates["notice_sticky"])
     if "notice_seconds" in updates:
         updates["notice_seconds"] = notices.normalize_seconds(
             updates["notice_seconds"], DEFAULTS["notice_seconds"])
@@ -554,6 +570,35 @@ def api_autostart_set(body: AutostartIn) -> dict:
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Не удалось изменить автозапуск"))
     return result
+
+
+@app.post("/api/notify")
+def api_notify(body: NotifyIn) -> dict:
+    """Сказать человеку то, что знает только агент: ход перешёл к нему.
+
+    Вход в службу уведомлений **снаружи процесса**: агент живёт в терминале и
+    ни про SSE, ни про порт знать не обязан — за него это делает развёрнутый
+    `tasks/notify.py`.
+
+    Отвечает `sent`, а не одним «ок»: уведомление могли отключить в настройках
+    или доску просто не открыли, и обе причины стоит назвать вслух — иначе
+    молчание всплывашки выглядит поломкой инструмента.
+    """
+    if not notices.external(body.kind):
+        raise HTTPException(400, f"Уведомления вида «{body.kind}» шлют не снаружи")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Пустое уведомление не показывают")
+    level = (body.level or "").strip()
+    if level and level not in notices.LEVELS:
+        raise HTTPException(400, f"Неизвестный уровень уведомления: {level}. "
+                                 f"Известные: {', '.join(notices.LEVELS)}")
+    if not notices.enabled(body.kind):
+        return {"ok": True, "sent": False, "reason": "disabled"}
+    notice = notices.emit(body.kind, text, level, agent=body.agent,
+                          project=body.project, task=body.task)
+    return {"ok": True, "sent": notice is not None,
+            "reason": "" if notice else "no_listeners"}
 
 
 @app.get("/api/health")
