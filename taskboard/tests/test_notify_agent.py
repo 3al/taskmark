@@ -404,6 +404,24 @@ class NotifyRulesTest(unittest.TestCase):
         self.assertIn("не** шлётся", section)
         self.assertIn("сразу после реплики человека", section)
 
+    def test_правила_отличают_конец_ответа_от_возврата_человека(self):
+        """Позвать нужно отошедшего человека, а не отметить каждый конец хода."""
+        text = (AGENTIC / "rules_section.md").read_text(encoding="utf-8")
+        section = text.split("## Уведомления человека", 1)[1].split("\n## ", 1)[0]
+
+        self.assertIn("конец каждого ответа", section)
+        self.assertIn("последней реплики человека", section)
+        self.assertIn("автономной работы", section)
+        self.assertIn("Запрос разрешения", section)
+
+    def test_handoff_учитывает_свежесть_реплики_человека(self):
+        skill = AGENTIC / ".claude" / "skills" / "handoff-task" / "SKILL.md"
+        text = skill.read_text(encoding="utf-8")
+        section = text.split("## Шаг 7. Позвать человека к доске", 1)[1]
+
+        self.assertIn("последней реплики человека", section)
+        self.assertIn("автономной работы", section)
+
     def test_передача_на_проверку_зовёт_человека(self):
         skill = AGENTIC / ".claude" / "skills" / "handoff-task" / "SKILL.md"
         text = skill.read_text(encoding="utf-8")
