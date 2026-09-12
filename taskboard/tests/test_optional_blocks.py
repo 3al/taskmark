@@ -56,8 +56,28 @@ TEXT = """\
 """
 
 
-def _steps(text: str) -> list[int]:
-    return [int(ln.split()[2].rstrip(".")) for ln in text.splitlines()
+HALF_TEXT = """\
+## Шаг 1. Начать
+
+<!-- vault -->
+## Шаг 2. Записать волт
+<!-- /vault -->
+
+## Шаг 2.5. Спросить исполнителя
+
+Имя передаётся дальше (Шаг 2.5), см. шаги 2.5-3.
+
+## Шаг 3. Перевести статус
+
+## Шаг 4. Конец
+"""
+
+SKILLS_DIR = (Path(__file__).resolve().parent.parent
+              / "templates" / "agentic" / ".claude" / "skills")
+
+
+def _steps(text: str) -> list[float]:
+    return [float(ln.split()[2].rstrip(".")) for ln in text.splitlines()
             if ln.startswith("## Шаг ")]
 
 
@@ -96,6 +116,21 @@ class StripOptionalBlocksTest(unittest.TestCase):
         self.assertEqual(_steps(text), [1, 2, 3, 4, 5])
         self.assertIn("как в шаге 4-5", text)
 
+    def test_half_step_after_cut_step_follows_previous(self) -> None:
+        """Полушаг вырезанного шага встаёт за предыдущим, ссылки идут следом (TASK-277)."""
+        text = strip_optional_blocks(HALF_TEXT, set())
+        self.assertEqual(_steps(text), [1, 1.5, 2, 3])
+        self.assertIn("(Шаг 1.5)", text)
+        self.assertIn("шаги 1.5-2", text)
+
+    def test_cut_half_step_shifts_nothing(self) -> None:
+        """Вырезанный полушаг места в целой нумерации не занимал."""
+        text = strip_optional_blocks(
+            "## Шаг 1. А\n<!-- vault -->\n## Шаг 1.5. Волт\n<!-- /vault -->\n"
+            "## Шаг 2. Б\nсм. шаг 2\n", set())
+        self.assertEqual(_steps(text), [1, 2])
+        self.assertIn("см. шаг 2", text)
+
     def test_skills_of_feature_come_from_registry(self) -> None:
         self.assertEqual(feature_skills("forge"), ("send-review",))
         self.assertEqual(feature_skills("нет-такой"), ())
@@ -117,6 +152,48 @@ class VaultInRegistryTest(unittest.TestCase):
         self.assertNotIn("волт", text)
         self.assertIn("до", text)
         self.assertIn("после", text)
+
+
+class RealSkillsStepOrderTest(unittest.TestCase):
+    """Скиллы поставки без волта: заголовки шагов идут по возрастанию (TASK-277)."""
+
+    def _stripped(self, skill: str) -> str:
+        text = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+        return strip_optional_blocks(text, set())
+
+    def assertAscending(self, skill: str) -> list[float]:
+        """Целые шаги подряд, полушаг — под номером целого шага, за которым стоит.
+
+        Порядок полушагов между собой не проверяется: в start-task «1.2» стоит
+        перед «1.1» в самом шаблоне, и перенумерация за это не отвечает.
+        """
+        steps = _steps(self._stripped(skill))
+        whole = [s for s in steps if s == int(s)]
+        self.assertEqual(whole, sorted(whole), f"{skill}: шаги не по порядку — {steps}")
+        self.assertEqual(len(steps), len(set(steps)), f"{skill}: номер шага повторяется")
+        current = None
+        for s in steps:
+            if s == int(s):
+                current = int(s)
+            else:
+                self.assertEqual(int(s), current, f"{skill}: полушаг {s} не у своего шага — {steps}")
+        self.assertEqual(sorted({int(s) for s in steps}), list(range(int(max(steps)) + 1)),
+                         f"{skill}: в целой нумерации дыра — {steps}")
+        return steps
+
+    def test_handoff_task(self) -> None:
+        text = self._stripped("handoff-task")
+        steps = self.assertAscending("handoff-task")
+        self.assertIn(3.5, steps)
+        self.assertNotIn(4.5, steps)
+        self.assertIn("(Шаг 3.5)", text)
+
+    def test_neighbour_skills(self) -> None:
+        # start-task — полушаги в разделах до и после вырезанного шага;
+        # finalize-task — вырезанный шаг перед полушагом чужого шага
+        for skill in ("start-task", "finalize-task", "brainstorm", "brainstorm-team"):
+            with self.subTest(skill=skill):
+                self.assertAscending(skill)
 
 
 if __name__ == "__main__":  # pragma: no cover

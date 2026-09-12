@@ -179,7 +179,8 @@ def strip_optional_blocks(text: str, features) -> str:
             skip = False
             continue
         if skip:
-            m = re.match(r"^##\s+Шаг\s+(\d+)", line.strip())
+            # Вырезанный полушаг («Шаг 4.5») места в целой нумерации не занимал
+            m = re.match(r"^##\s+Шаг\s+(\d+)(?![.,]\d)", line.strip())
             if m:
                 removed_steps.append(int(m.group(1)))
             continue
@@ -198,20 +199,28 @@ def _renumber_steps(text: str, removed: list[int]) -> str:
     Считается за один проход по всем вырезанным блокам: сдвиг «на -1» на
     каждый блок по очереди применялся к уже сдвинутым номерам, и при двух
     вырезанных шагах нумерация оставалась с дырой.
+
+    Полушаг («Шаг 4.5») стоит после своего целого шага, поэтому сдвигается и
+    тогда, когда вырезан сам этот шаг: без «Шага 4» он идёт за «Шагом 3» и
+    становится «3.5», а не остаётся «4.5» перед новым «Шагом 4».
     """
     if not removed:
         return text
 
-    def shift(num: int) -> str:
-        return str(num - sum(1 for r in removed if r < num))
+    def shift(num: str) -> str:
+        whole, dot, frac = num.partition(".")
+        n = int(whole)
+        gone = sum(1 for r in removed if r < n or (frac and r == n))
+        return f"{n - gone}{dot}{frac}"
 
     def replace(m: re.Match) -> str:
-        head = m.group(1) + shift(int(m.group(2)))
+        head = m.group(1) + shift(m.group(2))
         if m.group(3):
-            head += "-" + shift(int(m.group(3)))
+            head += "-" + shift(m.group(3))
         return head
 
-    return re.sub(r"(шаг\w*\s+)(\d+)(?:-(\d+))?", replace, text, flags=re.IGNORECASE)
+    num = r"\d+(?:\.\d+)?"
+    return re.sub(rf"(шаг\w*\s+)({num})(?:-({num}))?", replace, text, flags=re.IGNORECASE)
 
 
 def _copy_file(src: Path, dst: Path) -> bool:
