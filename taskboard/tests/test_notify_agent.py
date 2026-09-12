@@ -142,6 +142,19 @@ class NotifyEndpointTest(unittest.TestCase):
         self.assertEqual("TASK-276", payload["task"])
         self.assertEqual("taskboard", payload["project"])
 
+    def test_уведомление_чужого_проекта_доезжает_с_подписью(self):
+        """Канал один на весь реестр: доска, открытая на другом проекте, зовёт.
+
+        Человек мог уйти работать в другой проект, пока агент трудится в этом.
+        Молчать о чужом значит потерять ровно те события, которых он не ждёт,
+        поэтому имя проекта едет в событии — показ назовёт его.
+        """
+        result = api_notify(NotifyIn(text="TASK-279 отдана на проверку",
+                                     agent="Claude Opus 5", project="jp_trainer"))
+
+        self.assertTrue(result["sent"])
+        self.assertEqual("jp_trainer", json.loads(self.sent[0])["project"])
+
     def test_без_имени_модели_поля_в_событии_нет(self):
         """Показ отличает «автора нет» от «автор пустой» одной проверкой."""
         api_notify(NotifyIn(text="нужен ответ"))
@@ -254,10 +267,11 @@ class NotifyScriptTest(unittest.TestCase):
 
         self.assertEqual(DEFAULTS["port"], self.script.server_port(self.tasks_dir))
 
-    def _registry(self, projects: list[dict]) -> None:
+    def _registry(self, projects: list[dict], active: str = "") -> None:
         """Реестр проектов в подменённом доме."""
         (self.home / ".taskboard" / "projects.json").write_text(
-            json.dumps({"projects": projects}), encoding="utf-8")
+            json.dumps({"active": active, "projects": projects}),
+            encoding="utf-8")
 
     def test_глобальный_конфиг_переопределяет_порт(self):
         (self.home / ".taskboard" / "config.json").write_text(
@@ -271,9 +285,29 @@ class NotifyScriptTest(unittest.TestCase):
         self.assertEqual("taskboard", self.script.project_name(self.tasks_dir))
 
     def test_чужая_папка_задач_именем_не_притворяется(self):
+        """Имя соседа по реестру не подставляется: совпадать должна папка."""
         self._registry([{"name": "другой", "tasks_dir": str(self.tasks_dir / "нет")}])
 
-        self.assertEqual("", self.script.project_name(self.tasks_dir))
+        self.assertNotEqual("другой", self.script.project_name(self.tasks_dir))
+
+    def test_проект_вне_реестра_подписан_именем_папки(self):
+        """Иначе чужая всплывашка приходит без подписи и сходит за свою.
+
+        Проект убрали с доски или перенесли папку — в реестре его нет, но
+        уведомление всё равно доезжает до открытой доски. Безымянное, оно
+        читается как событие открытого проекта.
+        """
+        self._registry([])
+
+        self.assertEqual("project", self.script.project_name(self.tasks_dir))
+
+    def test_активный_проект_на_подпись_не_влияет(self):
+        """Скрипт называет свой проект, а не тот, что открыт на доске."""
+        self._registry([{"name": "мой", "tasks_dir": str(self.tasks_dir)},
+                        {"name": "открытый", "tasks_dir": str(self.home)}],
+                       active="открытый")
+
+        self.assertEqual("мой", self.script.project_name(self.tasks_dir))
 
     def test_без_сервера_скрипт_не_падает(self):
         """Доску не запускали — это обычное состояние, а не сбой работы агента.
@@ -452,6 +486,14 @@ class NotifyRulesTest(unittest.TestCase):
         text = src.read_text(encoding="utf-8")
 
         self.assertIn("notice.agent", text)
+
+    def test_всплывашка_подписывает_чужой_проект(self):
+        """Подпись — только у чужого: своё имя в углу собственной доски лишнее."""
+        src = (ROOT / "frontend" / "src" / "components" / "Notices.jsx")
+        text = src.read_text(encoding="utf-8")
+
+        self.assertIn("notice.project !== activeProject", text)
+        self.assertIn("Проект: ", text)
 
 
 if __name__ == "__main__":
