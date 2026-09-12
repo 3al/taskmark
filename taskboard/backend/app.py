@@ -40,7 +40,7 @@ from backend.requirements import (KNOWN_TYPES_FIELD, PREDICATES, annotate_debt,
                                   task_debt, task_waivers, unreviewed_task_types)
 from backend.queue_ops import (ensure_pipeline_sections, ensure_section, move_task,
                                relink_entry, retitle_entry)
-from backend.scaffold import (HARNESSES, SINGLE_FILE_PARTS, agentic_diff,
+from backend.scaffold import (ENV_PARTS, HARNESSES, agentic_diff,
                               agentic_stale_details, remove_element, resolve_element,
                               scaffold_project, uses_vault)
 from backend.search import search_tasks
@@ -1192,7 +1192,12 @@ def api_help_section(section_id: str) -> dict:
 
 # Части поставки, расхождения которых разбираются в окне: многофайловые и
 # одиночные файлы в tasks/ — разрешаются они одинаково
-_DIFFABLE_PARTS = ("skills", "commands", "rules", "vault", *SINGLE_FILE_PARTS)
+# Части, которые открываются в окне расхождений. Ровно те, что умеют
+# устаревать (`outdated` в `ENV_PARTS`): у остальных сверять нечего — запись о
+# хуке либо наша, либо её нет, а папка логов не бывает «не такой». Список
+# держится производным, потому что разъехавшись он даёт кнопку, которая
+# отвечает «неизвестная часть» — а чинить расхождение больше нечем
+_DIFFABLE_PARTS = tuple(part["part"] for part in ENV_PARTS if part.get("outdated"))
 
 
 @app.get("/api/agentic/stale")

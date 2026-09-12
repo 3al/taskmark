@@ -158,7 +158,9 @@ class CodexHooksTest(_Project):
                          / "permission-notify.py").is_file())
         self.assertTrue(hook_registered(self.root, "codex"))
 
-    def test_permission_hook_registered_only_for_codex(self) -> None:
+    def test_permission_hook_is_codex_own_handler(self) -> None:
+        """Событие общее с Claude Code, а обработчик у Codex свой: там оно
+        отвечает и за ожидание ответа, которого у Codex отдельным видом нет."""
         self.deploy(CODEX_ONLY)
         entry = self.registration()["hooks"]["PermissionRequest"][0]
 
@@ -173,7 +175,9 @@ class CodexHooksTest(_Project):
                          {"harnesses": CLAUDE_ONLY})
         settings = json.loads((claude_root / ".claude" / "settings.json")
                               .read_text(encoding="utf-8"))
-        self.assertNotIn("PermissionRequest", settings["hooks"])
+        claude_handler = settings["hooks"]["PermissionRequest"][0]["hooks"][0]
+        self.assertIn(".claude/hooks/attention-notify.py",
+                      claude_handler["command"])
         self.assertFalse((claude_root / ".claude" / "hooks"
                           / "permission-notify.py").exists())
 

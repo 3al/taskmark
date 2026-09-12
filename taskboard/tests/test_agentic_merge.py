@@ -529,5 +529,22 @@ class UiTest(unittest.TestCase):
             self.assertIn(word, text, f"в руководстве не описано: {word}")
 
 
+class DiffablePartsTest(unittest.TestCase):
+    """Часть, умеющая устаревать, обязана открываться в окне расхождений.
+
+    Списки разъезжались молча: расхождение попадало в баннер, а «Подробности →
+    Обновить» отвечали «Неизвестная часть». Кнопка есть, нажать нельзя —
+    и починить нечем, потому что окно и есть единственный путь.
+    """
+
+    def test_every_outdatable_part_can_be_resolved(self) -> None:
+        from backend.app import _DIFFABLE_PARTS
+        from backend.scaffold import ENV_PARTS
+
+        for part in (p["part"] for p in ENV_PARTS if p.get("outdated")):
+            with self.subTest(part=part):
+                self.assertIn(part, _DIFFABLE_PARTS)
+
+
 if __name__ == "__main__":
     unittest.main()

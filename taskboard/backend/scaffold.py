@@ -824,12 +824,31 @@ CODEX_HOOKS = ".codex/hooks.json"
 # — и он точно так же может содержать хуки пользователя, поэтому правим только
 # свою запись. opencode здесь не участвует: плагин он берёт из папки сам
 HOOK_REGISTRATION_FILE = {"claude": CLAUDE_SETTINGS, "codex": CODEX_HOOKS}
-# У Claude поставляется подсказка о незавершённой работе. Codex получает ещё
-# уведомление перед системным запросом разрешения: этот момент возникает глубже
-# обычного хода агента и из правил/скиллов его поймать невозможно.
+# У Claude поставляется подсказка о незавершённой работе. Обе среды получают
+# ещё уведомление о моменте, когда ход переходит к человеку: он возникает
+# глубже обычного хода агента и из правил/скиллов его поймать невозможно.
+#
+# **Поводов два, и у Claude Code им нужны две двери.** Событие `Notification`
+# с видом `permission_prompt` для различения не годится: диалог доступа и
+# вопрос с вариантами приходят в нём одинаково — тот же `message`, никакого
+# имени инструмента. Поэтому разрешение ловится синхронным `PermissionRequest`
+# (там есть `tool_name`), а `Notification` остаётся ожиданию ввода, и
+# `permission_prompt` из его фильтра **исключён**: иначе на одно разрешение
+# человек получит две карточки. У Codex события `Notification` нет вовсе — там
+# обе роли исполняет `PermissionRequest`.
+#
+# **Уведомление не держит диалог доступа:** запись асинхронная, а короткий
+# таймаут страхует среду, которая `async` не понимает, — иначе она ждала бы
+# обработчик дефолтные десять минут.
+NOTICE_MOMENTS = ("idle_prompt", "agent_needs_input",
+                  "elicitation_dialog", "elicitation_url_dialog")
 HOOK_REGISTRATIONS = {
     "claude": (
         {"event": "PostToolUse", "matcher": "Bash", "script": "work-hint.py"},
+        {"event": "Notification", "matcher": "|".join(NOTICE_MOMENTS),
+         "script": "attention-notify.py", "timeout": 5},
+        {"event": "PermissionRequest", "matcher": "*",
+         "script": "attention-notify.py", "async": True, "timeout": 5},
     ),
     "codex": (
         {"event": "PostToolUse", "matcher": "Bash", "script": "work-hint.py"},
