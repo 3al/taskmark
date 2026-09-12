@@ -393,7 +393,8 @@ def api_get_config() -> dict:
         cfg = load_global_config()
         return {**cfg, "card_limits": CARD_LIMITS, "predicates": PREDICATES,
                 "notice_kinds": notices.sources_state(cfg),
-                "notice_seconds_range": list(notices.SECONDS_RANGE)}
+                "notice_seconds_range": list(notices.SECONDS_RANGE),
+                "notice_volume_range": list(notices.VOLUME_RANGE)}
     tasks_dir = Path(proj["tasks_dir"])
     cfg = load_project_config(tasks_dir)
     cfg["card_limits"] = CARD_LIMITS
@@ -402,6 +403,7 @@ def api_get_config() -> dict:
     cfg["notice_kinds"] = notices.sources_state(cfg)
     # Границы времени показа — оттуда же, откуда их проверяет бэкенд
     cfg["notice_seconds_range"] = list(notices.SECONDS_RANGE)
+    cfg["notice_volume_range"] = list(notices.VOLUME_RANGE)
     # Словарь предикатов: без него редактор требований знал бы список проверок
     # только из зашитого в JS перечня, и тот разошёлся бы с движком молча
     cfg["predicates"] = PREDICATES
@@ -422,7 +424,7 @@ def api_save_config(body: ConfigIn) -> dict:
     # (TASK-053) — переименование не доезжало до текстов скиллов и правил
     allowed = {"port", "theme", "tasks_dir", "update_check",
                "release_manifest_url", "hide_empty_columns", "notice_sources",
-               "notice_sticky", "notice_seconds",
+               "notice_sticky", "notice_sound", "notice_seconds", "notice_volume",
                *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS, *TELEGRAM_KEYS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
@@ -435,9 +437,14 @@ def api_save_config(body: ConfigIn) -> dict:
         updates["notice_sources"] = notices.normalize_sources(updates["notice_sources"])
     if "notice_sticky" in updates:
         updates["notice_sticky"] = notices.normalize_sticky(updates["notice_sticky"])
+    if "notice_sound" in updates:
+        updates["notice_sound"] = notices.normalize_sound(updates["notice_sound"])
     if "notice_seconds" in updates:
         updates["notice_seconds"] = notices.normalize_seconds(
             updates["notice_seconds"], DEFAULTS["notice_seconds"])
+    if "notice_volume" in updates:
+        updates["notice_volume"] = notices.normalize_volume(
+            updates["notice_volume"], DEFAULTS["notice_volume"])
 
     updates, invalid = validate_card_style(updates)
     if invalid:
@@ -660,6 +667,10 @@ def api_board() -> dict:
         # Сколько висит всплывашка: считает не она сама, а настройка
         "notice_seconds": notices.normalize_seconds(
             cfg.get("notice_seconds"), DEFAULTS["notice_seconds"]),
+        # Громкость звука — там же, рядом со временем показа: показ получает
+        # готовое число, а не лезет за ним в настройки отдельным запросом
+        "notice_volume": notices.normalize_volume(
+            cfg.get("notice_volume"), DEFAULTS["notice_volume"]),
     }
     return board
 

@@ -1155,7 +1155,8 @@ export default function App() {
         )}
       </main>
       <Notices items={notices} activeProject={projects.active}
-               seconds={board?.config?.notice_seconds} onClose={closeNotice} />
+               seconds={board?.config?.notice_seconds}
+               volume={board?.config?.notice_volume} onClose={closeNotice} />
       </div>
 
       {/* Перенос, после которого останется долг этапа. Не запрет: рука человека

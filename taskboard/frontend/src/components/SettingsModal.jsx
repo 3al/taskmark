@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+
+import { playNotice } from '../sound'
 import { api } from '../api'
 import PipelineEditor from './PipelineEditor'
 
@@ -287,10 +289,14 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     // Кто ждёт закрытия вместо таймера: бэкенд оставит только отличия от
     // умолчания поставки
     notice_sticky: config.notice_sticky || {},
+    // Кто звучит: бэкенд оставит только включённые виды — умолчание тишина
+    notice_sound: config.notice_sound || {},
     // Пустое поле — «не меняли»: бэкенд иначе получит ноль и уведомления
     // перестанут гаснуть сами
     ...(config.notice_seconds === '' || config.notice_seconds == null
       ? {} : { notice_seconds: Number(config.notice_seconds) }),
+    ...(config.notice_volume === '' || config.notice_volume == null
+      ? {} : { notice_volume: Number(config.notice_volume) }),
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
@@ -748,11 +754,11 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         </div>
                       )
                     })()}
-                    {/* Два столбца: сам источник и его вторая настройка.
-                        Подпись «ждут закрытия» — заголовок столбца, а не повтор
-                        в каждой строке: одна и та же надпись трижды читается
-                        как три разных пункта */}
-                    <div className="grid w-max grid-cols-[auto_auto] items-center gap-x-8 gap-y-2">
+                    {/* Три столбца: сам источник и две его настройки.
+                        Подписи — заголовки столбцов, а не повтор в каждой
+                        строке: одна и та же надпись трижды читается как три
+                        разных пункта */}
+                    <div className="grid w-max grid-cols-[auto_auto_auto] items-center gap-x-8 gap-y-2">
                       <span className="text-[11px] text-zinc-400">Источник</span>
                       <span
                         title={'Уведомления этого источника не гаснут по таймеру — '
@@ -761,6 +767,15 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         className="text-[11px] text-zinc-400 cursor-help"
                       >
                         ждут закрытия
+                      </span>
+                      <span
+                        title={'Уведомления этого источника звучат коротким сигналом. '
+                          + 'Браузер не пустит звук, пока вы ни разу не щёлкнули по '
+                          + 'странице после её загрузки — первое уведомление в свежей '
+                          + 'вкладке может прийти молча.'}
+                        className="text-[11px] text-zinc-400 cursor-help"
+                      >
+                        звук
                       </span>
                       {(config.notice_kinds || []).map((source) => [
                         <label
@@ -795,8 +810,60 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             className="accent-sky-500"
                           />
                         </label>,
+                        <label
+                          key={`${source.kind}-sound`}
+                          title={'Уведомления этого источника звучат коротким сигналом. '
+                            + 'Браузер не пустит звук, пока вы ни разу не щёлкнули по '
+                            + 'странице после её загрузки.'}
+                          className="flex justify-center cursor-pointer select-none"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!(config.notice_sound || {})[source.kind]}
+                            onChange={(e) => set('notice_sound', {
+                              ...(config.notice_sound || {}),
+                              [source.kind]: e.target.checked,
+                            })}
+                            className="accent-sky-500"
+                          />
+                        </label>,
                       ])}
                     </div>
+                    {/* Громкость одна на все источники: звук здесь — сигнал
+                        «посмотри на доску», а не голос конкретного повода.
+                        Регулятор не прячется, когда звук нигде не включён:
+                        исчезнувший элемент выглядит поломкой, а погасший
+                        объясняет сам себя подписью */}
+                    {(() => {
+                      const anySound = Object.values(config.notice_sound || {})
+                        .some(Boolean)
+                      const [low, high] = config.notice_volume_range || [0, 100]
+                      const volume = config.notice_volume ?? 50
+                      return (
+                        <div className="mt-3 w-64">
+                          <span className={label}>
+                            Громкость{anySound ? ' \u2014 ' + volume + '%' : ''}
+                          </span>
+                          <input
+                            type="range"
+                            min={low}
+                            max={high}
+                            value={volume}
+                            disabled={!anySound}
+                            onChange={(e) => set('notice_volume', Number(e.target.value))}
+                            onMouseUp={(e) => playNotice(Number(e.target.value))}
+                            onKeyUp={(e) => playNotice(Number(e.target.value))}
+                            onTouchEnd={(e) => playNotice(volume)}
+                            className="w-full accent-sky-500 disabled:opacity-40"
+                          />
+                          <span className="block text-[11px] text-zinc-400 mt-1">
+                            {anySound
+                              ? 'общая для всех источников со звуком; отпустите ползунок — прозвучит сигнал'
+                              : 'включите звук хотя бы одному источнику'}
+                          </span>
+                        </div>
+                      )
+                    })()}
                   </div>
                 </>
               )}

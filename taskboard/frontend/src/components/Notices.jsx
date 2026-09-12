@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { playNotice } from '../sound'
+
 // Всплывашки службы уведомлений: верхний угол доски, стопка, исчезание по таймеру.
 //
 // Уведомление говорит о том, что случилось **сейчас**, и работе не мешает:
@@ -48,7 +50,8 @@ function usePageVisible() {
   return visible
 }
 
-function Notice({ notice, activeProject, lifetime, visible, paused, closingAll, onClose }) {
+function Notice({ notice, activeProject, lifetime, volume, visible, paused,
+                 closingAll, onClose }) {
   // Вид, который ждёт закрытия, таймера не получает вовсе: «ход за вами» —
   // призыв к действию, а не сообщение о «сейчас», и адресат его как раз тот,
   // кого у экрана нет. Ноль тут значит ровно то же, что ноль в настройке
@@ -56,6 +59,14 @@ function Notice({ notice, activeProject, lifetime, visible, paused, closingAll, 
   const [leaving, setLeaving] = useState(false)
   const left = useRef(life)
   const card = useRef(null)
+
+  // Звучит только то уведомление, чей источник об этом просили: признак
+  // считает бэкенд, показу остаётся проиграть. Эффект без зависимостей —
+  // сигнал принадлежит появлению карточки, а не её перерисовкам
+  useEffect(() => {
+    if (notice.sound) playNotice(volume)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const close = useCallback(() => {
     // Высоту фиксируем **до** ухода: складывать карточку в ноль можно только
@@ -159,7 +170,7 @@ function Notice({ notice, activeProject, lifetime, visible, paused, closingAll, 
   )
 }
 
-export default function Notices({ items, activeProject, seconds, onClose }) {
+export default function Notices({ items, activeProject, seconds, volume, onClose }) {
   // Видимость спрашиваем один раз на стопку, а не в каждой карточке: слушатель
   // один, и все карточки замирают и оживают одновременно
   const visible = usePageVisible()
@@ -200,7 +211,7 @@ export default function Notices({ items, activeProject, seconds, onClose }) {
       )}
       {items.map((notice) => (
         <Notice key={notice.id} notice={notice} activeProject={activeProject}
-                lifetime={lifetime} visible={visible} paused={paused}
+                lifetime={lifetime} volume={volume} visible={visible} paused={paused}
                 closingAll={closingAll}
                 onClose={onClose} />
       ))}

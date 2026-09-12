@@ -170,6 +170,201 @@ class StickySwitchTest(unittest.TestCase):
     SRC = Path(__file__).resolve().parent.parent / "frontend" / "src"
 
 
+class SoundSwitchTest(unittest.TestCase):
+    """Звук — вторая настройка источника, и живёт она отдельно от `sticky`."""
+
+    SRC = Path(__file__).resolve().parents[1] / "frontend" / "src"
+
+    def test_по_умолчанию_молчат_все(self):
+        """Обновление не должно вдруг начать шуметь у того, кто не просил."""
+        for kind in notices.NOTICES:
+            with self.subTest(kind=kind):
+                self.assertFalse(notices.has_sound(kind, {}))
+
+    def test_галочка_включает_звук_только_своему_источнику(self):
+        cfg = {"notice_sound": {"agent": True}}
+
+        self.assertTrue(notices.has_sound("agent", cfg))
+        self.assertFalse(notices.has_sound("update", cfg))
+
+    def test_звук_не_путается_с_ожиданием_закрытия(self):
+        """Две настройки у одного источника — два разных ключа конфига."""
+        cfg = {"notice_sticky": {"agent": True}}
+
+        self.assertFalse(notices.has_sound("agent", cfg))
+        self.assertFalse(notices.is_sticky("agent", {"notice_sound": {"agent": True}}))
+
+    def test_событие_несёт_готовый_ответ(self):
+        """Показу остаётся проиграть или промолчать: решает бэкенд."""
+        self.assertIn("sound", notices.build("agent", "текст"))
+
+    def test_хранятся_только_включённые(self):
+        """Умолчание — тишина, и слепок всех источников заморозил бы её."""
+        self.assertEqual({}, notices.normalize_sound({"agent": False}))
+        self.assertEqual({"agent": True}, notices.normalize_sound({"agent": True}))
+
+    def test_мусор_и_чужие_ключи_отбрасываются(self):
+        self.assertEqual({}, notices.normalize_sound({"чужое": True}))
+        self.assertEqual({}, notices.normalize_sound({"agent": "да"}))
+        self.assertEqual({}, notices.normalize_sound("не словарь"))
+
+    def test_форма_знает_состояние_каждого_источника(self):
+        state = {s["kind"]: s for s in notices.sources_state(
+            {"notice_sound": {"agent": True}})}
+
+        self.assertTrue(state["agent"]["sound"])
+        self.assertFalse(state["update"]["sound"])
+
+
+class SoundConfigApiTest(unittest.TestCase):
+    """Настройка доезжает до конфига и возвращается форме."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        from backend import config as config_mod
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        tmp = Path(self._tmp.name)
+        self._saved = (config_mod.GLOBAL_CONFIG_FILE, config_mod.GLOBAL_DIR)
+        config_mod.GLOBAL_CONFIG_FILE = tmp / "config.json"
+        config_mod.GLOBAL_DIR = tmp
+        self.config_mod = config_mod
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        (self.config_mod.GLOBAL_CONFIG_FILE,
+         self.config_mod.GLOBAL_DIR) = self._saved
+
+    def test_форма_сохраняет_звук_и_громкость(self):
+        from backend.app import ConfigIn, api_save_config
+
+        api_save_config(ConfigIn(updates={"notice_sound": {"agent": True},
+                                          "notice_volume": "80"}))
+        cfg = self.config_mod.load_global_config()
+
+        self.assertEqual({"agent": True}, cfg["notice_sound"])
+        self.assertEqual(80, cfg["notice_volume"])
+
+    def test_громкость_вне_границ_зажимается_при_сохранении(self):
+        from backend.app import ConfigIn, api_save_config
+
+        api_save_config(ConfigIn(updates={"notice_volume": 1000}))
+
+        self.assertEqual(notices.VOLUME_RANGE[1],
+                         self.config_mod.load_global_config()["notice_volume"])
+
+    def test_форма_получает_границы_громкости(self):
+        """Иначе ползунок знал бы их из зашитого в JS числа."""
+        from backend.app import api_get_config
+
+        self.assertEqual(list(notices.VOLUME_RANGE),
+                         api_get_config().get("notice_volume_range"))
+
+
+class SoundFrontendTest(unittest.TestCase):
+    """Что в звуке проверяется текстом, а не ухом."""
+
+    SRC = Path(__file__).resolve().parents[1] / "frontend" / "src"
+
+    def form(self) -> str:
+        return (self.SRC / "components" / "SettingsModal.jsx").read_text(encoding="utf-8")
+
+    def notices_jsx(self) -> str:
+        return (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+
+    def test_у_источника_своя_галочка_звука(self):
+        form = self.form()
+
+        self.assertIn("notice_sound", form)
+        self.assertIn("звук", form)
+
+    def test_громкость_одна_на_всех(self):
+        form = self.form()
+
+        self.assertIn("notice_volume", form)
+        self.assertIn("notice_volume_range", form, "границы зашиты в JS вместо бэкенда")
+
+    def test_громкость_гаснет_без_единого_звучащего_источника(self):
+        """Регулятор остаётся на месте, но крутить его нечему."""
+        form = self.form()
+
+        self.assertIn("anySound", form, "нет проверки «звучит ли хоть один источник»")
+        self.assertIn("disabled={!anySound}", form, "регулятор не гаснет")
+
+    def test_показ_играет_только_звучащему_уведомлению(self):
+        source = self.notices_jsx()
+
+        self.assertIn("notice.sound", source, "звук не привязан к признаку события")
+
+    def test_запрет_автозапуска_не_роняет_показ(self):
+        """До первого клика браузер звук не пустит — и это обычное состояние."""
+        source = (self.SRC / "sound.js").read_text(encoding="utf-8")
+
+        self.assertIn("catch", source, "отказ браузера не перехвачен")
+
+    def test_сигнал_живёт_одним_модулем(self):
+        """Его зовут двое — показ и настройки; вторая копия разошлась бы."""
+        sound = (self.SRC / "sound.js").read_text(encoding="utf-8")
+
+        self.assertIn("AudioContext", sound)
+        for name, text in (("Notices.jsx", self.notices_jsx()),
+                           ("SettingsModal.jsx", self.form())):
+            with self.subTest(file=name):
+                self.assertIn("from '../sound'", text, "модуль не подключён")
+                self.assertNotIn("AudioContext", text, "вторая копия сигнала")
+
+    def test_ползунок_даёт_послушать_выбранное(self):
+        """Громкость выбирают ухом: цифра в процентах о ней ничего не говорит."""
+        form = self.form()
+
+        self.assertIn("onMouseUp", form, "сигнал не звучит по отпусканию мыши")
+        self.assertIn("onKeyUp", form, "с клавиатуры ползунок остаётся немым")
+
+    def test_звук_не_тянет_внешний_файл(self):
+        """Доска работает офлайн, а бинарник в поставке пришлось бы обновлять."""
+        source = (self.SRC / "sound.js").read_text(encoding="utf-8")
+
+        self.assertIn("AudioContext", source)
+        self.assertNotIn(".mp3", source)
+        self.assertNotIn(".wav", source)
+
+    def test_справка_объясняет_звук_и_первый_клик(self):
+        docs = (Path(__file__).resolve().parents[2] / "docs" / "help"
+                / "02-board.md").read_text(encoding="utf-8")
+
+        self.assertIn("звук", docs.lower())
+        self.assertIn("громкост", docs.lower())
+
+
+class VolumeTest(unittest.TestCase):
+    """Громкость общая: у звука один регулятор на все источники."""
+
+    def test_умолчание_из_поставки(self):
+        self.assertIn("notice_volume", DEFAULTS)
+        low, high = notices.VOLUME_RANGE
+        self.assertTrue(low <= DEFAULTS["notice_volume"] <= high)
+
+    def test_значение_зажимается_в_границы(self):
+        low, high = notices.VOLUME_RANGE
+        default = DEFAULTS["notice_volume"]
+
+        self.assertEqual(high, notices.normalize_volume(high + 50, default))
+        self.assertEqual(low, notices.normalize_volume(low - 50, default))
+
+    def test_строка_из_формы_понимается(self):
+        """Форма шлёт числа строками, и «40» — то же самое, что 40."""
+        self.assertEqual(40, notices.normalize_volume("40", DEFAULTS["notice_volume"]))
+
+    def test_непонятное_заменяется_умолчанием(self):
+        """Настройка вспомогательная: ронять из-за неё сохранение формы незачем."""
+        default = DEFAULTS["notice_volume"]
+
+        self.assertEqual(default, notices.normalize_volume("громко", default))
+        self.assertEqual(default, notices.normalize_volume(None, default))
+
+
 class SourceSwitchTest(unittest.TestCase):
     """Выключатели источников: чего человек не хочет слышать."""
 
