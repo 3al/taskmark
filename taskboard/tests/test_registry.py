@@ -63,3 +63,45 @@ class RemoveProjectTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProjectOrderTest(unittest.TestCase):
+    """Список проектов отдаётся по имени, а не в порядке добавления (TASK-201)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        orig_file, orig_dir = registry.PROJECTS_FILE, registry.GLOBAL_DIR
+        registry.PROJECTS_FILE = self.tmp / "projects.json"
+        registry.GLOBAL_DIR = self.tmp
+
+        def restore() -> None:
+            registry.PROJECTS_FILE, registry.GLOBAL_DIR = orig_file, orig_dir
+        self.addCleanup(restore)
+
+    def _names(self) -> list[str]:
+        return [p["name"] for p in registry.list_projects()["projects"]]
+
+    def test_по_имени(self) -> None:
+        for name in ("taskboard", "Imagelib", "alpha", "Zeta", "бета"):
+            registry.register_project(self.tmp / name / "tasks", name=name, activate=False)
+        self.assertEqual(["alpha", "Imagelib", "taskboard", "Zeta", "бета"], self._names())
+
+    def test_регистр_не_влияет(self) -> None:
+        for name in ("b", "A", "a2", "B1"):
+            registry.register_project(self.tmp / name / "tasks", name=name, activate=False)
+        self.assertEqual(["A", "a2", "b", "B1"], self._names())
+
+    def test_файл_реестра_не_переписывается(self) -> None:
+        for name in ("zeta", "alpha"):
+            registry.register_project(self.tmp / name / "tasks", name=name, activate=False)
+        before = registry.PROJECTS_FILE.read_text(encoding="utf-8")
+        registry.list_projects()
+        self.assertEqual(before, registry.PROJECTS_FILE.read_text(encoding="utf-8"))
+
+    def test_активный_сохраняется(self) -> None:
+        for name in ("zeta", "alpha"):
+            registry.register_project(self.tmp / name / "tasks", name=name, activate=False)
+        registry.activate_project("zeta")
+        self.assertEqual("zeta", registry.list_projects()["active"])

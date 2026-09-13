@@ -29,8 +29,15 @@ def _default_name(tasks_dir: Path) -> str:
 
 
 def list_projects() -> dict:
-    """Вернуть реестр целиком."""
-    return _load()
+    """Вернуть реестр целиком; проекты — по имени, без учёта регистра.
+
+    Порядок — только в ответе: файл хранит порядок добавления, и переписывать
+    его ради показа незачем.
+    """
+    data = _load()
+    data["projects"] = sorted(data.get("projects", []),
+                              key=lambda p: (p["name"].casefold(), p["name"]))
+    return data
 
 
 def register_project(tasks_dir: Path, name: str | None = None, activate: bool = True) -> dict:
