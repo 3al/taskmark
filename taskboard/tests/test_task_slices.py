@@ -139,6 +139,17 @@ class EndpointTest(SliceCase):
         self.assertEqual("Иван Петров", result["value"])
         self.assertEqual(["TASK-002", "TASK-001"], [t["id"] for t in result["tasks"]])
 
+    def test_assignee_endpoint(self) -> None:
+        from backend import app as app_module
+
+        self.task("TASK-001", "testing", assignee="Иванов")
+        self.task("TASK-002", "todo", assignee="Петров")
+        with mock.patch.object(app_module, "_ctx",
+                               return_value=(self.tasks, {"pipeline": PIPELINE})):
+            result = app_module.api_task_slice(field="assignee", value="Иванов")
+
+        self.assertEqual(["TASK-001"], [t["id"] for t in result["tasks"]])
+
     def test_unknown_name_is_empty(self) -> None:
         from backend import app as app_module
 
@@ -175,6 +186,18 @@ class ScriptTest(SliceCase):
         self.assertEqual(3, report["total"])
         self.assertEqual(self.ids(), [t["id"] for t in report["tasks"]])
         self.assertEqual("Done", report["tasks"][1]["label"])
+
+    def test_by_assignee(self) -> None:
+        """Срез по исполнителю — тот же флаг, без отдельной ветки."""
+        self.task("TASK-001", "testing", assignee="Иванов")
+        self.task("TASK-002", "todo", assignee="Иванов")
+        self.task("TASK-003", "todo", assignee="~")
+
+        done = self.run_script("--by", "assignee", "Иванов")
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["TASK-002", "TASK-001"],
+                         [t["id"] for t in json.loads(done.stdout)["tasks"]])
 
     def test_unknown_name_is_empty_not_error(self) -> None:
         self.task("TASK-001")

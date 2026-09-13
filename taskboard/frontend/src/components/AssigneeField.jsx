@@ -14,7 +14,10 @@ import { useListKeys } from '../listKeys'
 // Пустой ввод — пустой список: подсказки появляются с началом набора, как в
 // поле эпика и блокирующей задачи. Совпавшее целиком имя список закрывает —
 // это уже не подсказка, а выбор.
-export default function AssigneeField({ value = '', busy = false, onPick }) {
+//
+// Назначенное имя кликабельно, как ключ эпика: клик открывает все задачи этого
+// исполнителя (`onOpen`), а правка переезжает на карандаш рядом.
+export default function AssigneeField({ value = '', busy = false, onPick, onOpen }) {
   const [open, setOpen] = useState(false)
   const [names, setNames] = useState([])
   const [text, setText] = useState('')
@@ -52,9 +55,10 @@ export default function AssigneeField({ value = '', busy = false, onPick }) {
     <span className="relative">
       <button
         type="button"
-        onClick={() => (open ? close() : start())}
+        onClick={() => (value && onOpen ? onOpen(value) : open ? close() : start())}
         disabled={busy}
-        title="Кто занимается задачей на этом этапе"
+        title={value && onOpen ? `Задачи исполнителя ${value}`
+                               : 'Кто занимается задачей на этом этапе'}
         className={`px-1.5 py-px rounded border text-[10px] transition
           hover:brightness-125 disabled:opacity-60
           ${value
@@ -62,6 +66,15 @@ export default function AssigneeField({ value = '', busy = false, onPick }) {
             : 'border-dashed border-zinc-700 text-zinc-400'}`}>
         {value || 'без исполнителя'}
       </button>
+      {value && onOpen && (
+        <button
+          type="button"
+          onClick={() => (open ? close() : start())}
+          disabled={busy}
+          title="Изменить исполнителя"
+          className="ml-1 text-[10px] text-zinc-400 transition hover:text-zinc-200
+            disabled:opacity-60">✎</button>
+      )}
       {open && (
         <>
         {/* Подложка на весь экран: клик мимо формы гасится здесь и дальше не

@@ -35,8 +35,8 @@ export default function EpicModal({ epicKey, onOpenTask, onClose }) {
   const tasks = data?.tasks || []
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto
-                    bg-black/60 p-6" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+         onClick={onClose}>
       <div className="w-full max-w-2xl rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start gap-3 border-b border-zinc-800 px-5 py-4">

@@ -796,6 +796,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onOpe
                     value={task.meta.assignee === '~' ? '' : (task.meta.assignee || '')}
                     busy={assigneeSaving}
                     onPick={pickAssignee}
+                    onOpen={onOpenSlice ? (name) => onOpenSlice('assignee', name) : undefined}
                   />
                 )}
                 {/* Статус — в цвет заголовка своей колонки на доске (ключ `header`):
