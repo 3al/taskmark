@@ -665,7 +665,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # разъехаться с ним, а источник правды — файл
     from_status = current_status(tasks_dir, task_id) or ""
     via, manual = _one_line(via), _one_line(manual)
-    owner = moment_skill(cfg, pipeline, from_status, status)
+    owner = task_moment_skill(cfg, pipeline, task_file, from_status, status)
 
     pending = unmet(move_requirements(cfg, pipeline, from_status, status), task_file)
     blocked = [r for r in pending if r.get("mandatory")]
@@ -820,7 +820,7 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
             "announce": stage_announcement(cfg, pipeline, status, task_file, task_id),
             # Кто ведёт этот момент маршрута: скилл вызывают вместо скрипта, а не
             # после него, поэтому имя звучит там, где агент точно окажется
-            "moment_skill": moment_skill(cfg, pipeline, prev, status),
+            "moment_skill": task_moment_skill(cfg, pipeline, task_file, prev, status),
             # Незаполненное у задачи, которую только что взяли в работу: свой
             # канал от `reminders`, потому что момент противоположный — начало
             "entry_reminders": entry_reminders(task_file, task_id, cfg,
@@ -2724,6 +2724,9 @@ def work_done_status(cfg: dict, pipeline: list[dict]) -> str | None:
 GATE_TEXT = ("этот переход делает скилл {skill}: позовите его — или, если "
              "двигаете вручную, назовите причину: {task} {target} "
              "--manual \"почему\"")
+FOREIGN_VIA_TEXT = ("этот переход делает скилл {skill}, а не {via}: позовите "
+                    "его — или, если двигаете вручную, назовите причину: "
+                    "{task} {target} --manual \"почему\"")
 MANUAL_TEXT = "перевод вручную, мимо скилла {skill}: {reason}"
 START_SKILL = "start-task"
 HANDOFF_SKILL = "handoff-task"
@@ -2776,6 +2779,67 @@ def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
     if there is None or here > there:
         return FINALIZE_SKILL
     return ""
+
+
+# Скиллы, которые ведут моменты маршрута. `--via` с одним из них на чужом
+# моменте — не источник, а подмена: возврат с проверки под `start-task` проходил
+# гейт и терял всё, ради чего возврат ведёт `fix-task`. Скилл вне карты (ревью)
+# момента не подменяет — он сам зовёт скрипт на своём шаге
+ROUTE_SKILLS = (START_SKILL, HANDOFF_SKILL, FIX_SKILL, FINALIZE_SKILL, RELEASE_SKILL)
+
+TRANSITION_LINE_RE = re.compile(
+    r"^- \*\*\d{4}-\d{2}-\d{2} \d{2}:\d{2}\*\* · [^·]+ · "
+    r"(?P<from>[^·→,:«»]+) → (?P<to>[^·→,:«»]+)$")
+
+
+def was_past_work(cfg: dict, pipeline: list[dict], task_path) -> bool:
+    """Уходила ли задача дальше рабочего статуса — по истории переводов.
+
+    Возврат в работу бывает и в два шага: назад в очередь (своего скилла у
+    этого момента нет), а оттуда вход слева — неотличимый по статусам от
+    первого старта. Отличает его история: работу уже сдавали.
+
+    Строки переводов пишут оба пути — скрипт и доска, — а статусы в них названы
+    подписями. Подпись, которой в маршруте нет (статус переименовали), не
+    считается: гадать по ней хуже, чем промолчать.
+    """
+    work = actions_of(cfg, pipeline).get("start")
+    keys = [s["key"] for s in pipeline]
+    if work not in keys:
+        return False
+    here = keys.index(work)
+    index = {}
+    for i, s in enumerate(pipeline):
+        if s.get("offramp"):
+            continue
+        index[str(s["key"]).lower()] = i
+        index[str(s.get("label", s["key"])).strip().lower()] = i
+    try:
+        lines = Path(task_path).read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return False
+    bounds = _section_bounds(lines, NOTES_SECTION)
+    if not bounds:
+        return False
+    for line in lines[bounds[0] + 1:bounds[1]]:
+        m = TRANSITION_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        for name in (m.group("from"), m.group("to")):
+            i = index.get(name.strip().lower())
+            if i is not None and i > here:
+                return True
+    return False
+
+
+def task_moment_skill(cfg: dict, pipeline: list[dict], task_path,
+                      from_status: str | None, target: str) -> str:
+    """Скилл момента с учётом истории задачи: вход в работу после сданной
+    работы — возврат, откуда бы задача ни пришла."""
+    owner = moment_skill(cfg, pipeline, from_status, target)
+    if owner == START_SKILL and task_path and was_past_work(cfg, pipeline, task_path):
+        return FIX_SKILL
+    return owner
 
 
 # Оценка объёма ставится не при заведении задачи (строить её тогда не на чем) и
@@ -3013,16 +3077,23 @@ def transition_gate(tasks_dir: Path, task_id: str, target: str,
     Гейт молчит там, где скилла нет: момент без своего скилла (возврат мимо
     рабочего статуса) и проект, где окружение не развёрнуто.
     """
-    if _one_line(via) or _one_line(manual):
+    via = _one_line(via)
+    if _one_line(manual):
         return ""
     tasks_dir = Path(tasks_dir)
     cfg = load_config(tasks_dir)
     pipeline = pipeline_of(cfg)
     from_status = current_status(tasks_dir, task_id) or ""
-    owner = moment_skill(cfg, pipeline, from_status, target)
+    owner = task_moment_skill(cfg, pipeline, find_task_file(tasks_dir, task_id),
+                              from_status, target)
     if not owner or not skill_deployed(tasks_dir, owner):
         return ""
-    return GATE_TEXT.format(skill=owner, task=task_id.upper(), target=target)
+    if not via:
+        return GATE_TEXT.format(skill=owner, task=task_id.upper(), target=target)
+    if via in ROUTE_SKILLS and via != owner:
+        return FOREIGN_VIA_TEXT.format(skill=owner, via=via,
+                                       task=task_id.upper(), target=target)
+    return ""
 
 
 def skill_deployed(tasks_dir: Path, name: str) -> bool:
