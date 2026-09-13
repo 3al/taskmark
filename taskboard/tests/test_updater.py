@@ -326,6 +326,10 @@ class TestPeriodicCheck(Base):
             check=lambda cfg: calls.append(1))
         time.sleep(0.05)
         stop()
+        # Остановка могла прийти, когда поток уже проснулся, но проверку ещё не
+        # позвал: этот один вызов законно случится после stop(). Снимок берём,
+        # когда он отработал, — дальше вызовов быть не должно
+        time.sleep(0.05)
         after_stop = len(calls)
         time.sleep(0.05)
         self.assertEqual(len(calls), after_stop, "поток продолжает работу после остановки")
