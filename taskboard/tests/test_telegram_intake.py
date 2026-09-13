@@ -312,6 +312,28 @@ class HandleTest(unittest.TestCase):
                          "задача создана второй раз")
         self.assertEqual(len(self.sent), 2, "ответ должен уйти повторно")
 
+    def test_совпавший_update_id_другого_бота_не_считается_дублем(self):
+        msg = message("#задача Сделать X @kostya")
+        self.handle(msg, telegram_token="first-token")
+        (self.tasks / "argv.json").unlink()
+
+        result = self.handle(msg, telegram_token="second-token")
+
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("repeat", result)
+        self.assertTrue((self.tasks / "argv.json").exists(),
+                        "чужой бот должен создать свою задачу")
+
+    def test_старое_плоское_handled_не_создаёт_задачу_повторно(self):
+        known = {"id": "TASK-042", "title": "Сделать X", "project": "Первый"}
+        ts.write_state({"handled": {"5": known}})
+
+        result = self.handle(message("#задача Сделать X @kostya"))
+
+        self.assertTrue(result["repeat"])
+        self.assertFalse((self.tasks / "argv.json").exists())
+        self.assertEqual(known, ts.read_bot_state("t")["handled"]["5"])
+
     def test_разные_сообщения_создают_разные_задачи(self):
         self.handle(message("#задача Первая @kostya", update_id=5))
         first = self.argv()
@@ -376,10 +398,14 @@ class DueFromChatTest(HandleTest):
         self.assertFalse((self.tasks / "argv.json").exists())
 
     def test_due_reaches_creation_script(self):
-        result = self.handle(message("#задача Сделать X @kostya #срок 2026-09-12"))
-        self.assertTrue(result["ok"])
+        # Срок от сегодняшнего дня: зашитая дата уходит в прошлое, и приём
+        # законно отказывает
+        from datetime import date, timedelta
+        due = (date.today() + timedelta(days=7)).isoformat()
+        result = self.handle(message(f"#задача Сделать X @kostya #срок {due}"))
+        self.assertTrue(result["ok"], result)
         argv = self.argv()
-        self.assertEqual("2026-09-12", argv[argv.index("--due") + 1])
+        self.assertEqual(due, argv[argv.index("--due") + 1])
         self.assertEqual("Сделать X", argv[argv.index("-t") + 1])
 
     def test_relative_due_and_remaining_text(self):

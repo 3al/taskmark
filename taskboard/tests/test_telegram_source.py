@@ -17,13 +17,14 @@ from unittest import mock
 from backend import telegram_source as ts
 
 TOKEN = "123:AAH-test"
+OTHER_TOKEN = "456:AAH-other"
 
 
 def update(update_id: int, text: str = "привет", chat_id: int = -100,
            chat_title: str = "Разработка", message_id: int | None = None,
-           username: str = "kostya") -> dict:
+           username: str = "kostya", date: int | None = None) -> dict:
     """Апдейт в том виде, в каком его отдаёт Bot API."""
-    return {
+    raw = {
         "update_id": update_id,
         "message": {
             "message_id": message_id if message_id is not None else update_id,
@@ -32,6 +33,9 @@ def update(update_id: int, text: str = "привет", chat_id: int = -100,
             "from": {"id": 1, "username": username},
         },
     }
+    if date is not None:
+        raw["message"]["date"] = date
+    return raw
 
 
 class Fake:
@@ -155,13 +159,87 @@ class TestCursor(Base):
         seen = []
         ts.poll_once(self.cfg(), handle=seen.append, fetch=fake)
         self.assertEqual([m["update_id"] for m in seen], [5, 6])
-        self.assertEqual(ts.read_state()["offset"], 7)
+        self.assertEqual(ts.read_bot_state(TOKEN)["offset"], 7)
 
     def test_курсор_переживает_перезапуск(self):
-        ts.write_state({"offset": 99})
+        ts.patch_bot_state(TOKEN, offset=99)
         fake = Fake({"ok": True, "result": []})
         ts.poll_once(self.cfg(), handle=lambda m: None, fetch=fake)
         self.assertEqual(fake.calls[0][1]["offset"], 99)
+
+    def test_курсор_другого_бота_не_применяется(self):
+        ts.patch_bot_state(TOKEN, offset=99)
+        fake = Fake({"ok": True, "result": []})
+
+        ts.poll_once(self.cfg(telegram_token=OTHER_TOKEN),
+                     handle=lambda m: None, fetch=fake)
+
+        self.assertEqual(fake.calls[0][1]["offset"], 0)
+
+    def test_возврат_к_прежнему_боту_поднимает_его_курсор(self):
+        ts.patch_bot_state(TOKEN, offset=99)
+        ts.patch_bot_state(OTHER_TOKEN, offset=17)
+        first = Fake({"ok": True, "result": []})
+        second = Fake({"ok": True, "result": []})
+
+        ts.poll_once(self.cfg(telegram_token=OTHER_TOKEN),
+                     handle=lambda m: None, fetch=first)
+        ts.poll_once(self.cfg(), handle=lambda m: None, fetch=second)
+
+        self.assertEqual(first.calls[0][1]["offset"], 17)
+        self.assertEqual(second.calls[0][1]["offset"], 99)
+
+    def test_накопленное_до_переключения_не_разбирается(self):
+        """Бот вернули в общий чат: пока он был отключён, те же сообщения
+        разбирал другой бот, и второй разбор завёл бы задачи дважды."""
+        ts.patch_bot_state(TOKEN, offset=5, skip_before=1000)
+        fake = Fake({"ok": True, "result": [update(5, date=999),
+                                            update(6, date=1000)]})
+        seen = []
+
+        ts.poll_once(self.cfg(), handle=seen.append, fetch=fake)
+
+        self.assertEqual([m["update_id"] for m in seen], [6])
+        self.assertEqual(ts.read_bot_state(TOKEN)["offset"], 7,
+                         "пропущенное подтверждается, а не висит в очереди")
+
+    def test_пропущенное_сообщение_оставляет_чат_в_списке(self):
+        """Чат находят по любому сообщению — в том числе написанному до смены."""
+        ts.patch_bot_state(TOKEN, skip_before=1000)
+        fake = Fake({"ok": True, "result": [update(5, chat_id=-7, chat_title="Новый",
+                                                   date=10)]})
+
+        ts.poll_once(self.cfg(), handle=lambda m: None, fetch=fake)
+
+        self.assertEqual(ts.seen_chats(), [{"id": -7, "title": "Новый"}])
+
+    def test_правка_после_переключения_разбирается(self):
+        """Старое сообщение, исправленное уже после смены, — новое действие."""
+        ts.patch_bot_state(TOKEN, skip_before=1000)
+        raw = {"update_id": 5, "edited_message": {
+            "message_id": 1, "text": "привет", "date": 10, "edit_date": 1001,
+            "chat": {"id": -100, "title": "Разработка"}, "from": {"id": 1}}}
+        seen = []
+
+        ts.poll_once(self.cfg(), handle=seen.append,
+                     fetch=Fake({"ok": True, "result": [raw]}))
+
+        self.assertEqual([m["update_id"] for m in seen], [5])
+
+    def test_без_отметки_переключения_разбирается_всё(self):
+        fake = Fake({"ok": True, "result": [update(5, date=10)]})
+        seen = []
+
+        ts.poll_once(self.cfg(), handle=seen.append, fetch=fake)
+
+        self.assertEqual(len(seen), 1)
+
+    def test_токены_не_попадают_в_файл_состояния(self):
+        ts.patch_bot_state(TOKEN, offset=99)
+
+        raw = ts.STATE_FILE.read_text(encoding="utf-8")
+
+        self.assertNotIn(TOKEN, raw)
 
     def test_один_апдейт_не_выдаётся_дважды(self):
         fake = Fake({"ok": True, "result": [update(5)]},
@@ -173,16 +251,16 @@ class TestCursor(Base):
         self.assertEqual(fake.calls[1][1]["offset"], 6)
 
     def test_ошибка_сети_не_двигает_курсор(self):
-        ts.write_state({"offset": 10})
+        ts.patch_bot_state(TOKEN, offset=10)
         fake = Fake(urllib.error.URLError("сеть отвалилась"))
         ts.poll_once(self.cfg(), handle=lambda m: None, fetch=fake)
-        self.assertEqual(ts.read_state()["offset"], 10)
+        self.assertEqual(ts.read_bot_state(TOKEN)["offset"], 10)
 
     def test_без_обработчика_курсор_стоит(self):
         """Слой источника один, обработчика ещё нет — сообщения не теряем."""
         fake = Fake({"ok": True, "result": [update(5)]})
         ts.poll_once(self.cfg(), handle=None, fetch=fake)
-        self.assertEqual(ts.read_state().get("offset", 0), 0)
+        self.assertEqual(ts.read_bot_state(TOKEN).get("offset", 0), 0)
 
     def test_упавший_обработчик_не_держит_очередь(self):
         """Иначе одно неудачное сообщение навсегда закрывает вход."""
@@ -191,7 +269,7 @@ class TestCursor(Base):
 
         fake = Fake({"ok": True, "result": [update(5)]})
         ts.poll_once(self.cfg(), handle=explode, fetch=fake)
-        self.assertEqual(ts.read_state()["offset"], 6)
+        self.assertEqual(ts.read_bot_state(TOKEN)["offset"], 6)
 
 
 class TestComplaints(Base):

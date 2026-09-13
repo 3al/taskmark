@@ -293,17 +293,17 @@ def _same(name: str, allowed: list[str]) -> bool:
     return any(item.strip().lower() == needle for item in allowed)
 
 
-def _remember(update_id, done: dict) -> None:
-    handled = telegram_source.read_state().get("handled") or {}
+def _remember(update_id, done: dict, tok: str) -> None:
+    handled = telegram_source.read_bot_state(tok).get("handled") or {}
     handled[str(update_id)] = done
     if len(handled) > MEMORY:
         for key in list(handled)[:-MEMORY]:
             handled.pop(key, None)
-    telegram_source.patch_state(handled=handled)
+    telegram_source.patch_bot_state(tok, handled=handled)
 
 
-def _recall(update_id) -> dict | None:
-    handled = telegram_source.read_state().get("handled") or {}
+def _recall(update_id, tok: str) -> dict | None:
+    handled = telegram_source.read_bot_state(tok).get("handled") or {}
     return handled.get(str(update_id))
 
 
@@ -356,7 +356,8 @@ def handle(message: dict, cfg: dict | None = None,
         _send(reply, message, parsed["error"])
         return {"ok": False, "error": parsed["error"]}
 
-    known = _recall(message.get("update_id"))
+    tok = telegram_source.token(cfg)
+    known = _recall(message.get("update_id"), tok)
     if known:
         # То же самое сообщение уже разбирали: задача есть, а вот ответ мог
         # не уйти — падение между созданием и ответом выглядит для человека
@@ -413,7 +414,7 @@ def handle(message: dict, cfg: dict | None = None,
     # открыт (служба — `notices`, канал у неё общий с правками файлов)
     notices.emit("task_from_chat", f"{done['id']} · {done['title']}",
                  task=done["id"], project=done["project"])
-    _remember(message.get("update_id"), done)
+    _remember(message.get("update_id"), done, tok)
     _send(reply, message, _reply_text(done["id"], done["title"], done["project"]))
     return {"ok": True, **done}
 

@@ -37,6 +37,14 @@ class SavedSettingsTest(unittest.TestCase):
         config.GLOBAL_DIR = Path(self._tmp.name)
         config.GLOBAL_CONFIG_FILE = Path(self._tmp.name) / "config.json"
         self.addCleanup(self._restore)
+        source_patches = [
+            mock.patch.object(telegram_source, "GLOBAL_DIR", config.GLOBAL_DIR),
+            mock.patch.object(telegram_source, "STATE_FILE",
+                              config.GLOBAL_DIR / "telegram.json"),
+        ]
+        for source_patch in source_patches:
+            source_patch.start()
+            self.addCleanup(source_patch.stop)
         patch = mock.patch.object(app_module.registry, "get_active", return_value=None)
         patch.start()
         self.addCleanup(patch.stop)
@@ -83,6 +91,75 @@ class SavedSettingsTest(unittest.TestCase):
         with mock.patch.object(app_module, "restart_telegram_poller") as restart:
             self.save({"telegram": True, "telegram_token": "123:AAH"})
         restart.assert_called_once()
+
+    def test_смена_токена_привязывает_плоское_состояние_к_старому_боту(self):
+        old_token = "123:old"
+        new_token = "456:new"
+        known = {"5": {"id": "TASK-042"}}
+        with mock.patch.object(app_module, "restart_telegram_poller"):
+            self.save({"telegram": True, "telegram_token": old_token})
+            telegram_source.write_state({"offset": 99, "handled": known})
+
+            self.save({"telegram_token": new_token})
+
+        self.assertEqual(99, telegram_source.read_bot_state(old_token)["offset"])
+        self.assertEqual(known,
+                         telegram_source.read_bot_state(old_token)["handled"])
+        self.assertEqual({"skip_before": mock.ANY},
+                         telegram_source.read_bot_state(new_token))
+
+    def test_смена_токена_отмечает_момент_у_нового_бота(self):
+        """Всё, что копилось у бота до переключения на него, разобрал другой."""
+        with mock.patch.object(app_module, "restart_telegram_poller"), \
+                mock.patch.object(telegram_source.time, "time", return_value=1234.9):
+            self.save({"telegram": True, "telegram_token": "123:old"})
+            telegram_source.patch_bot_state("456:new", offset=17)
+            self.save({"telegram_token": "456:new"})
+
+        state = telegram_source.read_bot_state("456:new")
+        self.assertEqual(1234, state["skip_before"])
+        self.assertEqual(17, state["offset"], "курсор возвращённого бота не теряется")
+        self.assertNotIn("skip_before", telegram_source.read_bot_state("123:old"))
+
+    def test_первое_включение_ничего_не_пропускает(self):
+        """Другого бота не было — сообщения до сохранения токена некому было разобрать."""
+        with mock.patch.object(app_module, "restart_telegram_poller"):
+            self.save({"telegram": True, "telegram_token": "123:first"})
+
+        self.assertNotIn("skip_before", telegram_source.read_bot_state("123:first"))
+
+    def test_тот_же_токен_ничего_не_пропускает(self):
+        """Форма шлёт токен при любом сохранении — это не переключение."""
+        with mock.patch.object(app_module, "restart_telegram_poller"):
+            self.save({"telegram": True, "telegram_token": "123:same"})
+            self.save({"telegram_token": "123:same", "telegram_tag": "задача"})
+
+        self.assertNotIn("skip_before", telegram_source.read_bot_state("123:same"))
+
+
+class PollerRestartTest(unittest.TestCase):
+    """Одна итерация поллера использует один снимок Telegram-настроек."""
+
+    def test_обработчик_получает_токен_своего_поллера(self):
+        cfg = {"telegram": True, "telegram_token": "old-token"}
+        captured = {}
+
+        def start_polling(poller_cfg, handle=None, **kwargs):
+            captured["cfg"] = poller_cfg
+            captured["handle"] = handle
+            return lambda: None
+
+        message = {"update_id": 5}
+        with mock.patch.object(app_module, "load_global_config", return_value=cfg), \
+                mock.patch.object(telegram_source, "start_polling",
+                                  side_effect=start_polling), \
+                mock.patch.object(app_module.telegram_intake, "handle") as handle, \
+                mock.patch.object(app_module, "_stop_telegram_loop", None):
+            app_module.restart_telegram_poller()
+            captured["handle"](message)
+
+        self.assertIs(captured["cfg"], cfg)
+        handle.assert_called_once_with(message, cfg=cfg)
 
 
 class CheckTokenTest(unittest.TestCase):

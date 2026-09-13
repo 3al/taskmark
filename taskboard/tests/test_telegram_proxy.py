@@ -9,10 +9,12 @@
 import base64
 import socket
 import ssl
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+from pathlib import Path
 from unittest import mock
 from urllib.parse import unquote
 
@@ -20,6 +22,22 @@ from backend import telegram_source as ts
 from backend.config import DEFAULTS, TELEGRAM_KEYS
 
 TOKEN = "123:AAH-test"
+
+
+def setUpModule():
+    """Файл состояния — во временную папку на весь модуль.
+
+    Поллер здесь зовут ради прокси и адреса, но чтение очереди пишет состояние:
+    плоский формат старых версий переезжает под отпечаток токена. Без подмены
+    настоящие курсор и память обработанных уезжали под тестовый токен.
+    """
+    tmp = tempfile.TemporaryDirectory()
+    unittest.addModuleCleanup(tmp.cleanup)
+    root = Path(tmp.name)
+    for patch in (mock.patch.object(ts, "GLOBAL_DIR", root),
+                  mock.patch.object(ts, "STATE_FILE", root / "telegram.json")):
+        patch.start()
+        unittest.addModuleCleanup(patch.stop)
 
 
 class TestРазборАдреса(unittest.TestCase):

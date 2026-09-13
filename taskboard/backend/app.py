@@ -465,6 +465,15 @@ def api_save_config(body: ConfigIn) -> dict:
     tasks_dir = Path(proj["tasks_dir"]) if proj else None
     old_cfg = load_project_config(tasks_dir) if tasks_dir else load_global_config()
 
+    # Плоское состояние старых версий принадлежит прежнему боту. Привязываем
+    # его до записи нового токена, иначе смена токена унаследует чужой курсор.
+    # Боту, на которого переключились, отмечаем момент: накопленное в его
+    # очереди в общем чате уже разобрал прежний бот
+    if "telegram_token" in updates:
+        old_token = str(old_cfg.get("telegram_token") or "")
+        telegram_source.migrate_legacy_state(old_token)
+        telegram_source.mark_switch(old_token, str(updates["telegram_token"] or ""))
+
     # Настройки проекта (жизненный цикл, имена артефактов) пишем в сам проект,
     # свойства инструмента (порт, тема) — в глобальный конфиг
     project_updates = {k: v for k, v in updates.items() if k in PROJECT_KEYS}
@@ -1410,7 +1419,7 @@ def restart_telegram_poller() -> None:
     _due_state.clear()
     cfg = load_global_config()
     _stop_telegram_loop = telegram_source.start_polling(
-        cfg, handle=lambda message: telegram_intake.handle(message),
+        cfg, handle=lambda message: telegram_intake.handle(message, cfg=cfg),
         # Попутчики цикла — наблюдатель за статусами и напоминание о сроке:
         # своих таймеров им не нужно, а состояние переживает перезапуск
         # поллера — иначе сохранение настроек считалось бы первым проходом
@@ -1472,9 +1481,10 @@ def _startup() -> None:
     _stop_update_loop = updater.start_periodic_check(
         cfg, check=lambda c: updater.check_and_notify(c, ROOT_DIR))
     # Задачи из чата: поллер живёт тем же способом, что и проверка обновлений —
-    # потоком-демоном внутри уже работающего сервера. Конфиг обработчик читает
-    # сам на каждом сообщении: привязку чатов и свой ник человек правит в
-    # настройках, и ждать перезапуска ради них незачем
+    # потоком-демоном внутри уже работающего сервера. Опрос и обработчик держат
+    # один снимок конфига: иначе остановленный поллер мог бы записать последнюю
+    # пачку старого бота под уже новый токен. Сохранение любой Telegram-настройки
+    # перезапускает поллер, поэтому остальные поля тоже доезжают сразу
     restart_telegram_poller()
 
 

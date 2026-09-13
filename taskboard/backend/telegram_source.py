@@ -21,11 +21,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import json
 import socket
 import ssl
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Callable
@@ -55,6 +57,10 @@ USER_AGENT = "taskboard"
 # хранит только изменённое пользователем, и служебное состояние заморозило бы
 # в нём дефолты поставки
 STATE_FILE = GLOBAL_DIR / "telegram.json"
+
+# Курсор и дедупликация относятся к конкретной очереди бота. Сам токен в
+# служебное состояние не пишем: ключом служит необратимый отпечаток.
+BOT_STATE_KEYS = ("offset", "handled")
 
 # Чаты, которые бот видел с момента запуска. Нужны настройкам: у групп id —
 # отрицательное число вида -1001234567890, и заставлять человека искать его
@@ -144,6 +150,72 @@ def patch_state(**changes) -> None:
     state = read_state()
     state.update(changes)
     write_state(state)
+
+
+def _bot_key(tok: str) -> str:
+    """Стабильный ключ очереди без сохранения секретного токена."""
+    return hashlib.sha256(tok.strip().encode("utf-8")).hexdigest()
+
+
+def migrate_legacy_state(tok: str) -> None:
+    """Привязать прежние плоские `offset`/`handled` к известному боту.
+
+    Миграция ленивая: существующая установка получает новую схему при первом
+    чтении очереди. При смене токена настройки вызывают её со *старым* токеном
+    до записи нового — иначе старый курсор снова достался бы новому боту.
+
+    Старый формат не хранит владельца, поэтому ручная замена токена прямо в
+    `config.json` до первого запуска новой версии необратимо теряет эту связь.
+    Поддерживаемый путь через настройки сохраняет прежний токен для миграции.
+    """
+    tok = tok.strip()
+    if not tok:
+        return
+    state = read_state()
+    legacy = {name: state[name] for name in BOT_STATE_KEYS if name in state}
+    if not legacy:
+        return
+    bots = dict(state.get("bots") or {})
+    current = dict(bots.get(_bot_key(tok)) or {})
+    for name, value in legacy.items():
+        current.setdefault(name, value)
+        state.pop(name, None)
+    bots[_bot_key(tok)] = current
+    state["bots"] = bots
+    write_state(state)
+
+
+def read_bot_state(tok: str) -> dict:
+    """Курсор и дедупликация одного бота; плоский формат мигрирует на месте."""
+    migrate_legacy_state(tok)
+    return dict((read_state().get("bots") or {}).get(_bot_key(tok)) or {})
+
+
+def patch_bot_state(tok: str, **changes) -> None:
+    """Дописать состояние одного бота, не задевая другие очереди и чаты."""
+    migrate_legacy_state(tok)
+    state = read_state()
+    bots = dict(state.get("bots") or {})
+    current = dict(bots.get(_bot_key(tok)) or {})
+    current.update(changes)
+    bots[_bot_key(tok)] = current
+    state["bots"] = bots
+    write_state(state)
+
+
+def mark_switch(old_tok: str, new_tok: str) -> None:
+    """Запомнить у бота, на которого переключились, момент переключения.
+
+    В общем чате сообщения видят оба бота: пока работал другой, очередь этого
+    копила те же сообщения, и их разбор завёл бы задачи второй раз. Всё, что
+    отправлено до переключения, этот бот подтверждает без разбора.
+
+    Первое включение — не переключение: другого бота не было, и сообщения,
+    написанные до сохранения токена, разобрать больше некому.
+    """
+    old_tok, new_tok = old_tok.strip(), new_tok.strip()
+    if old_tok and new_tok and old_tok != new_tok:
+        patch_bot_state(new_tok, skip_before=int(time.time()))
 
 
 def seen_chats() -> list[dict]:
@@ -568,6 +640,9 @@ def _message_of(raw: dict) -> dict | None:
         "username": sender.get("username") or "",
         "sender_name": name,
         "sender_id": sender.get("id"),
+        # Момент последнего действия с сообщением: правка старого сообщения —
+        # новое действие, и судить о нём надо по времени правки
+        "date": message.get("edit_date") or message.get("date"),
     }
 
 
@@ -691,10 +766,11 @@ def poll_once(cfg: dict, handle: Callable | None = None,
     """
     if not enabled(cfg):
         return 0
-    state = read_state()
+    tok = token(cfg)
+    state = read_bot_state(tok)
     offset = int(state.get("offset") or 0)
     try:
-        messages = get_updates(token(cfg), offset, fetch, proxy(cfg),
+        messages = get_updates(tok, offset, fetch, proxy(cfg),
                                api_root(cfg))
     except (TelegramError, urllib.error.URLError, OSError, ValueError) as exc:
         # Сеть отвалилась, прокси не принял или API ответил отказом — курсор не
@@ -706,16 +782,22 @@ def poll_once(cfg: dict, handle: Callable | None = None,
         # Слой источника есть, разбора ещё нет: подтверждать нечего.
         # Сообщения подождут в очереди Telegram (около суток)
         return 0
+    skip_before = int(state.get("skip_before") or 0)
     done = 0
     for message in messages:
-        try:
-            handle(message)
-        except Exception:  # noqa: BLE001 — разбор упал: одно сообщение не должно
-            pass          # навсегда закрыть вход, поэтому курсор всё равно двигаем
+        date = message.get("date")
+        # Отправлено до переключения на этого бота — разобрал другой (см.
+        # mark_switch). Курсор двигаем, иначе очередь отдавала бы его снова
+        stale = isinstance(date, int) and date < skip_before
+        if not stale:
+            try:
+                handle(message)
+            except Exception:  # noqa: BLE001 — разбор упал: одно сообщение не должно
+                pass          # навсегда закрыть вход, поэтому курсор всё равно двигаем
+            done += 1
         update_id = message.get("update_id")
         if isinstance(update_id, int):
-            patch_state(offset=update_id + 1)
-        done += 1
+            patch_bot_state(tok, offset=update_id + 1)
     return done
 
 
