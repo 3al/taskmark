@@ -201,3 +201,20 @@ class ApprovedCompositionTest(ReleaseSkillText):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class NotesSourceTest(ReleaseSkillText):
+    """Файл заметок не собирается из вывода команды через обработчик (TASK-235).
+
+    На Windows принимающий процесс читает пайп в кодировке локали, и UTF-8 скрипта
+    превращается в мусор, который ни на одном шаге не падает и уезжает в выпуск.
+    """
+
+    def test_сборка_называет_источник_текстов(self) -> None:
+        body = self.step_with("Собрать changelog")
+        self.assertIn("из файлов задач", body)
+
+    def test_сборка_запрещает_пайп_в_обработчик(self) -> None:
+        body = self.step_with("Собрать changelog")
+        self.assertIn("пайп", body)
+        self.assertIn("UTF-8", body)

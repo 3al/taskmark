@@ -153,6 +153,69 @@ class TestBlockers(unittest.TestCase):
         self.assertFalse(self.tool.dist_is_fresh(self.root / "src", self.root / "dist"))
 
 
+class TestGarbledNotes(unittest.TestCase):
+    """Заметки с неверной перекодировкой выпуск не проходят.
+
+    Поломка тихая: UTF-8, прочитанный как cp1251, — это всё ещё текст, и ни один
+    шаг выпуска на нём не падает. Отказ до `--apply` дешевле отката выпуска.
+    """
+
+    CLEAN = (
+        "### Исправлено\n\n"
+        "- Запуск при входе в систему — больше не теряется после обновления.\n"
+        "- Сёмга, «ЧЁ», Ёж, ёлка и РЁВ: редкие сочетания букв — не повод отказывать.\n"
+        "- Раздел «Р», версия 1.2 — С уважением, Taskmark.\n"
+    )
+
+    def setUp(self):
+        self.tool = _load()
+
+    def _garble(self, text):
+        return text.encode("utf-8").decode("cp1251", errors="replace")
+
+    def test_обычный_русский_текст_чист(self):
+        self.assertEqual(self.tool.garbled_fragments(self.CLEAN), [])
+
+    def test_текст_без_кириллицы_чист(self):
+        self.assertEqual(self.tool.garbled_fragments("- Fixed: autostart — ok «x»\n"), [])
+
+    def test_перекодированный_текст_находится(self):
+        found = self.tool.garbled_fragments(self._garble(self.CLEAN))
+        self.assertTrue(found)
+        self.assertIn("Р—Р°РїСѓСЃРє", found)
+
+    def test_фрагмент_из_симптома(self):
+        self.assertTrue(self.tool.garbled_fragments(
+            "- Р—Р°РїСѓСЃРє РїСЂРё РІС…РѕРґРµ РІ СЃРёСЃС‚РµРјСѓ\n"))
+
+    def test_испорченная_строка_среди_чистых(self):
+        text = self.CLEAN + "- " + self._garble("Уведомления тише") + "\n"
+        self.assertTrue(self.tool.garbled_fragments(text))
+
+    def test_выпуск_отказывает_ничего_не_трогая(self):
+        from unittest import mock
+
+        def untouchable(*_args, **_kwargs):
+            raise AssertionError("выпуск тронул репозиторий при испорченных заметках")
+
+        with mock.patch.object(self.tool, "blockers", return_value=[]), \
+                mock.patch.object(self.tool, "insert_section", untouchable), \
+                mock.patch.object(self.tool, "_git", untouchable), \
+                mock.patch.object(self.tool.Path, "write_text", untouchable):
+            result = self.tool.apply("patch", self._garble(self.CLEAN), ["TASK-001"])
+        self.assertFalse(result["ok"])
+        self.assertIn("кодировк", result["error"])
+
+    def test_отказ_перечисляет_и_прочие_преграды(self):
+        from unittest import mock
+
+        with mock.patch.object(self.tool, "blockers", return_value=["грязное дерево"]):
+            result = self.tool.apply("patch", self._garble(self.CLEAN), [])
+        self.assertFalse(result["ok"])
+        self.assertIn("кодировк", result["error"])
+        self.assertIn("грязное дерево", result["error"])
+
+
 class TestCheckOutput(unittest.TestCase):
     """`--check` отдаёт json и ничего не меняет."""
 

@@ -200,6 +200,40 @@ def create_github_release(tag: str, title: str, notes_path: Path) -> dict:
     return {"ok": True}
 
 
+# Слово без ASCII: мусор перекодировки не содержит пробелов и латиницы, поэтому
+# проверяется по словам. U+FFFD — след байта, которого в cp1251 нет вовсе
+_NON_ASCII_RUN = re.compile(r"[^\x00-\x7f�]+")
+_MEANINGFUL = re.compile(r"[Ѐ-ӿ -⁯«»]")
+
+
+def garbled_fragments(text: str) -> list[str]:
+    """Слова, похожие на UTF-8, прочитанный как cp1251: «Р—Р°РїСѓСЃРє».
+
+    Признак — обратимость: слово кодируется в cp1251 и эти байты разбираются
+    как строгий UTF-8 в кириллицу или типографику. Обычный русский текст так не
+    разбирается: буквы cp1251 лежат в 0xC0–0xFF, и за ведущим байтом UTF-8 не
+    идёт продолжение. Поэтому редкие сочетания букв ложных срабатываний не дают.
+    """
+    found: list[str] = []
+    for run in _NON_ASCII_RUN.findall(text):
+        try:
+            decoded = run.encode("cp1251").decode("utf-8")
+        except UnicodeError:
+            continue
+        if decoded != run and _MEANINGFUL.search(decoded) and run not in found:
+            found.append(run)
+    return found
+
+
+def notes_problems(notes: str) -> list[str]:
+    """Что в тексте заметок мешает выпуску. Пока одно — испорченная кодировка."""
+    fragments = garbled_fragments(notes)
+    if not fragments:
+        return []
+    sample = ", ".join(f"«{f}»" for f in fragments[:3])
+    return [f"текст заметок испорчен перекодировкой (UTF-8 прочитан как cp1251): {sample}"]
+
+
 def blockers() -> list[str]:
     """Что мешает выпускать прямо сейчас. Список, а не первое встреченное.
 
@@ -253,7 +287,9 @@ def apply(bump: str, notes: str, tasks: list[str]) -> dict:
     и решение остаётся за человеком (скилл спрашивает и зовёт `--publish`).
     """
     version = next_version(current_version(), bump)
-    stoppers = blockers()
+    # Испорченный текст ни на одном шаге не падает и уезжает в тег и манифест —
+    # поэтому это преграда, а не предупреждение
+    stoppers = notes_problems(notes) + blockers()
     if stoppers:
         return {"ok": False, "error": "; ".join(stoppers)}
 
