@@ -14,6 +14,8 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   python tasks/set_status.py TASK-004 development   # то же без лаунчера py
   py tasks/set_status.py TASK-004 testing --agent "Claude Opus 5"
   py tasks/set_status.py TASK-004 completed --position end
+  py tasks/set_status.py TASK-004 --position 2         # второй в своём разделе
+  py tasks/set_status.py TASK-004 --after TASK-002     # сразу за TASK-002
   py tasks/set_status.py TASK-004 cancelled --reason "дублирует TASK-002"
   py tasks/set_status.py --list             # пайплайн статусов проекта (JSON)
   py tasks/set_status.py TASK-004 --targets # куда можно двинуть задачу (JSON)
@@ -47,6 +49,9 @@ Python из Microsoft Store), `python3` (macOS/Linux).
                           При --note — своя модель, обязательна
   --note ТЕКСТ            Комментарий: время системное, строка — в конец секции
   --position start|end    Куда вставить в целевом разделе (по умолчанию start)
+  --position N | --after TASK-NNN
+                          Без статуса: переставить внутри раздела — на место N
+                          (нумерация --queue) или сразу за названной задачей
   --block TASK-NNN        Задача ждёт другую (правит blocked_by и blocks у обеих)
   --unblock [TASK-NNN]    Снять блокировку; без значения — все
   --pause ПРИЧИНА         Пауза с причиной; статус задачи при этом не меняется
@@ -1218,6 +1223,96 @@ def queue(tasks_dir: Path, limit: int = 5) -> dict:
     out["total"] = len(tasks)
     out["tasks"] = tasks if limit <= 0 else tasks[:limit]
     return out
+
+
+def reorder(tasks_dir: Path, task_id: str, position: str | None = None,
+            after: str | None = None) -> dict:
+    """Переставить задачу внутри её раздела доски.
+
+    Перестановка — не переход: `status:`, дата и исполнитель в строке и
+    хронология задачи не меняются, гейт источника её не касается.
+
+    position — `start`, `end` или номер места с единицы, в той же нумерации,
+               что печатает `--queue`: подразделы ### считаются насквозь, и
+               задача встаёт на место той, что сейчас занимает этот номер
+               (в её подраздел).
+    after    — встать сразу за названной задачей того же раздела, внутри её
+               подраздела: хвост подраздела не перескакивает через следующий ###.
+    """
+    if (position is None) == (after is None):
+        return {"ok": False, "error": "укажите одно: --position или --after"}
+
+    tasks_dir = Path(tasks_dir)
+    cfg = load_config(tasks_dir)
+    board = tasks_dir / cfg.get("board_file", "board.md")
+    if not board.is_file():
+        return {"ok": False, "error": f"Файл доски не найден: {board}"}
+    lines = board.read_text(encoding="utf-8").splitlines()
+    fenced = _in_fence(lines)
+
+    def entries(section_start: int, section_end: int) -> list[tuple[int, str]]:
+        return [(i, m.group("id")) for i in range(section_start + 1, section_end)
+                if not fenced[i] and (m := _ENTRY_RE.match(lines[i]))]
+
+    def section_of(idx: int) -> str | None:
+        for i in range(idx, -1, -1):
+            m = re.match(r"^##\s+(.*)$", lines[i])
+            if m and not fenced[i]:
+                return m.group(1).strip()
+        return None
+
+    src_idx = next((i for i, line in enumerate(lines)
+                    if not fenced[i] and (m := _ENTRY_RE.match(line))
+                    and m.group("id") == task_id), None)
+    section = section_of(src_idx) if src_idx is not None else None
+    bounds = _section_bounds(lines, section) if section else None
+    if bounds is None:
+        return {"ok": False, "error": f"{task_id} не найден на доске"}
+    others = [e for e in entries(*bounds) if e[1] != task_id]
+
+    if after is not None:
+        if after == task_id:
+            return {"ok": False, "error": f"{task_id} не может встать за самой собой"}
+        if after not in [tid for _, tid in others]:
+            where = next((section_of(i) for i, line in enumerate(lines)
+                          if not fenced[i] and (m := _ENTRY_RE.match(line))
+                          and m.group("id") == after), None)
+            if where:
+                return {"ok": False,
+                        "error": f"{after} лежит в разделе «{where}», а {task_id} — "
+                                 f"в «{section}». Перестановка — внутри раздела; "
+                                 f"перенос в другой раздел — смена статуса"}
+            return {"ok": False, "error": f"{after} не найден на доске"}
+        slot = [tid for _, tid in others].index(after) + 1
+    elif position in ("start", "end"):
+        slot = 0 if position == "start" else len(others)
+    else:
+        total = len(others) + 1
+        try:
+            number = int(str(position).strip())
+        except ValueError:
+            number = 0
+        if not 1 <= number <= total:
+            return {"ok": False,
+                    "error": f"место {position!s} вне раздела «{section}»: "
+                             f"в нём {total} задач — номер от 1 до {total}, "
+                             f"либо start / end"}
+        slot = number - 1
+
+    # Точка вставки считается до изъятия строки, поэтому сдвиг учитывается явно.
+    # Встать на место задачи — перед её строкой; в конец — за последней
+    if slot < len(others):
+        insert_at = others[slot][0]
+    else:
+        insert_at = others[-1][0] + 1 if others else src_idx
+    lines.insert(insert_at, lines[src_idx])
+    lines.pop(src_idx + 1 if insert_at <= src_idx else src_idx)
+
+    _add_placeholder_if_empty(lines, section)
+    _tidy_section(lines, section)
+    board.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return {"ok": True, "task": task_id, "section": section,
+            "position": slot + 1, "total": len(others) + 1}
 
 
 def _section_text(lines: list[str], name: str) -> str | None:
@@ -3213,8 +3308,12 @@ def main() -> None:
                         help="Дописать комментарий (время — системное, строка — в конец)")
     parser.add_argument("--agent", default=None,
                         help="Кто меняет статус (попадёт в строку доски); при --note — модель")
-    parser.add_argument("--position", choices=["start", "end"], default="start",
-                        help="Позиция в целевом разделе (default: start)")
+    parser.add_argument("--position", metavar="start|end|N", default=None,
+                        help="Место в разделе: при смене статуса — start (по умолчанию) "
+                             "или end; без статуса — перестановка на start, end или "
+                             "номер из --queue")
+    parser.add_argument("--after", metavar="TASK-NNN", default=None,
+                        help="Переставить задачу сразу за названной в том же разделе")
     parser.add_argument("--force", action="store_true",
                         help="Взять в работу стоящую задачу (блокировка/пауза)")
     parser.add_argument("--reason", default=None, metavar="ПРИЧИНА",
@@ -3468,6 +3567,25 @@ def main() -> None:
     # описывает **её** («переведена в …»), поэтому пишется только после того, как
     # переход состоялся: при отказе гейта строка оставалась в файле, и история
     # задачи начинала врать о событии, которого не было
+    # Перестановка внутри раздела — не переход: гейт источника, статус и
+    # хронология её не касаются. Номер места и --after — только про раздел,
+    # где задача уже лежит, поэтому со сменой статуса они не сочетаются
+    if args.status and (args.after is not None
+                        or args.position not in (None, "start", "end")):
+        parser.error("номер места и --after переставляют задачу внутри её раздела — "
+                     "сначала смените статус, затем переставьте отдельным вызовом")
+    if not args.status and (args.position is not None or args.after is not None):
+        if not args.task_id:
+            parser.error("нужен TASK-NNN для --position / --after")
+        moved = reorder(tasks_dir, args.task_id, position=args.position, after=args.after)
+        if not moved.get("ok"):
+            print(f"[ERROR] {moved.get('error')}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[OK] {moved['task']}: место в разделе «{moved['section']}» — "
+              f"{moved['position']} из {moved['total']}")
+        if args.note is None:
+            return
+
     if args.note is not None and not args.status:
         if not args.task_id:
             parser.error("нужен TASK-NNN для --note")
@@ -3492,7 +3610,7 @@ def main() -> None:
         sys.exit(1)
 
     result = set_status(tasks_dir, args.task_id, args.status,
-                        agent=args.agent, position=args.position, force=args.force,
+                        agent=args.agent, position=args.position or "start", force=args.force,
                         reason=args.reason, via=args.via, manual=args.manual)
 
     if not result.get("ok"):
