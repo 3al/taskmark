@@ -124,7 +124,7 @@ export function splitSections(body, sections) {
 // query — активный поиск: совпадения подсвечиваются прямо в тексте задачи.
 // onOpenTask — переход к другой задаче (номер блокера кликабелен),
 // onChanged — простой поменялся: доске нужно перечитать карточки
-export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onChanged,
+export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onOpenSlice, onChanged,
                                     onCopy, onBack, backTo, onClose }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
@@ -804,9 +804,15 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onCha
                 статус: <span className={style.header}>{task.meta.status || '—'}</span> · создана: {task.meta.created || '—'}
                 {/* Автор — рядом с датой создания: оба отвечают на вопрос
                     происхождения задачи. У заведённых до появления поля его
-                    нет — тогда молчим, а не показываем прочерк на пустом месте */}
+                    нет — тогда молчим, а не показываем прочерк на пустом месте.
+                    Имя кликабельно: открывает все задачи этого автора */}
                 {task.meta.author && task.meta.author !== '~' && (
-                  <> · автор: <span className="text-zinc-300">{task.meta.author}</span></>
+                  <> · автор: <button
+                    type="button"
+                    onClick={() => onOpenSlice?.('author', task.meta.author)}
+                    className="text-zinc-300 transition hover:text-zinc-100 hover:underline"
+                    title={`Задачи автора ${task.meta.author}`}
+                  >{task.meta.author}</button></>
                 )}
                 </span>
               </div>

@@ -1127,24 +1127,34 @@ def epics(tasks_dir: Path) -> list[dict]:
     return out
 
 
-def epic_slice(tasks_dir: Path, key: str) -> dict:
-    """Состав эпика: {epic, name, total, tasks: [{id, status, label, title, file}]}.
+# Имя поля frontmatter: всё прочее сопоставилось бы с чужой строкой шапки
+_FIELD_RE = re.compile(r"^[A-Za-z_][\w-]*$")
 
-    Порядок — **пайплайна проекта**, а не номера задачи: состав читают как
-    маршрут, по которому эпик едет. Съезды (отмена) идут за терминальным
-    статусом, статус вне пайплайна — следом: молча прятать задачу, у которой
-    статус выключили из настроек, нельзя, но места в маршруте у неё уже нет.
 
-    Пустой ключ задач без эпика не собирает: `epic: ~` — это «эпика нет».
+def field_slice(tasks_dir: Path, field: str, value: str) -> dict:
+    """Срез задач по значению поля: {field, value, total, tasks: [{id, status, label, title, file}]}.
+
+    Зеркало `backend/task_slices.py`: окно доски и скрипт показывают один
+    состав. Поле — параметр: автор, исполнитель и эпик отбираются одним
+    механизмом.
+
+    Порядок — **пайплайна проекта**, а не номера задачи: список читают как
+    маршрут. Съезды (отмена) идут за терминальным статусом, статус вне
+    пайплайна — следом: молча прятать задачу, у которой статус выключили из
+    настроек, нельзя, но места в маршруте у неё уже нет.
+
+    Пустое значение задач без значения не собирает: `author: ~` — это «автора
+    нет». Неизвестное значение — пустой состав, а не ошибка.
     """
     tasks_dir = Path(tasks_dir)
-    key = (key or "").strip()
-    pipeline = pipeline_of(load_config(tasks_dir))
-    name = next((e["name"] for e in epics(tasks_dir) if e["key"] == key), "")
-    out: dict = {"epic": key, "name": name, "total": 0, "tasks": []}
-    if not key or key == EMPTY or not tasks_dir.is_dir():
+    field = (field or "").strip()
+    value = (value or "").strip()
+    out: dict = {"field": field, "value": value, "total": 0, "tasks": []}
+    if (not _FIELD_RE.match(field) or not value or value == EMPTY
+            or not tasks_dir.is_dir()):
         return out
 
+    pipeline = pipeline_of(load_config(tasks_dir))
     order = {s["key"]: i for i, s in enumerate(pipeline)}
     offramp = len(order) + 1        # съезды — за терминальным статусом
     unknown = len(order) + 2        # статус вне пайплайна — следом за ними
@@ -1156,7 +1166,7 @@ def epic_slice(tasks_dir: Path, key: str) -> dict:
         if not m:
             continue
         meta = _read_meta(path)
-        if str(meta.get("epic", "")).strip() != key:
+        if str(meta.get(field, "") or "").strip() != value:
             continue
         status = str(meta.get("status", "")).strip()
         info = meta_of.get(status)
@@ -1173,6 +1183,14 @@ def epic_slice(tasks_dir: Path, key: str) -> dict:
     out["total"] = len(tasks)
     out["tasks"] = tasks
     return out
+
+
+def epic_slice(tasks_dir: Path, key: str) -> dict:
+    """Состав эпика: {epic, name, total, tasks} — срез по полю `epic` с именем из реестра."""
+    key = (key or "").strip()
+    report = field_slice(tasks_dir, "epic", key)
+    name = next((e["name"] for e in epics(tasks_dir) if e["key"] == key), "")
+    return {"epic": key, "name": name, "total": report["total"], "tasks": report["tasks"]}
 
 
 def queue(tasks_dir: Path, limit: int = 5) -> dict:
@@ -3336,6 +3354,9 @@ def main() -> None:
                         help="Перевод вручную, мимо скилла: причина остаётся в задаче")
     parser.add_argument("--epic", metavar="КЛЮЧ", default=None,
                         help="Состав эпика: задачи в порядке маршрута (JSON)")
+    parser.add_argument("--by", nargs=2, metavar=("ПОЛЕ", "ЗНАЧЕНИЕ"), default=None,
+                        help="Срез задач по полю, например --by author \"Имя\": "
+                             "задачи в порядке маршрута (JSON)")
     parser.add_argument("--block", metavar="TASK-NNN", default=None,
                         help="Задача ждёт другую: правит blocked_by и blocks у обеих")
     parser.add_argument("--unblock", metavar="TASK-NNN", nargs="?", const="", default=None,
@@ -3419,6 +3440,12 @@ def main() -> None:
             print(f"[ERROR] {report['error']}", file=sys.stderr)
             sys.exit(1)
         print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+
+    if args.by is not None:
+        # Неизвестное имя — не ошибка: человек мог ещё не принести ни одной
+        # задачи, и пустой состав честно это говорит
+        print(json.dumps(field_slice(tasks_dir, *args.by), ensure_ascii=False, indent=2))
         return
 
     if args.epic is not None:

@@ -7,6 +7,7 @@ import Header from './components/Header'
 import Column, { CollapsedColumn } from './components/Column'
 import TaskModal from './components/TaskModal'
 import EpicModal from './components/EpicModal'
+import SliceModal from './components/SliceModal'
 import NewTaskModal from './components/NewTaskModal'
 import LogsPanel from './components/LogsPanel'
 import SettingsModal from './components/SettingsModal'
@@ -62,17 +63,21 @@ export default function App() {
   const [projects, setProjects] = useState({ active: null, projects: [] })
   const [openTask, setOpenTask] = useState(null)
   const [openEpic, setOpenEpic] = useState(null)
+  // Срез по полю задачи: { field, value } — автор, исполнитель
+  const [openSlice, setOpenSlice] = useState(null)
   // Путь по окнам: из карточки уходят по номеру блокера, из окна эпика — в его
   // задачу, и вернуться нужно туда, откуда пришли, а не искать исходное окно
   // заново. Поэтому в следе лежит не номер задачи, а вид целиком: задача и эпик
   // ходят по одному стеку, иначе «назад» из задачи в эпик потребовал бы второго
   const [taskTrail, setTaskTrail] = useState([])
   // Текущий вид — то, куда вернётся «назад» из следующего окна
-  const currentView = () => (openTask ? { task: openTask } : { epic: openEpic })
-  const viewLabel = (view) => (view?.task || view?.epic || '')
+  const currentView = () => (openTask ? { task: openTask }
+    : openEpic ? { epic: openEpic } : { slice: openSlice })
+  const viewLabel = (view) => (view?.task || view?.epic || view?.slice?.value || '')
   const showView = (view) => {
     setOpenTask(view?.task || null)
     setOpenEpic(view?.epic || null)
+    setOpenSlice(view?.slice || null)
   }
   const pushView = (view) => {
     setTaskTrail([...taskTrail, currentView()])
@@ -82,7 +87,9 @@ export default function App() {
     showView(taskTrail[taskTrail.length - 1])
     setTaskTrail(taskTrail.slice(0, -1))
   }
-  const closeViews = () => { setOpenTask(null); setOpenEpic(null); setTaskTrail([]) }
+  const closeViews = () => {
+    setOpenTask(null); setOpenEpic(null); setOpenSlice(null); setTaskTrail([])
+  }
   const [showNewTask, setShowNewTask] = useState(false)
   // Копируемая задача: форма создания открывается предзаполненной её данными.
   // Копия начинает с бэклога, как любая новая задача, — место оригинала на
@@ -1363,6 +1370,7 @@ export default function App() {
           query={query}
           onOpenTask={(id) => pushView({ task: id })}
           onOpenEpic={(key) => pushView({ epic: key })}
+          onOpenSlice={(field, value) => pushView({ slice: { field, value } })}
           onChanged={refresh}
           // Форма копии перекрыла бы окно задачи — уступаем ей место: копию
           // правят по своим полям, а не сверяют с оригиналом на просвет
@@ -1375,6 +1383,14 @@ export default function App() {
       {openEpic && (
         <EpicModal
           epicKey={openEpic}
+          onOpenTask={(id) => pushView({ task: id })}
+          onClose={closeViews}
+        />
+      )}
+      {openSlice && (
+        <SliceModal
+          field={openSlice.field}
+          value={openSlice.value}
           onOpenTask={(id) => pushView({ task: id })}
           onClose={closeViews}
         />

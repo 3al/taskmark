@@ -28,6 +28,7 @@ from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, DEFAULTS
 from backend.create_task_runner import create_task
 from backend.fs_browse import browse_dir
 from backend.log_files import log_kind, read_log_text
+from backend.task_slices import field_tasks
 from backend.epics import (annotate_epics, epic_name, epic_tasks, list_epics,
                            register_epic, set_task_epic)
 from backend.migrations import (apply_config_migrations, migrate_global_config,
@@ -71,7 +72,8 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "board_repair": True, "stall": True, "update": True,
                 "epic_tasks": True, "agentic_merge": True, "task_copy": True,
                 "board_sections": True, "agentic_remove": True,
-                "telegram": True, "autostart": True, "notify": True}
+                "telegram": True, "autostart": True, "notify": True,
+                "task_slice": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -735,6 +737,20 @@ def api_epic_tasks(key: str) -> dict:
     pipeline = load_pipeline(cfg)
     return {"key": key, "name": epic_name(tasks_dir, key),
             "tasks": epic_tasks(tasks_dir, key, pipeline)}
+
+
+@app.get("/api/slice")
+def api_task_slice(field: str, value: str) -> dict:
+    """Срез задач по значению поля — автор, исполнитель — в порядке маршрута.
+
+    Имя приходит от человека, поэтому параметром запроса, а не куском пути: в
+    нём пробелы и кириллица. Поле тоже параметр: механизм один на любое поле.
+    Неизвестное имя — не ошибка: пустой состав, окно скажет это словами.
+    """
+    tasks_dir, cfg = _ctx()
+    pipeline = load_pipeline(cfg)
+    return {"field": field, "value": value,
+            "tasks": field_tasks(tasks_dir, field, value, pipeline)}
 
 
 @app.get("/api/criteria-presets")

@@ -100,6 +100,10 @@ export const api = {
   epics: () => request('/api/epics'),
   // Состав эпика: задачи в порядке маршрута проекта + имя из реестра
   epicTasks: (key) => request(`/api/epics/${encodeURIComponent(key)}/tasks`),
+  // Срез по полю задачи (автор, исполнитель): имя — параметром запроса, в нём
+  // пробелы и кириллица
+  taskSlice: (field, value) =>
+    request(`/api/slice?field=${encodeURIComponent(field)}&value=${encodeURIComponent(value)}`),
   // blockerFor — кем можно заблокировать эту задачу (список считает бэкенд)
   tasksList: (blockerFor = '') =>
     request(`/api/tasks/list${blockerFor ? `?blocker_for=${encodeURIComponent(blockerFor)}` : ''}`),
