@@ -189,6 +189,41 @@ class EnvironmentPartsTest(unittest.TestCase):
         self.assertIn("settings.local.json", text, "чужие записи не трогаем")
         self.assertRegex(text, r"(?m)^skills/$")
 
+    # --- То же для хуков: кнопка части hooks (TASK-200) ---
+
+    def test_hooks_button_ignores_hook_folders(self) -> None:
+        """Кнопка «развернуть хуки» кладёт обработчики в папку каждой среды.
+
+        Полное развёртывание игнор ставило, а кнопка части — нет: обработчики,
+        восстановленные с баннера, уезжали в git пользователя.
+        """
+        harnesses = {"claude": True, "opencode": True, "codex": True}
+        self._use(harnesses)
+        self._bare_structure()
+        folders = {".claude": "hooks", ".opencode": "plugin", ".codex": "hooks"}
+        for agent_dir in folders:
+            path = self.root / agent_dir / ".gitignore"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("# своё\nlocal.json\n", encoding="utf-8")
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["hooks"]})
+
+        for agent_dir, folder in folders.items():
+            with self.subTest(agent_dir=agent_dir):
+                text = (self.root / agent_dir / ".gitignore").read_text(encoding="utf-8")
+                self.assertIn("local.json", text, "чужие записи не трогаем")
+                self.assertRegex(text, rf"(?m)^{folder}/$")
+
+    def test_hooks_button_creates_ignore_in_fresh_folder(self) -> None:
+        self._use(CLAUDE_ONLY)
+        self._bare_structure()
+
+        scaffold_project(self.tasks_dir, self.cfg, {"parts": ["hooks"]})
+
+        self.assertTrue((self.root / ".claude" / "hooks").is_dir())
+        self.assertTrue((self.root / ".claude" / ".gitignore").is_file(),
+                        "развёрнутые кнопкой хуки не должны утекать в git")
+
     def test_opencode_only_project_ignores_both_folders(self) -> None:
         """Без Claude Code скиллы едут в `.opencode/skills` — рядом с командами.
 

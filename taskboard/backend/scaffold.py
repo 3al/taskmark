@@ -621,10 +621,13 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
             # не быть: без .gitignore её содержимое утечёт в git проекта.
             # Проверяем независимо от того, создали ли что-то сейчас: часть
             # может быть давно на месте, а игнор её так и не покрывать
-            if part in ("skills", "commands"):
-                targets = ([d for _p, d in _skills_dirs(project_root, cfg)]
-                           if part == "skills" else [_deployed_commands(project_root)])
-                for target in targets:
+            targets = {
+                "skills": lambda: [d for _p, d in _skills_dirs(project_root, cfg)],
+                "commands": lambda: [_deployed_commands(project_root)],
+                "hooks": lambda: [d for _h, d in _hook_dirs(project_root, cfg)],
+            }.get(part)
+            if targets:
+                for target in targets():
                     outcome = _ensure_ignored(target.parent, target.name)
                     if outcome == "created":
                         created.append(f"{target.parent.name}/.gitignore")
