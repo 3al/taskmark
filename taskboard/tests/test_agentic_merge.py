@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend import baseline, template_history  # noqa: E402
 from backend.config import DEFAULTS  # noqa: E402
-from backend.scaffold import (SKILLS_TEMPLATES, agentic_diff,  # noqa: E402
+from backend.scaffold import (RULES_CLOSE, SKILLS_TEMPLATES, agentic_diff,  # noqa: E402
                               agentic_stale_details, resolve_element,
                               resolved_base, scaffold_project,
                               strip_optional_blocks)
@@ -273,8 +273,10 @@ class ResolveTest(BaselineTestCase):
         """Правила живут секцией внутри чужого файла — остальной текст не трогаем."""
         self._scaffold()
         path = self.root / "AGENTS.md"
+        # Своя строка — внутри секции: за её маркерами текст принадлежит пользователю
         path.write_text("# Мой раздел\n\nтекст\n\n"
-                        + path.read_text(encoding="utf-8") + "\nсвоя строка\n",
+                        + path.read_text(encoding="utf-8").replace(
+                            RULES_CLOSE, "своя строка\n" + RULES_CLOSE),
                         encoding="utf-8")
         base = baseline.read(self.root, "rules", "AGENTS.md", self.cfg) or ""
         self._base_path("rules", "AGENTS.md").write_text(

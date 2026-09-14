@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend import baseline  # noqa: E402
 from backend.config import DEFAULTS  # noqa: E402
-from backend.scaffold import HARNESSES, environment_issues, scaffold_project  # noqa: E402
+from backend.scaffold import (RULES_CLOSE, HARNESSES, environment_issues,  # noqa: E402
+                              scaffold_project)
 from backend.validator import validate_project  # noqa: E402
 
 BOTH = {"claude": True, "opencode": True}
@@ -333,7 +334,9 @@ class EnvironmentPartsTest(unittest.TestCase):
         script = self.tasks_dir / "create_task.py"
         script.write_text("# мой скрипт\n", encoding="utf-8")
         rules = self.root / "CLAUDE.md"
-        rules.write_text(rules.read_text(encoding="utf-8") + "\nмоя приписка\n",
+        # Приписка внутри секции правил: за её маркерами текст и так не наш
+        rules.write_text(rules.read_text(encoding="utf-8").replace(
+                             RULES_CLOSE, "моя приписка\n" + RULES_CLOSE),
                          encoding="utf-8")
 
         result = self._deploy(BOTH)

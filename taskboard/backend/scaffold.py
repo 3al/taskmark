@@ -68,8 +68,21 @@ VAULT_DATA_FILES = ("SYS/README.md", "SYS/taxonomy.md")
 VAULT_SYSTEM_DIRS = tuple(dict.fromkeys(
     PurePosixPath(rel).parts[0] for rel in VAULT_TEMPLATE_FILES + VAULT_DATA_FILES))
 
-# Маркер наличия секции правил в агентском файле
+# Заголовок секции правил: по нему опознаётся секция, развёрнутая до маркеров
 RULES_MARKER = "TASK MANAGEMENT"
+
+# Границы секции правил внутри агентского файла. Файл принадлежит пользователю,
+# поэтому своё опознаётся явным признаком, а не догадкой по заголовкам. Имени
+# инструмента в маркере нет: название меняется, а маркеры остаются в проектах
+RULES_OPEN = ("<!-- task_management:rules — секцию ведёт доска задач, "
+              "текст вне маркеров не трогается -->")
+RULES_CLOSE = "<!-- /task_management:rules -->"
+_RULES_OPEN_RE = re.compile(r"^[ \t]*<!--\s*task_management:rules\b.*?-->[ \t]*(?:\n|$)",
+                            re.MULTILINE)
+_RULES_CLOSE_RE = re.compile(r"^[ \t]*<!--\s*/task_management:rules\s*-->[ \t]*(?:\n|$)",
+                             re.MULTILINE)
+# Посторонняя секция о том же: заголовок любого уровня со словами Task Management
+_FOREIGN_RULES_RE = re.compile(r"task[\s_-]*management", re.IGNORECASE)
 
 # Рубрики внутри раздела создания задач: по ним create_task.py раскладывает
 # новое. Выводятся из каталога типов — рубрика и тип это одно и то же понятие,
@@ -296,22 +309,23 @@ def sync_rules(project_root: Path, cfg: dict, names: list[str] | None = None) ->
         if not target.is_file():
             continue
         content = target.read_text(encoding="utf-8-sig")
-        bounds = _rules_bounds(content)
-        if not bounds:
+        span = _rules_span(content)
+        if not span:
             continue
-        start, end = bounds
-        section = _renumber_rules(render_rules(cfg), content[:start])
-        fresh = content[:start] + section.rstrip("\n") + "\n" + content[end:]
-        if fresh != content:
-            baseline.backup(project_root, "rules", name, content[start:end], cfg)
-            target.write_text(fresh, encoding="utf-8")
+        section = _renumber_rules(render_rules(cfg), content[:span[0]])
+        current = content[span[2]:span[3]]
+        # Сравниваем текст секции, а не файл: иначе файл, развёрнутый до
+        # маркеров, переписывался бы ради одних маркеров — молча, без повода
+        if current.rstrip("\n") != section.rstrip("\n"):
+            baseline.backup(project_root, "rules", name, current, cfg)
+            target.write_text(_put_rules(content, section), encoding="utf-8")
             updated.append(name)
         _remember(project_root, "rules", name, _current_text("rules", target) or "", cfg)
     return updated
 
 
-def _rules_bounds(content: str) -> tuple[int, int] | None:
-    """Границы секции правил в агентском файле: (начало заголовка, конец секции)."""
+def _legacy_rules_bounds(content: str) -> tuple[int, int] | None:
+    """Секция без маркеров: от заголовка `# … TASK MANAGEMENT` до следующего `# `."""
     heading = None
     for m in re.finditer(r"^#\s+.*$", content, flags=re.MULTILINE):
         if RULES_MARKER.lower() in m.group(0).lower():
@@ -322,6 +336,90 @@ def _rules_bounds(content: str) -> tuple[int, int] | None:
     rest = content[heading.end():]
     nxt = re.search(r"^#\s+", rest, flags=re.MULTILINE)
     return heading.start(), heading.end() + (nxt.start() if nxt else len(rest))
+
+
+def _rules_span(content: str) -> tuple[int, int, int, int] | None:
+    """Секция правил в агентском файле: (начало, конец, начало текста, конец текста).
+
+    Внешние границы включают маркеры, внутренние — только текст секции: его
+    сравнивают со слепком и шаблоном, поэтому маркеры в состояние не входят и
+    файл, развёрнутый до них, не становится «устаревшим» от их появления.
+    Размеченная секция — пара маркеров (открывающий берётся ближайший к
+    закрывающему). Без пары — прежнее правило по заголовку; осиротевший
+    открывающий маркер прямо над таким заголовком входит в секцию, чтобы
+    запись не множила маркеры.
+    """
+    for close in _RULES_CLOSE_RE.finditer(content):
+        opens = list(_RULES_OPEN_RE.finditer(content, 0, close.start()))
+        if opens:
+            opened = opens[-1]
+            return opened.start(), close.end(), opened.end(), close.start()
+    bounds = _legacy_rules_bounds(content)
+    if bounds is None:
+        return None
+    start, end = bounds
+    opened = next((m for m in _RULES_OPEN_RE.finditer(content, 0, start)
+                   if not content[m.end():start].strip()), None)
+    return (opened.start() if opened else start), end, start, end
+
+
+def _rules_bounds(content: str) -> tuple[int, int] | None:
+    """Внешние границы секции правил (вместе с маркерами)."""
+    span = _rules_span(content)
+    return (span[0], span[1]) if span else None
+
+
+def _put_rules(content: str, section: str) -> str:
+    """Файл с секцией правил в маркерах: на месте прежней или в конце."""
+    block = f"{RULES_OPEN}\n{section.rstrip(chr(10))}\n{RULES_CLOSE}\n"
+    span = _rules_span(content)
+    if span is None:
+        return (content.rstrip("\n") + "\n\n" + block) if content.strip() else block
+    after = content[span[1]:]
+    if after and not after.startswith("\n"):
+        after = "\n" + after
+    return content[:span[0]] + block + after
+
+
+def _foreign_rules(content: str) -> list[tuple[int, int, str, int]]:
+    """Посторонние секции о задачах: [(начало, конец, заголовок, номер строки)].
+
+    Заголовок любого уровня со словами Task Management вне нашей секции —
+    старые или свои правила, которые агент прочтёт рядом с актуальными.
+    Секция тянется до заголовка того же или старшего уровня; строки внутри
+    блоков кода заголовками не считаются. Упоминание в тексте — не секция.
+    """
+    span = _rules_span(content)
+    headings: list[tuple[int, int, str, int]] = []  # (позиция, уровень, текст, строка)
+    fence = None
+    pos = 0
+    for lineno, line in enumerate(content.splitlines(keepends=True), start=1):
+        stripped = line.strip()
+        marker = re.match(r"(`{3,}|~{3,})", stripped)
+        if marker:
+            if fence is None:
+                fence = marker.group(1)[0]
+            elif stripped.startswith(fence * 3):
+                fence = None
+        elif fence is None:
+            m = re.match(r"(#{1,6})\s+(.*)$", line.rstrip("\n"))
+            if m:
+                headings.append((pos, len(m.group(1)), m.group(2).strip(), lineno))
+        pos += len(line)
+
+    found: list[tuple[int, int, str, int]] = []
+    for i, (start, level, text, lineno) in enumerate(headings):
+        if span and span[0] <= start < span[1]:
+            continue
+        if found and start < found[-1][1]:
+            continue  # подраздел уже найденной секции
+        if not _FOREIGN_RULES_RE.search(text):
+            continue
+        end = next((h[0] for h in headings[i + 1:] if h[1] <= level), len(content))
+        if span and start < span[0] < end:
+            end = span[0]
+        found.append((start, end, "#" * level + " " + text, lineno))
+    return found
 
 
 def _append_rules(project_root: Path, names: list[str], cfg: dict) -> tuple[list[str], list[str]]:
@@ -337,11 +435,13 @@ def _append_rules(project_root: Path, names: list[str], cfg: dict) -> tuple[list
         target = project_root / name
         # utf-8-sig: BOM в начале файла не должен ломать детект секций и нумерацию
         content = target.read_text(encoding="utf-8-sig") if target.exists() else ""
-        if RULES_MARKER.lower() in content.lower():
+        # Та же проверка, что у баннера: разойдясь, они дают кнопку, которая
+        # молча ничего не делает (TASK-282)
+        if _rules_span(content):
             present.append(name)  # существующую секцию обновляет sync_rules
             continue
         section = _renumber_rules(rules_text, content)
-        target.write_text(content.rstrip("\n") + "\n\n" + section, encoding="utf-8")
+        target.write_text(_put_rules(content, section), encoding="utf-8")
         _remember(project_root, "rules", name, _current_text("rules", target) or "", cfg)
         appended.append(name)
     return appended, present
@@ -1099,7 +1199,38 @@ def _extra_targets(project_root: Path,
         command = _deployed_commands(project_root) / f"{name}.md"
         if active["opencode"] and command.is_file():
             out.append(("commands", name, command))
+    # Старая секция правил рядом с актуальной: агент читает обе и не знает,
+    # какая главная. Чья она и что в ней — неизвестно, поэтому тоже только кнопкой
+    for name, path, _start, _end, _heading in _foreign_rules_targets(project_root, cfg):
+        out.append(("rules", name, path))
     return out
+
+
+def _foreign_rules_targets(project_root: Path, cfg: dict | None = None
+                           ) -> list[tuple[str, Path, int, int, str]]:
+    """(имя, путь, начало, конец, заголовок) посторонних секций в файлах правил.
+
+    Секция опознаётся только рядом с нашей: пока нашей нет, баннер и так
+    предлагает её развернуть, и спорить с ним предупреждением незачем. Имя
+    несёт номер строки заголовка — правка файла меняет имя, и кнопка,
+    нажатая по устаревшему списку, откажет вместо удаления не того.
+    """
+    out: list[tuple[str, Path, int, int, str]] = []
+    for file_name in rules_deployed(project_root, cfg):
+        path = project_root / file_name
+        content = _read(path) or ""
+        for start, end, heading, lineno in _foreign_rules(content):
+            out.append((f"{file_name}#L{lineno}", path, start, end, heading))
+    return out
+
+
+def _extra_text(project_root: Path, part: str, name: str, path: Path,
+                cfg: dict | None = None) -> str | None:
+    """Содержимое лишнего элемента: файл целиком, у правил — сама секция."""
+    if part != "rules":
+        return _read(path)
+    found = next((t for t in _foreign_rules_targets(project_root, cfg) if t[0] == name), None)
+    return (_read(path) or "")[found[2]:found[3]] if found else None
 
 
 def _extra_target(project_root: Path, part: str, name: str,
@@ -1121,6 +1252,9 @@ def remove_element(project_root: Path, part: str, name: str,
     if path is None:
         return {"ok": False, "error": f"Элемент не лишний: {part}/{name}"}
 
+    if part == "rules":
+        return _remove_foreign_rules(project_root, name, path, cfg)
+
     backup = baseline.backup(project_root, part, name, _read(path) or "", cfg)
     try:
         path.unlink()
@@ -1129,6 +1263,25 @@ def remove_element(project_root: Path, part: str, name: str,
     except OSError as exc:
         return {"ok": False, "error": f"Не удалось удалить {part}/{name}: {exc}"}
     return {"ok": True, "part": part, "name": name, "action": "remove",
+            "conflicts": 0, "backup": backup}
+
+
+def _remove_foreign_rules(project_root: Path, name: str, path: Path,
+                          cfg: dict | None = None) -> dict:
+    """Вырезать постороннюю секцию правил: файл остаётся, уходит только она."""
+    found = next((t for t in _foreign_rules_targets(project_root, cfg) if t[0] == name), None)
+    content = _read(path)
+    if found is None or content is None:
+        return {"ok": False, "error": f"Элемент не лишний: rules/{name}"}
+    _name, _path, start, end, _heading = found
+    backup = baseline.backup(project_root, "rules", name, content[start:end], cfg)
+    before, after = content[:start].rstrip("\n"), content[end:].lstrip("\n")
+    fresh = (before + "\n\n" + after) if before and after else (before or after)
+    try:
+        path.write_text(fresh.rstrip("\n") + "\n" if fresh else "", encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "error": f"Не удалось изменить {path.name}: {exc}"}
+    return {"ok": True, "part": "rules", "name": name, "action": "remove",
             "conflicts": 0, "backup": backup}
 
 
@@ -1344,8 +1497,8 @@ def _current_text(part: str, path: Path) -> str | None:
     content = _read(path)
     if content is None:
         return None
-    bounds = _rules_bounds(content)
-    return content[bounds[0]:bounds[1]] if bounds else None
+    span = _rules_span(content)
+    return content[span[2]:span[3]] if span else None
 
 
 # Части поставки из одного файла в tasks/: сравниваются и разрешаются так же,
@@ -1528,13 +1681,19 @@ def agentic_stale_details(project_root: Path, cfg: dict | None = None) -> list[d
     # Лишнее — не расхождение с эталоном, а его отсутствие: элемент есть,
     # а поставки под него нет. В том же списке, потому что разбирают их в
     # одном окне и одним движением
+    headings = {name: heading
+                for name, _path, _start, _end, heading in _foreign_rules_targets(project_root, cfg)}
     for part, name, path in _extra_targets(project_root, cfg):
-        items.append({
+        item = {
             "part": part, "name": name, "state": EXTRA, "mergeable": False,
             "base_origin": None, "base_version": None, "base_exact": False,
             "base_ratio": None, "base_usable": False,
             "path": str(path.relative_to(project_root)).replace("\\", "/"),
-        })
+        }
+        # Имя посторонней секции — служебный ключ; человеку нужен её заголовок
+        if part == "rules":
+            item["label"] = f"{path.name} · {headings.get(name, name)}"
+        items.append(item)
     return items
 
 
@@ -1566,7 +1725,8 @@ def agentic_diff(project_root: Path, part: str, name: str, cfg: dict | None = No
         target = (name, extra, "")
 
     _name, path, expected = target
-    current = _current_text(part, path)
+    current = (_extra_text(project_root, part, name, path, cfg) if extra is not None
+               else _current_text(part, path))
     resolved = resolved_base(project_root, part, name, current, cfg)
     base = resolved["text"]
     base_label = "было развёрнуто" if resolved["origin"] == "store" else "основа сравнения"
@@ -1606,14 +1766,7 @@ def _write_element(part: str, path: Path, text: str) -> None:
         path.write_text(text, encoding="utf-8")
         return
     content = path.read_text(encoding="utf-8-sig") if path.is_file() else ""
-    bounds = _rules_bounds(content)
-    if bounds is None:
-        path.write_text(content.rstrip("\n") + "\n\n" + text.rstrip("\n") + "\n",
-                        encoding="utf-8")
-        return
-    start, end = bounds
-    path.write_text(content[:start] + text.rstrip("\n") + "\n" + content[end:],
-                    encoding="utf-8")
+    path.write_text(_put_rules(content, text), encoding="utf-8")
 
 
 def resolve_element(project_root: Path, part: str, name: str, action: str,
@@ -1775,7 +1928,8 @@ ENV_PARTS = (
      "missing": "no_commands", "outdated": "outdated_commands",
      "extra": "extra_commands"},
     {"part": "rules", "harness": "any",
-     "missing": "no_rules", "outdated": "outdated_rules"},
+     "missing": "no_rules", "outdated": "outdated_rules",
+     "extra": "extra_rules"},
     # Обработчики хуков: они ловят то, чего скрипт не видит вовсе — коммит и
     # push при задаче в работе. Часть общая для сред, но раскладка у каждой своя
     {"part": "hooks", "harness": "any",
@@ -1906,6 +2060,9 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
                 project_root, part, _rules_targets(project_root, cfg), cfg)
 
         extra = [n for p, n, _path in _extra_targets(project_root, cfg) if p == part]
+        if part == "rules":
+            # Баннер называет файлы, а не служебные ключи секций
+            extra = list(dict.fromkeys(n.split("#", 1)[0] for n in extra))
 
         for state, names in (("missing", missing), ("partial", partial),
                              ("outdated", outdated), ("extra", extra)):

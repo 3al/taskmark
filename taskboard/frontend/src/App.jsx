@@ -849,6 +849,8 @@ export default function App() {
     outdated_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     outdated_hooks: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     outdated_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    // Старая секция правил: что в ней, видно только в окне — там же и удаление
+    extra_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
     // Волт: скиллы уже ссылаются на vault/, поэтому его отсутствие — пробел,
     // а не «ещё не завели»
     no_vault: { part: 'vault', label: 'Развернуть', help: 'agentic' },

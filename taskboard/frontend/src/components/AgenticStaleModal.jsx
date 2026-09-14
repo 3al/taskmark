@@ -66,6 +66,19 @@ const STATE_LABEL = {
   },
 }
 
+// Лишнее в правилах — не скилл выключенной возможности, а старая секция
+// рядом с актуальной: удаляется она, а не файл
+const EXTRA_RULES_LABEL = {
+  text: 'старая секция правил',
+  hint: 'агент читает её вместе с актуальными правилами',
+  cls: 'text-amber-300',
+}
+
+const stateLabel = (item) =>
+  item.state === 'extra' && item.part === 'rules'
+    ? EXTRA_RULES_LABEL
+    : STATE_LABEL[item.state] || STATE_LABEL.unknown
+
 // Ниже этого совпадения слияние состоится, но конфликтов будет много
 const NOISY_RATIO = 0.7
 
@@ -220,7 +233,9 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
         <Button
           onClick={() => remove(item)}
           disabled={disabled}
-          title="Файл удаляется, прежнее содержимое остаётся в бэкапе"
+          title={item.part === 'rules'
+            ? 'Секция вырезается из файла, прежний текст остаётся в бэкапе'
+            : 'Файл удаляется, прежнее содержимое остаётся в бэкапе'}
         >
           {disabled ? '…' : 'Удалить'}
         </Button>
@@ -318,7 +333,8 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
             Элементы, где правок в проекте нет, обновляются одной кнопкой. Там, где
             ваши правки встретились с новым шаблоном, выбор за вами: слить, взять
             шаблон или оставить свою версию. Лишние — скиллы выключенных
-            возможностей — удаляются кнопкой, папка <code className="text-zinc-400">vault/</code>
+            возможностей и старые секции Task Management рядом с правилами — удаляются
+            кнопкой, папка <code className="text-zinc-400">vault/</code>
             {' '}при этом не трогается. Прежнее содержимое перед перезаписью и удалением
             сохраняется в <code className="text-zinc-400">tasks/.taskboard/backup/</code>.
           </div>
@@ -335,7 +351,7 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
 
           {items?.map((item) => {
             const k = key(item)
-            const state = STATE_LABEL[item.state] || STATE_LABEL.unknown
+            const state = stateLabel(item)
             const diff = diffs[k]
             return (
               <div key={k} className="border border-zinc-800 rounded-xl">
@@ -343,7 +359,7 @@ export default function AgenticStaleModal({ onClose, onUpdated }) {
                   <div className="flex-1 min-w-0">
                     <div className="text-sm">
                       <span className="text-zinc-400 text-xs mr-2">{PART_LABEL[item.part]}</span>
-                      <span className="font-medium">{item.name}</span>
+                      <span className="font-medium">{item.label || item.name}</span>
                     </div>
                     <div className={`text-[11px] ${state.cls}`}>
                       {state.text}
