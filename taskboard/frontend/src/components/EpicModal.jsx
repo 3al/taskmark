@@ -12,7 +12,7 @@ import SliceTaskList from './SliceTaskList'
 //
 // Строк может быть много, а окно должно оставаться окном, поэтому список
 // прокручивается внутри себя, а шапка с ключом и именем стоит на месте.
-export default function EpicModal({ epicKey, onOpenTask, onClose }) {
+export default function EpicModal({ epicKey, onOpenTask, onShowOnBoard, onClose }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
 
@@ -48,6 +48,15 @@ export default function EpicModal({ epicKey, onOpenTask, onClose }) {
               {data ? (data.name || 'нет записи в реестре эпиков') : '…'}
             </div>
           </div>
+          {/* Здесь список, на доске — те же задачи по колонкам */}
+          {onShowOnBoard && (
+            <button onClick={() => onShowOnBoard(epicKey)}
+                    title={`Оставить на доске только задачи эпика — запрос epic:${epicKey}`}
+                    className="shrink-0 whitespace-nowrap px-2.5 py-1 text-xs rounded-lg border border-zinc-700
+                      text-zinc-300 hover:border-zinc-500 hover:bg-zinc-800 transition">
+              На доске
+            </button>
+          )}
           <button onClick={onClose} title="Закрыть (Esc)"
                   className="text-zinc-400 hover:text-zinc-200 transition">✕</button>
         </div>

@@ -119,6 +119,9 @@ export default function App() {
   // Ищем на сервере, потому что содержание задач лежит в файлах, а не на доске
   const [query, setQuery] = useState('')
   const [found, setFound] = useState(null)
+  // Остаток запроса без токенов отбора (`epic:…`): подсвечивать надо его,
+  // а разбирает запрос сервер — второй разборщик на фронте разошёлся бы с ним
+  const [searchText, setSearchText] = useState('')
   // Фильтр «стоят»: остановленные задачи разом, каждая на своём этапе —
   // того, чего отдельный раздел доски не даёт
   const [stalledOnly, setStalledOnly] = useState(false)
@@ -174,11 +177,17 @@ export default function App() {
     const needle = query.trim()
     if (!needle) {
       setFound(null)
+      setSearchText('')
       return
     }
     const timer = setTimeout(() => {
       api.search(needle)
-        .then((r) => setFound(new Map(r.items.map((i) => [i.id, i]))))
+        .then((r) => {
+          // `active` нет — сервер старше разбора запроса: считаем, как раньше
+          const active = r.active ?? true
+          setFound(active ? new Map(r.items.map((i) => [i.id, i])) : null)
+          setSearchText(r.text ?? needle)
+        })
         .catch((e) => setError(e.message))
     }, 200)
     return () => clearTimeout(timer)
@@ -1114,7 +1123,7 @@ export default function App() {
                     dndFullBoard={dndFullBoard}
                     pickStatus={pickStatus}
                     createStatus={createStatus}
-                    query={query}
+                    query={searchText}
                     matches={found}
                     filtered={filtered}
                     onDelete={deleteTask}
@@ -1369,7 +1378,7 @@ export default function App() {
       {openTask && (
         <TaskModal
           taskId={openTask}
-          query={query}
+          query={searchText}
           onOpenTask={(id) => pushView({ task: id })}
           onOpenEpic={(key) => pushView({ epic: key })}
           onOpenSlice={(field, value) => pushView({ slice: { field, value } })}
@@ -1386,6 +1395,9 @@ export default function App() {
         <EpicModal
           epicKey={openEpic}
           onOpenTask={(id) => pushView({ task: id })}
+          // Отбор доски — тот же токен, что человек набрал бы сам: так он и
+          // узнаёт, что запрос `epic:` существует
+          onShowOnBoard={(key) => { setQuery(`epic:${key}`); closeViews() }}
           onClose={closeViews}
         />
       )}

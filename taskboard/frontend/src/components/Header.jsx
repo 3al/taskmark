@@ -203,7 +203,8 @@ export default function Header({
           onChange={(e) => onQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Escape' && onQuery('')}
           placeholder="Поиск по задачам…"
-          title="Ищет по номеру, заголовку и содержанию задач (Esc — сбросить)"
+          title={'Ищет по номеру, заголовку и содержанию задач.\n'
+            + 'epic:КЛЮЧ — только задачи эпика, epic:A,B — нескольких (Esc — сбросить)'}
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-2.5 pr-16 py-1.5 text-sm
             focus:outline-none focus:border-sky-500 placeholder:text-zinc-500"
         />

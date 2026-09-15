@@ -44,7 +44,7 @@ from backend.queue_ops import (ensure_pipeline_sections, ensure_section, move_ta
 from backend.scaffold import (ENV_PARTS, HARNESSES, agentic_diff,
                               agentic_stale_details, remove_element, resolve_element,
                               scaffold_project, uses_vault)
-from backend.search import search_tasks
+from backend.search import parse_query, search_tasks
 from backend.stall import (annotate_stall, blocker_candidates, can_stall,
                            move_confirmation, set_blocked_by, set_paused,
                            stall_details, stalled_tasks)
@@ -703,9 +703,16 @@ def api_tasks_list(blocker_for: str = "") -> dict:
 
 @app.get("/api/search")
 def api_search(q: str = "") -> dict:
-    """Живой фильтр доски: задачи, в которых встречается запрос."""
+    """Живой фильтр доски: задачи, подходящие под запрос.
+
+    text — остаток запроса без токенов отбора (`epic:…`): его подсвечивают.
+    active — фильтр включён; без него пустая выдача неотличима от «фильтра нет».
+    """
     tasks_dir, _cfg = _ctx()
-    return {"query": q, "items": search_tasks(tasks_dir, q)}
+    parsed = parse_query(q)
+    return {"query": q, "text": parsed["text"],
+            "active": bool(parsed["text"] or parsed["filters"]),
+            "items": search_tasks(tasks_dir, q)}
 
 
 @app.get("/api/assignees")
