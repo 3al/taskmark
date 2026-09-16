@@ -81,8 +81,12 @@ _RULES_OPEN_RE = re.compile(r"^[ \t]*<!--\s*task_management:rules\b.*?-->[ \t]*(
                             re.MULTILINE)
 _RULES_CLOSE_RE = re.compile(r"^[ \t]*<!--\s*/task_management:rules\s*-->[ \t]*(?:\n|$)",
                              re.MULTILINE)
-# Посторонняя секция о том же: заголовок любого уровня со словами Task Management
-_FOREIGN_RULES_RE = re.compile(r"task[\s_-]*management", re.IGNORECASE)
+# Посторонняя секция о том же: заголовок любого уровня, **названный** Task
+# Management — после номера вида «6.» / «6)» с этих слов начинается текст.
+# Упоминание в середине заголовка («… (дополнительно к task management)») —
+# подраздел чужой секции, а не секция о задачах
+_FOREIGN_RULES_RE = re.compile(r"(?:\d+[.)]?\s*)?task[\s_-]*management\b",
+                               re.IGNORECASE)
 
 # Рубрики внутри раздела создания задач: по ним create_task.py раскладывает
 # новое. Выводятся из каталога типов — рубрика и тип это одно и то же понятие,
@@ -384,7 +388,7 @@ def _put_rules(content: str, section: str) -> str:
 def _foreign_rules(content: str) -> list[tuple[int, int, str, int]]:
     """Посторонние секции о задачах: [(начало, конец, заголовок, номер строки)].
 
-    Заголовок любого уровня со словами Task Management вне нашей секции —
+    Заголовок любого уровня, названный Task Management, вне нашей секции —
     старые или свои правила, которые агент прочтёт рядом с актуальными.
     Секция тянется до заголовка того же или старшего уровня; строки внутри
     блоков кода заголовками не считаются. Упоминание в тексте — не секция.
@@ -402,7 +406,9 @@ def _foreign_rules(content: str) -> list[tuple[int, int, str, int]]:
             elif stripped.startswith(fence * 3):
                 fence = None
         elif fence is None:
-            m = re.match(r"(#{1,6})\s+(.*)$", line.rstrip("\n"))
+            # Markdown считает заголовком и строку с отступом до трёх пробелов;
+            # четыре — уже блок кода
+            m = re.match(r" {0,3}(#{1,6})\s+(.*)$", line.rstrip("\r\n"))
             if m:
                 headings.append((pos, len(m.group(1)), m.group(2).strip(), lineno))
         pos += len(line)
@@ -413,7 +419,7 @@ def _foreign_rules(content: str) -> list[tuple[int, int, str, int]]:
             continue
         if found and start < found[-1][1]:
             continue  # подраздел уже найденной секции
-        if not _FOREIGN_RULES_RE.search(text):
+        if not _FOREIGN_RULES_RE.match(text):
             continue
         end = next((h[0] for h in headings[i + 1:] if h[1] <= level), len(content))
         if span and start < span[0] < end:

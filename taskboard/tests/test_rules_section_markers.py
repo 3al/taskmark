@@ -287,6 +287,50 @@ class ForeignSectionTest(RulesMarkersTestCase):
 
         self.assertNotIn("extra_rules", self._codes())
 
+    def test_mention_in_heading_is_not_a_section(self) -> None:
+        self._write("# Проект\n\n# 5. KNOWLEDGE VAULT\n\nволт\n\n"
+                    "## В начале каждой сессии (дополнительно к task management)\n\n"
+                    "читай волт\n\n## Правила работы с волтом\n\nпиши заметки\n")
+        self._press_banner_button()
+
+        self.assertNotIn("extra_rules", self._codes())
+        self.assertEqual(self._extra_rules(), [])
+
+    def test_named_sections_found(self) -> None:
+        for heading in ("## Task Management", "## 1. TASK MANAGEMENT",
+                        "## 6) Task management — правила"):
+            with self.subTest(heading=heading):
+                self._write(f"# Проект\n\n{heading}\n\nстарые правила\n")
+                self._press_banner_button()
+
+                items = self._extra_rules()
+                self.assertEqual(len(items), 1)
+                self.assertIn(heading.lstrip("# "), items[0]["label"])
+
+    def test_indented_heading_is_a_section(self) -> None:
+        self._write(" ## TASK MANAGEMENT\n старое\n\n# Проект\n\nтекст\n")
+        self._press_banner_button()
+
+        items = self._extra_rules()
+        self.assertEqual(len(items), 1)
+        self.assertIn("## TASK MANAGEMENT", items[0]["label"])
+
+    def test_four_space_indent_is_code_not_section(self) -> None:
+        self._write("# Проект\n\n    ## TASK MANAGEMENT\n\nтекст\n")
+        self._press_banner_button()
+
+        self.assertNotIn("extra_rules", self._codes())
+
+    def test_mention_does_not_hide_real_section(self) -> None:
+        self._write("# Проект\n\n## Сессия (дополнительно к task management)\n\nтекст\n\n"
+                    "## Task Management\n\nстарые правила\n")
+        self._press_banner_button()
+
+        items = self._extra_rules()
+        self.assertEqual(len(items), 1)
+        self.assertIn("## Task Management", items[0]["label"])
+        self.assertNotIn("Сессия", items[0]["label"])
+
     def test_heading_in_code_fence_is_not_a_section(self) -> None:
         self._write("# Проект\n\n```sh\n# task management helper\nrun\n```\n")
         self._press_banner_button()
