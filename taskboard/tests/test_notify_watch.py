@@ -28,6 +28,10 @@ _(нет)_
 ## Done
 
 _(нет)_
+
+## Cancelled
+
+_(нет)_
 """
 
 TASK = """---
@@ -128,8 +132,46 @@ class TestДвижение(Base):
         self.assertIn("@kostya", text)
         self.assertIn("@petya", text)
         self.assertEqual("HTML", self.parse_mode)
-        self.assertIn("🔄 <b>", text)
         self.assertIn("<b>Проект:</b> «project»", text)
+
+    def test_завершение_приходит_праздничной_карточкой(self):
+        self.write_board("Done")
+        self.write_task("done", "telegram:-100")
+        self.check()
+        _, text = self.sent[0]
+        self.assertTrue(text.startswith("🎉 <b>Задача завершена</b>"), text)
+        self.assertNotIn("🔄", text)
+        self.assertIn("TASK-014", text)
+        self.assertIn("Починить импорт", text)
+        self.assertIn("Backlog → Done", text)
+        self.assertIn("<b>Проект:</b> «project»", text)
+        self.assertIn("@petya", text)
+
+    def test_завершение_узнаётся_по_маршруту_а_не_по_имени(self):
+        self.write_board("Done")
+        self.write_task("completed", "telegram:-100")
+        self.check(project_cfg={
+            "pipeline": ["backlog", "development", "completed", "cancelled"],
+            "statuses": {"completed": {"section": "Done", "label": "Done"},
+                         "cancelled": {"offramp": True}}})
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Задача завершена", self.sent[0][1])
+
+    def test_промежуточный_этап_остаётся_обычной_карточкой(self):
+        self.write_board("Development")
+        self.write_task("development", "telegram:-100")
+        self.check(project_cfg={"notify_statuses": ["development", "done"]})
+        _, text = self.sent[0]
+        self.assertTrue(text.startswith("🔄 <b>Статус задачи изменён</b>"), text)
+        self.assertNotIn("завершена", text)
+
+    def test_отмена_завершением_не_считается(self):
+        self.write_board("Cancelled")
+        self.write_task("cancelled", "telegram:-100")
+        self.check(project_cfg={"notify_statuses": ["done", "cancelled"]})
+        _, text = self.sent[0]
+        self.assertTrue(text.startswith("🔄 <b>Статус задачи изменён</b>"), text)
+        self.assertNotIn("завершена", text)
 
     def test_динамический_текст_экранирован(self):
         text = notify_watch._message(

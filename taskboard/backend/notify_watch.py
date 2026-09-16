@@ -23,7 +23,7 @@ from . import (notify_targets, registry, telegram_messages, telegram_notify,
                telegram_source)
 from .board_parser import parse_board
 from .config import load_project_config
-from .statuses import load_pipeline
+from .statuses import _finish_key, load_pipeline
 from .task_parser import parse_task
 
 
@@ -56,18 +56,24 @@ def _snapshot(tasks_dir: Path, pipeline) -> dict:
 
 
 def _message(task_id: str, title: str, was: str, now: str,
-             mentions: list[str], project: str = "") -> str:
+             mentions: list[str], project: str = "",
+             finished: bool = False) -> str:
     """Что человек прочитает в чате.
 
     Заголовок повторяется намеренно: номер задачи ничего не говорит тому, кто
     её принёс месяц назад. Теги — в конце, чтобы сообщение читалось как фраза,
     а не начиналось с обращения.
+
+    **Завершение говорит о себе заголовком**, а не только строкой перехода:
+    постановщику важен итог, а конкретный переход — уточнение ниже.
     """
     fields = [("Статус", f"{was} → {now}")]
     if project:
         fields.append(("Проект", f"«{project}»"))
+    icon, heading = (("🎉", "Задача завершена") if finished
+                     else ("🔄", "Статус задачи изменён"))
     return telegram_messages.card(
-        "🔄", "Статус задачи изменён", task_id=task_id, task_title=title,
+        icon, heading, task_id=task_id, task_title=title,
         fields=fields, mentions=mentions)
 
 
@@ -97,6 +103,9 @@ def check_project(tasks_dir: Path, cfg: dict, project_cfg: dict, state: dict,
     notified = {s["key"]: s for s in pipeline.statuses() if s.get("notify")}
     sections = {str(s.get("section") or s.get("label") or s["key"]): s["key"]
                 for s in pipeline.statuses()}
+    # Завершение — конец маршрута этого проекта, а не имя статуса: оно у всех
+    # своё. Отмена концом не считается
+    finish = _finish_key(pipeline.statuses())
     reply = send or telegram_source.send_message
     sent = 0
     for task_id, now in current.items():
@@ -110,7 +119,8 @@ def check_project(tasks_dir: Path, cfg: dict, project_cfg: dict, state: dict,
         if not targets:
             continue
         text = _message(task_id, str(meta.get("title") or task_id), was, now,
-                        targets["mentions"], project_name or tasks_dir.parent.name)
+                        targets["mentions"], project_name or tasks_dir.parent.name,
+                        finished=sections.get(now) == finish)
         try:
             if send is not None:
                 reply(targets["chat_id"], text,
