@@ -946,8 +946,9 @@ HOOK_REGISTRATION_FILE = {"claude": CLAUDE_SETTINGS, "codex": CODEX_HOOKS}
 # имени инструмента. Поэтому разрешение ловится синхронным `PermissionRequest`
 # (там есть `tool_name`), а `Notification` остаётся ожиданию ввода, и
 # `permission_prompt` из его фильтра **исключён**: иначе на одно разрешение
-# человек получит две карточки. У Codex события `Notification` нет вовсе — там
-# обе роли исполняет `PermissionRequest`.
+# человек получит две карточки. У Codex события `Notification` нет вовсе:
+# разрешение ловит `PermissionRequest`, а вопрос — `PreToolUse` инструмента
+# `request_user_input`, потому что сам вопрос разрешения не просит.
 #
 # **Уведомление не держит диалог доступа:** запись асинхронная, а короткий
 # таймаут страхует среду, которая `async` не понимает, — иначе она ждала бы
@@ -965,6 +966,8 @@ HOOK_REGISTRATIONS = {
     "codex": (
         {"event": "PostToolUse", "matcher": "Bash", "script": "work-hint.py"},
         {"event": "PermissionRequest", "matcher": "*",
+         "script": "permission-notify.py", "async": True, "timeout": 5},
+        {"event": "PreToolUse", "matcher": "request_user_input",
          "script": "permission-notify.py", "async": True, "timeout": 5},
     ),
 }

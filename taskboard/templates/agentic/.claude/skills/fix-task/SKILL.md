@@ -35,7 +35,7 @@ argument-hint: "<TASK-NNN | commit-hash>"
 
 Иначе:
 1. Попробуй определить по контексту разговора (последняя упоминавшаяся TASK-NNN, ссылка на коммит).
-2. Если неясно — используй инструмент вопроса (Claude Code: `AskUserQuestion`; opencode: `question`):
+2. Если неясно — используй инструмент вопроса (Claude Code: `AskUserQuestion`; opencode: `question`; Codex: `request_user_input`):
    - Q: "Какую задачу вернуть в разработку?"
    - Предложи варианты из `tasks/board.md` (разделы Review, Testing, Completed)
 
@@ -168,7 +168,7 @@ python3 tasks/set_status.py TASK-NNN <actions.return> --agent "<АГЕНТ>" --v
 <!-- review_sources -->
 **Замечания могут лежать в merge request** — тогда переписывать их руками не
 нужно. Спроси, откуда их брать, **одним** вызовом инструмента вопроса
-(`AskUserQuestion` / `question`):
+(Claude Code: `AskUserQuestion`; opencode: `question`; Codex: `request_user_input`):
 
 - header: "Источник замечаний"
 - Q: "Откуда будем брать замечания ревью?"
@@ -279,3 +279,6 @@ py tasks/set_status.py TASK-NNN --note "доработки по ревью за�
 <!-- review_sources -->
 - **Чтение MR**: если способ прочитать MR недоступен — всегда падай на свободную форму, не блокируйся
 <!-- /review_sources -->
+- **Инструмента вопроса в текущем режиме нет** (у Codex `request_user_input` по
+  умолчанию есть только в режиме Plan) — задай вопрос отдельной репликой:
+  варианты пронумеруй и попроси ответить номером, до ответа работу не продолжай.

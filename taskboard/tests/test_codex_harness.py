@@ -181,6 +181,33 @@ class CodexHooksTest(_Project):
         self.assertFalse((claude_root / ".claude" / "hooks"
                           / "permission-notify.py").exists())
 
+    def test_question_hook_registered_on_question_tool(self) -> None:
+        """У Codex нет события «задан вопрос»: вопрос ловится PreToolUse
+        инструмента `request_user_input` тем же обработчиком."""
+        self.deploy(CODEX_ONLY)
+        entry = self.registration()["hooks"]["PreToolUse"][0]
+
+        self.assertEqual("request_user_input", entry["matcher"])
+        handler = entry["hooks"][0]
+        self.assertIn(".codex/hooks/permission-notify.py", handler["command"])
+        self.assertTrue(handler["async"], "уведомление не должно задерживать вопрос")
+
+    def test_missing_question_registration_is_reported_and_restored(self) -> None:
+        """Проект, развёрнутый до этой регистрации, получает долг и кнопку."""
+        self.deploy(CODEX_ONLY)
+        data = self.registration()
+        data["hooks"].pop("PreToolUse")
+        (self.root / CODEX_HOOKS).write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+        self.assertEqual([CODEX_HOOKS],
+                         hooks_unregistered(self.root, self.cfg(CODEX_ONLY)))
+
+        register_hook(self.root, self.cfg(CODEX_ONLY))
+
+        self.assertTrue(hook_registered(self.root, "codex"))
+        self.assertIn("PreToolUse", self.registration()["hooks"])
+
     def test_missing_permission_registration_is_reported_and_restored(self) -> None:
         self.deploy(CODEX_ONLY)
         data = self.registration()
@@ -294,6 +321,49 @@ class PermissionNotifyHookTest(_Project):
         self.assertIn("warning", args)
         self.assertNotIn(secret, json.dumps(args, ensure_ascii=False))
         self.assertEqual("", done.stdout)
+
+    def fake_notify(self) -> Path:
+        self.tasks.mkdir(parents=True)
+        (self.tasks / "notify.py").write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "Path(__file__).with_name('called.json').write_text("
+            "json.dumps(sys.argv[1:], ensure_ascii=False), encoding='utf-8')\n",
+            encoding="utf-8")
+        return self.tasks / "called.json"
+
+    def test_question_notifies_waiting_for_answer(self) -> None:
+        """Вопрос не порождает PermissionRequest: его ловит PreToolUse
+        инструмента вопроса, и доска слышит «ждёт ответа», а не «разрешения»."""
+        called = self.fake_notify()
+        secret = "текст-вопроса"
+
+        done = self.call({
+            "hook_event_name": "PreToolUse",
+            "cwd": str(self.root),
+            "tool_name": "request_user_input",
+            "tool_input": {"questions": [{"question": secret}]},
+        })
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", done.stdout, "хук не должен решать за инструмент")
+        args = json.loads(called.read_text(encoding="utf-8"))
+        self.assertIn("ответа", args[0])
+        self.assertNotIn("разрешения", args[0])
+        self.assertEqual("info", args[args.index("--level") + 1])
+        self.assertEqual("Codex", args[args.index("--agent") + 1])
+        self.assertNotIn(secret, json.dumps(args, ensure_ascii=False))
+
+    def test_other_pre_tool_use_is_silent(self) -> None:
+        """Регистрация с матчером — не единственная защита: чужой инструмент
+        на PreToolUse уведомления не рождает."""
+        called = self.fake_notify()
+
+        done = self.call({"hook_event_name": "PreToolUse",
+                          "cwd": str(self.root), "tool_name": "Bash"})
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertFalse(called.exists())
 
     def test_missing_notify_script_is_silent(self) -> None:
         self.root.mkdir(parents=True)
