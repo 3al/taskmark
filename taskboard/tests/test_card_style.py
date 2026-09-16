@@ -199,7 +199,7 @@ class FrontendTest(unittest.TestCase):
     def test_help_explains_how_to_disable_age(self) -> None:
         text = HELP.read_text(encoding="utf-8")
 
-        self.assertIn("Ноль отключает показ", text)
+        self.assertRegex(text, r"возраст[^\n]*\(0 — выкл\)")
 
 
 if __name__ == "__main__":  # pragma: no cover

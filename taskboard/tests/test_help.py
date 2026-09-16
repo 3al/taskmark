@@ -68,6 +68,15 @@ class TestCrossLinks(unittest.TestCase):
                 self.assertIn(m.group(1), ids,
                               f'{path.name}: ссылка на несуществующий раздел: {href}')
 
+    def test_links_have_no_anchors(self) -> None:
+        # Окно помощи переключает раздел целиком и к заголовку не прокручивает,
+        # а ссылку «#…» внутри раздела открывает новой вкладкой в никуда
+        link_re = re.compile(r'\]\((?!https?:)([^)]*#[^)]*)\)')
+        for path in sorted(help_docs.DOCS_DIR.glob('*.md')):
+            text = re.sub(r'```.*?```', '', path.read_text(encoding='utf-8'), flags=re.S)
+            self.assertEqual(link_re.findall(text), [],
+                             f'{path.name}: ссылка с якорем не работает в окне помощи')
+
     def test_modal_intercepts_section_links(self) -> None:
         src = (FRONTEND / 'components' / 'HelpModal.jsx').read_text(encoding='utf-8')
         self.assertIn('setCurrent(target)', src,
