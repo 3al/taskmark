@@ -18,7 +18,7 @@ from backend import (autostart, baseline, changelog, console, due_watch, help_do
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, DEFAULTS,
-                            TELEGRAM_KEYS, PROJECT_KEYS,
+                            TELEGRAM_KEYS, PROJECT_KEYS, SECRET_KEYS,
                             add_assignee, add_criteria_preset, assignees,
                             card_style, criteria_presets,
                             custom_criteria_presets, load_global_config,
@@ -633,7 +633,9 @@ def api_health() -> dict:
     cfg = load_project_config(tasks_dir)
     report = validate_project(tasks_dir, cfg)
     report["ok"] = report["ok"] and True
-    return {"ok": report["ok"], "project": proj, "config": cfg, "report": report,
+    # Health читает любой процесс машины, а доске отсюда нужны только флаги вида
+    public = {k: v for k, v in cfg.items() if k not in SECRET_KEYS}
+    return {"ok": report["ok"], "project": proj, "config": public, "report": report,
             "capabilities": CAPABILITIES, "tool_dir": tool_dir,
             "version": version.current()}
 

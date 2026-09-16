@@ -283,6 +283,11 @@ TELEGRAM_KEYS = {"telegram", "telegram_token", "telegram_route",
                  "telegram_tag", "telegram_chats", "telegram_due_days",
                  "telegram_overdue_repeat"}
 
+# Значения, которые нельзя отдавать туда, где их не правят: токен бота и адрес
+# прокси (в нём бывают логин и пароль). Форма настроек получает их из
+# `/api/config`, остальным потребителям конфига они не нужны
+SECRET_KEYS = {"telegram_token", "telegram_proxy"}
+
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
                 "dnd_full_board", "harnesses", "vault", "delete_tasks",
                 # Ходить ли агенту во внешний форж — свойство репозитория и
