@@ -860,6 +860,86 @@ class ReplyPathTest(HandleTest):
         self.assertEqual(kwargs.get("api_root"), ts.API_ROOT)
 
 
+class MediaCaptionTest(HandleTest):
+    """Сообщение с картинкой или файлом: текст приходит подписью.
+
+    Путь сквозной — от апдейта Bot API через опрос очереди до ответа в чат:
+    подпись терялась именно на стыке источника и разбора.
+    """
+
+    def poll(self, *raws) -> int:
+        answer = {"ok": True, "result": list(raws)}
+        cfg = self.cfg()
+        return ts.poll_once(
+            cfg,
+            handle=lambda msg: intake.handle(msg, cfg=cfg, projects=self.projects,
+                                             send=self.send),
+            fetch=lambda url, payload: answer)
+
+    def raw(self, update_id: int, media: dict, caption: str | None = None,
+            **extra) -> dict:
+        message = {"message_id": update_id, "date": 1,
+                   "chat": {"id": -100, "title": "Разработка"},
+                   "from": {"id": 1, "username": "author"}, **media, **extra}
+        if caption is not None:
+            message["caption"] = caption
+        return {"update_id": update_id, "message": message}
+
+    PHOTO = {"photo": [{"file_id": "small"}, {"file_id": "big"}]}
+    DOCUMENT = {"document": {"file_id": "doc", "file_name": "скрин.png"}}
+
+    def created(self) -> list[str]:
+        path = self.tasks / "argv.json"
+        if not path.exists():
+            return []
+        argv = self.argv()
+        return [argv[argv.index("-t") + 1]]
+
+    def test_фото_с_подписью_создаёт_задачу(self):
+        self.poll(self.raw(5, self.PHOTO, "#задача Поправить вёрстку @kostya"))
+        self.assertEqual(["Поправить вёрстку"], self.created())
+        self.assertEqual(1, len(self.sent))
+        chat_id, text, reply_to = self.sent[0]
+        self.assertEqual((-100, 5), (chat_id, reply_to))
+        self.assertIn("TASK-042", text)
+
+    def test_файл_с_подписью_создаёт_задачу(self):
+        self.poll(self.raw(5, self.DOCUMENT, "#задача Поправить вёрстку @kostya"))
+        self.assertEqual(["Поправить вёрстку"], self.created())
+        self.assertIn("TASK-042", self.sent[0][1])
+
+    def test_альбом_даёт_одну_задачу(self):
+        album = {"media_group_id": "g1"}
+        self.poll(self.raw(5, {**self.PHOTO, **album},
+                           "#задача Поправить вёрстку @kostya"),
+                  self.raw(6, {**self.PHOTO, **album}),
+                  self.raw(7, {**self.PHOTO, **album}))
+        self.assertEqual(1, len(self.sent))
+        self.assertIn("TASK-042", self.sent[0][1])
+
+    def test_фото_без_подписи_молчит(self):
+        self.poll(self.raw(5, self.PHOTO))
+        self.assertEqual([], self.created())
+        self.assertEqual([], self.sent)
+
+    def test_подпись_отвечает_как_текст(self):
+        """Запрос работы и срок в подписи — тот же ответ, что без картинки."""
+        from datetime import date, timedelta
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        for words in ("#работа @kostya",
+                      f"#задача Сделать X @kostya #срок {yesterday}"):
+            with self.subTest(words=words):
+                self.sent.clear()
+                intake.handle(message(words, update_id=10, message_id=10),
+                              cfg=self.cfg(), projects=self.projects,
+                              send=self.send)
+                expected = self.sent[-1][1]
+                self.sent.clear()
+                self.poll(self.raw(11, self.PHOTO, words))
+                self.assertEqual(1, len(self.sent))
+                self.assertEqual(expected, self.sent[0][1])
+
+
 if __name__ == "__main__":
 
 

@@ -118,7 +118,7 @@ class TestClient(Base):
         self.assertEqual(payload["offset"], 42)
 
     def test_сообщение_без_текста_пропускается(self):
-        """Вход в группу, картинка, стикер — апдейты без текста нам не нужны."""
+        """Вход в группу, картинка без подписи, стикер — апдейты без текста нам не нужны."""
         silent = {"update_id": 7, "message": {"message_id": 7,
                                               "chat": {"id": -100, "title": "Р"}}}
         fake = Fake({"ok": True, "result": [silent, update(8)]})
