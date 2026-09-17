@@ -586,6 +586,14 @@ class FrontendTest(unittest.TestCase):
         self.assertIn("notice_kinds", source)
         self.assertIn("notice_sources", source)
 
+    def test_время_события_видно_в_карточке(self):
+        """Стопка, увиденная после разворачивания доски, не отвечает «когда»,
+        если карточка времени не показывает."""
+        notices_jsx = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("notice.ts", notices_jsx)
+        self.assertIn("toLocaleTimeString", notices_jsx)
+
     def test_время_показа_настраивается(self):
         """Число в JSX означало бы вторую копию настройки."""
         settings = (self.SRC / "components" / "SettingsModal.jsx").read_text(encoding="utf-8")

@@ -120,7 +120,14 @@ function Notice({ notice, activeProject, lifetime, volume, visible, paused,
   // Кто зовёт. Своим цветом, а не общим серым: уведомление от агента приходит
   // от имени конкретной модели, и это первое, что человек хочет знать, увидев
   // всплывашку, — у системных поводов автора нет вовсе
-  const meta = notice.agent || foreign
+  const meta = notice.agent || foreign || notice.ts
+  // Время **события**, а не показа: между ними свёрнутое окно и переподключение
+  // SSE, и стопка, увиденная после разворачивания доски, иначе не отвечает на
+  // вопрос «когда это было». Старое событие времени не везёт — тогда его просто
+  // нет, а не пусто на его месте
+  const at = notice.ts
+    ? new Date(notice.ts * 1000).toLocaleTimeString('ru-RU', { hour12: false })
+    : ''
 
   // Всплывашка не должна читаться как ещё одна карточка задачи, но и наклейкой
   // поверх доски тоже: отличают её корпус темнее любой колонки, цветная полоска
@@ -141,9 +148,16 @@ function Notice({ notice, activeProject, lifetime, volume, visible, paused,
           )}
           {meta && (
             <div className="mt-1 text-[11px] text-zinc-400">
-              {notice.agent && <span className="text-violet-300">{notice.agent}</span>}
-              {notice.agent && foreign && ' · '}
-              {foreign && `Проект: ${notice.project}`}
+              {/* Части строки собираются списком: у карточки может не быть ни
+                  автора, ни чужого проекта, а разделитель между отсутствующими
+                  оставлял бы висящую точку */}
+              {[
+                notice.agent && <span className="text-violet-300">{notice.agent}</span>,
+                foreign && `Проект: ${notice.project}`,
+                at,
+              ].filter(Boolean).map((part, index) => (
+                <span key={index}>{index > 0 && ' · '}{part}</span>
+              ))}
             </div>
           )}
         </div>
