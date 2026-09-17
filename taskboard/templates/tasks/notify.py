@@ -33,6 +33,19 @@ Python из Microsoft Store), `python3` (macOS/Linux).
   --task TASK-NNN         Задача, о которой речь (необязательно)
   --tasks-dir PATH        Папка задач (по умолчанию — папка этого скрипта)
 
+**Уведомление можно отозвать, когда повод отпал:**
+
+  py tasks/notify.py --dismiss        # всё, что сказала эта сессия
+  py tasks/notify.py --dismiss env    # только зовы среды: вопрос, разрешение
+
+Человек ответил в терминале — звать его больше незачем, и сказанное этой
+сессией с доски убирают. **Зовы среды и сообщения агента помечены по-разному**:
+конец хода агента снимает только зовы (`env`), потому что сообщение «работа
+готова» посылают ровно перед концом хода — гасить его там значит не показать
+вовсе. Метку сессии скрипт берёт из окружения среды сам; среда её не даёт —
+уведомление живёт по таймеру, как раньше. Обычно отзыв зовут не руками, а хуки
+среды.
+
 **Сказать не удалось — не беда.** Сервер не запущен, доска закрыта, источник
 выключен в настройках: скрипт скажет об этом строкой и завершится успешно.
 Уведомление вспомогательно, и ронять из-за него работу агента незачем.
@@ -40,6 +53,7 @@ Python из Microsoft Store), `python3` (macOS/Linux).
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -127,18 +141,58 @@ def project_name(tasks_dir: Path) -> str:
 # каждый своим цветом, и выдуманный уровень доехал бы серой карточкой
 LEVELS = ("info", "success", "warning", "error")
 
+# Где среды держат идентификатор своей сессии. Им помечается уведомление,
+# чтобы потом отозвать ровно свои: соседняя сессия и соседний проект зовут
+# человека по своим поводам, и гасить их чужим ответом нельзя
+SESSION_VARS = ("CLAUDE_CODE_SESSION_ID", "OPENCODE_SESSION_ID",
+                "CODEX_SESSION_ID")
+
+
+# Метки различают, кто сказал: хук среды («ждёт ответа», «ждёт разрешения»)
+# или сам агент («работа готова»). Разделены они ради конца хода агента: он
+# снимает зовы среды, но не сообщение, посланное прямо перед ним
+ENV_SCOPE = "env"
+AGENT_SCOPE = "agent"
+
+
+def session_key(scope: str = AGENT_SCOPE) -> str:
+    """Метка сессии агента или пустая строка, если среда её не называет."""
+    for name in SESSION_VARS:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return f"{scope}:{name}:{value}"
+    return ""
+
+
+def dismiss(tasks_dir: Path, scopes: tuple[str, ...]) -> dict:
+    """Убрать с доски сказанное этой сессией. Ошибки — как у отправки."""
+    answer = {"ok": True, "sent": False, "reason": "no_server"}
+    for scope in scopes:
+        key = session_key(scope)
+        if not key:
+            continue
+        result = _post(tasks_dir, "/api/notify/dismiss", {"key": key})
+        if result.get("sent"):
+            answer = result
+    return answer
+
 
 def notify(tasks_dir: Path, text: str, agent: str = "", task: str = "",
-           level: str = "") -> dict:
+           level: str = "", scope: str = AGENT_SCOPE) -> dict:
     """Отправить уведомление доске. Возвращает ответ сервера или причину молчания.
 
     Сетевая ошибка тут — обычное состояние, а не сбой: доску просто не
     запускали. Поэтому исключение наружу не идёт, а превращается в `reason`.
     """
-    payload = json.dumps({"text": text, "agent": agent, "task": task,
-                          "level": level, "project": project_name(tasks_dir)},
-                         ensure_ascii=False).encode("utf-8")
-    url = f"http://127.0.0.1:{server_port(tasks_dir)}/api/notify"
+    return _post(tasks_dir, "/api/notify",
+                 {"text": text, "agent": agent, "task": task, "level": level,
+                  "project": project_name(tasks_dir), "key": session_key(scope)})
+
+
+def _post(tasks_dir: Path, path: str, body: dict) -> dict:
+    """Позвать доску. Сетевая ошибка — обычное состояние, а не сбой."""
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    url = f"http://127.0.0.1:{server_port(tasks_dir)}{path}"
     request = urllib.request.Request(
         url, data=payload, method="POST",
         headers={"Content-Type": "application/json; charset=utf-8"})
@@ -164,8 +218,16 @@ def main() -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(
         description="Уведомить человека на доске: ход перешёл к нему")
-    parser.add_argument("text", help="Текст уведомления")
-    parser.add_argument("--agent", required=True,
+    parser.add_argument("text", nargs="?", default="",
+                        help="Текст уведомления")
+    parser.add_argument("--dismiss", nargs="?", const="all",
+                        choices=("all", ENV_SCOPE),
+                        help="Убрать сказанное этой сессией: всё или только "
+                             "зовы среды (env)")
+    parser.add_argument("--scope", default=AGENT_SCOPE,
+                        choices=(AGENT_SCOPE, ENV_SCOPE),
+                        help="Чьё это уведомление: агента или среды")
+    parser.add_argument("--agent", default="",
                         help="Кто зовёт: своя модель из текущей сессии")
     parser.add_argument("--level", default="info", choices=LEVELS,
                         help="Тон: info | success | warning | error")
@@ -174,14 +236,30 @@ def main() -> int:
                         help="Папка задач (по умолчанию — папка этого скрипта)")
     args = parser.parse_args()
 
+    tasks_dir = Path(args.tasks_dir) if args.tasks_dir else Path(__file__).parent
+
+    if args.dismiss:
+        # Метки нет — гасить нечего: среда своей сессии не называет, и
+        # уведомления этой сессии ничем не помечены
+        if not session_key():
+            print("[i] среда не называет сессию — отзывать нечего")
+            return 0
+        scopes = (ENV_SCOPE,) if args.dismiss == ENV_SCOPE else (ENV_SCOPE, AGENT_SCOPE)
+        print("[OK] сказанное этой сессией убрано с доски"
+              if dismiss(tasks_dir, scopes).get("sent")
+              else "[i] убирать нечего: доска не открыта или карточки уже истаяли")
+        return 0
+
     text = args.text.strip()
     if not text:
         print("[ERROR] пустое уведомление не показывают", file=sys.stderr)
         return 2
-
-    tasks_dir = Path(args.tasks_dir) if args.tasks_dir else Path(__file__).parent
+    if not args.agent.strip():
+        # Отказ разбора, а не свой код возврата: без имени модели всплывашка
+        # говорит «вас зовут», не называя кто
+        parser.error("--agent обязателен: представьтесь своей моделью")
     result = notify(tasks_dir, text, args.agent.strip(), args.task.strip(),
-                    args.level)
+                    args.level, args.scope)
     if result.get("sent"):
         print(f"[OK] уведомление показано: {text}")
         return 0

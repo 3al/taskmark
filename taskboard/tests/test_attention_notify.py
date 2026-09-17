@@ -214,12 +214,20 @@ class _HookCall(_Project):
             encoding="utf-8")
         return self.tasks / "called.json"
 
-    def calls(self) -> list:
+    def _log(self) -> list:
         log = self.tasks / "calls.log"
         if not log.is_file():
             return []
         return [json.loads(line) for line in
                 log.read_text(encoding="utf-8").splitlines() if line]
+
+    def calls(self) -> list:
+        """Вызовы, которыми человека звали: отзыв — не зов."""
+        return [args for args in self._log() if "--dismiss" not in args]
+
+    def dismissals(self) -> list:
+        """Вызовы, которыми сказанное убирали с доски."""
+        return [args for args in self._log() if "--dismiss" in args]
 
 
 class AttentionHookBehaviourTest(_HookCall):
@@ -342,7 +350,7 @@ class AttentionHookBehaviourTest(_HookCall):
 
     def test_foreign_event_is_silent(self) -> None:
         called = self.fake_notify()
-        done = self.call({"hook_event_name": "PostToolUse", "cwd": str(self.root)})
+        done = self.call({"hook_event_name": "PreToolUse", "cwd": str(self.root)})
 
         self.assertEqual(0, done.returncode)
         self.assertFalse(called.exists())
@@ -436,6 +444,73 @@ class IdleDelayTest(_HookCall):
 
         self.wait_past_delay()
         self.assertEqual(2, len(self.calls()))
+
+
+class DismissTest(_HookCall):
+    """Повод отпал — сказанное доске убирают, не дожидаясь таймера."""
+
+    SESSION = "сессия-1"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.fake_notify()
+
+    def event(self, name: str, **extra) -> None:
+        done = self.call({"hook_event_name": name, "cwd": str(self.root),
+                          "session_id": self.SESSION, **extra})
+        self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_reply_dismisses_what_was_said(self) -> None:
+        self.event("Notification", notification_type="idle_prompt")
+        self.event("UserPromptSubmit", prompt="поехали")
+
+        self.assertEqual(1, len(self.dismissals()))
+
+    def test_end_of_turn_dismisses_too(self) -> None:
+        """Отклонённое разрешение своего события не даёт — снимает конец хода."""
+        self.event("PermissionRequest", tool_name="Bash")
+        self.event("Stop")
+
+        self.assertEqual(1, len(self.dismissals()))
+
+    def test_answer_to_a_question_dismisses_at_once(self) -> None:
+        """Ответ закрывает вызов инструмента вопроса — это и есть момент."""
+        self.event("PermissionRequest", tool_name="AskUserQuestion")
+        self.event("PostToolUse", tool_name="AskUserQuestion")
+
+        self.assertEqual(1, len(self.dismissals()))
+        self.assertEqual(1, len(self.calls()), "зов был один")
+
+    def test_cancelled_question_dismisses_too(self) -> None:
+        self.event("PermissionRequest", tool_name="AskUserQuestion")
+        self.event("PostToolUseFailure", tool_name="AskUserQuestion")
+
+        self.assertEqual(1, len(self.dismissals()))
+
+    def test_end_of_turn_keeps_what_the_agent_said(self) -> None:
+        """«Работа готова» агент шлёт прямо перед концом хода: снять её там
+        значит не показать вовсе. Конец хода убирает только зовы среды."""
+        self.event("Stop")
+
+        self.assertEqual(["--dismiss", "env"], self.dismissals()[0])
+
+    def test_reply_removes_everything_said(self) -> None:
+        """Ответил в терминале — значит уже прочёл всё, что сказала сессия."""
+        self.event("UserPromptSubmit", prompt="дальше")
+
+        self.assertEqual(["--dismiss", "all"], self.dismissals()[0])
+
+    def test_project_without_the_script_stays_silent(self) -> None:
+        """Поставка старше уведомлений — отзывать нечем, и это не сбой."""
+        self._tmp.cleanup()
+        self.setUp()
+        (self.tasks / "notify.py").unlink()
+
+        done = self.call({"hook_event_name": "Stop", "cwd": str(self.root),
+                          "session_id": self.SESSION})
+
+        self.assertEqual(0, done.returncode)
+        self.assertEqual("", done.stderr)
 
 
 class WaiterProcessTest(unittest.TestCase):

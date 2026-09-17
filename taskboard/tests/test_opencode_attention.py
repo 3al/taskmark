@@ -179,6 +179,16 @@ class OpencodeAttentionBehaviourTest(_Project):
         time.sleep(2)
         self.assertFalse(called.exists(), "звать было не за чем")
 
+    def assert_dismisses(self, event: dict) -> None:
+        """Повод отпал: плагин просит доску снять сказанное этой сессией."""
+        called = self.fake_notify()
+        done = self.fire(event)
+        self.assertEqual(0, done.returncode, done.stderr)
+        time.sleep(2)
+        self.assertTrue(called.exists(), "отзыв не ушёл")
+        self.assertEqual(["--dismiss", "env"],
+                         json.loads(called.read_text(encoding="utf-8")))
+
     def test_question_calls_for_an_answer(self) -> None:
         args = self.args_for(self.question())
 
@@ -203,14 +213,23 @@ class OpencodeAttentionBehaviourTest(_Project):
                 self._tmp.cleanup()
                 self.setUp()
 
-    def test_other_events_are_silent(self) -> None:
-        """Конец реплики и ответ человека не зовут: это не его ход."""
-        self.assert_silent({"type": "session.idle",
-                            "properties": {"sessionID": "ses_1"}})
+    def test_other_events_do_not_call(self) -> None:
+        """Конец хода не зовёт — но сказанное раньше уже никого не ждёт."""
+        self.assert_dismisses({"type": "session.idle",
+                               "properties": {"sessionID": "ses_1"}})
 
-    def test_replied_is_silent(self) -> None:
-        self.assert_silent({"type": "question.replied", "properties": {
+    def test_answer_dismisses_what_was_said(self) -> None:
+        self.assert_dismisses({"type": "question.replied", "properties": {
             "sessionID": "ses_1", "requestID": "que_1", "answers": [["A"]]}})
+
+    def test_permission_decision_dismisses_at_once(self) -> None:
+        """Решение по разрешению шина называет прямо — ждать конца хода незачем."""
+        self.assert_dismisses({"type": "permission.replied", "properties": {
+            "sessionID": "ses_1", "permissionID": "per_1", "response": "once"}})
+
+    def test_unrelated_event_stays_silent(self) -> None:
+        self.assert_silent({"type": "file.edited",
+                            "properties": {"file": "README.md"}})
 
     def test_missing_notify_script_is_silent(self) -> None:
         """Поставка старше уведомлений — не сбой."""

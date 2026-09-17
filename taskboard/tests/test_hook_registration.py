@@ -24,11 +24,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import DEFAULTS  # noqa: E402
-from backend.scaffold import (hook_registered, register_hook,  # noqa: E402
+from backend.scaffold import (HOOK_REGISTRATIONS, hook_registered,  # noqa: E402
+                              register_hook,
                               scaffold_project, unregister_hook)
 from backend.validator import validate_project  # noqa: E402
 
 CLAUDE_ONLY = {"claude": True, "opencode": False}
+
+
+# Сколько записей поставки живёт в одном событии `PostToolUse` у Claude Code:
+# подсказка о коммите (по `Bash`) и снятие сказанного доске после ответа на
+# вопрос (по инструменту вопроса). Считается по реестру, а не числом в тесте:
+# запись, добавленная в поставку, не должна ронять соседние проверки
+OURS_IN_POST_TOOL_USE = sum(spec["event"] == "PostToolUse"
+                            for spec in HOOK_REGISTRATIONS["claude"])
 
 
 class RegistrationTest(unittest.TestCase):
@@ -83,14 +92,15 @@ class RegistrationTest(unittest.TestCase):
 
         entries = self.read()["hooks"]["PostToolUse"]
         self.assertIn(foreign, entries)
-        self.assertEqual(2, len(entries))
+        self.assertEqual(OURS_IN_POST_TOOL_USE + 1, len(entries))
 
     def test_registration_is_idempotent(self) -> None:
         self.deploy()
         register_hook(self.root, self.cfg)
         register_hook(self.root, self.cfg)
 
-        self.assertEqual(1, len(self.read()["hooks"]["PostToolUse"]))
+        self.assertEqual(OURS_IN_POST_TOOL_USE,
+                         len(self.read()["hooks"]["PostToolUse"]))
 
     def test_emptied_entry_is_reused(self) -> None:
         """Команду вынули руками: своя возвращается на место, а не дублем рядом."""
@@ -102,7 +112,8 @@ class RegistrationTest(unittest.TestCase):
         register_hook(self.root, self.cfg)
 
         entries = self.read()["hooks"]["PostToolUse"]
-        self.assertEqual(1, len(entries), "мёртвая запись должна быть занята, а не удвоена")
+        self.assertEqual(OURS_IN_POST_TOOL_USE, len(entries),
+                         "мёртвая запись должна быть занята, а не удвоена")
         self.assertTrue(hook_registered(self.root))
 
     def test_dead_leftovers_are_collapsed(self) -> None:
@@ -115,7 +126,7 @@ class RegistrationTest(unittest.TestCase):
         register_hook(self.root, self.cfg)
 
         entries = self.read()["hooks"]["PostToolUse"]
-        self.assertEqual(1, len(entries), entries)
+        self.assertEqual(OURS_IN_POST_TOOL_USE, len(entries), entries)
         self.assertTrue(hook_registered(self.root))
 
     def test_foreign_entry_with_commands_is_not_taken(self) -> None:
@@ -130,7 +141,7 @@ class RegistrationTest(unittest.TestCase):
 
         entries = self.read()["hooks"]["PostToolUse"]
         self.assertIn(foreign, entries)
-        self.assertEqual(2, len(entries))
+        self.assertEqual(OURS_IN_POST_TOOL_USE + 1, len(entries))
 
     def test_unregister_removes_only_ours(self) -> None:
         foreign = {"matcher": "Edit",

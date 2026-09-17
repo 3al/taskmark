@@ -320,16 +320,38 @@ def emit(kind: str, text: str = "", level: str = "", **fields) -> dict | None:
     # опечатка в ключе не должна выглядеть как «человек это отключил»
     if not enabled(kind):
         return None
+    return notice if _send(notice) else None
+
+
+def _send(event: dict) -> bool:
+    """Отправить событие в канал. `False` — отправить не удалось или некому.
+
+    Канал без подписчиков — это не доставка: истории у службы нет, и
+    уведомление, ушедшее в пустую комнату, не увидит уже никто. Отчитаться
+    об отправке значит сказать агенту, что человека позвали, — а его не звали.
+    """
     sender = _sender
-    if sender is None:
-        return None
-    # Канал без подписчиков — это не доставка: истории у службы нет, и
-    # уведомление, ушедшее в пустую комнату, не увидит уже никто. Отчитаться
-    # об отправке значит сказать агенту, что человека позвали, — а его не звали
-    if audience() == 0:
-        return None
+    if sender is None or audience() == 0:
+        return False
     try:
-        sender(encode(notice))
+        sender(encode(event))
     except Exception:
+        return False
+    return True
+
+
+def dismiss(key: str) -> dict | None:
+    """Убрать с доски уведомления с меткой `key`: повод отпал.
+
+    Метку ставит источник — сессия агента, — он же её и отзывает: человек
+    ответил в терминале, а карточка, висящая после ответа, врёт о том, что
+    кто-то его ждёт.
+
+    **Пустая метка не отзывает ничего:** она погасила бы всю стопку, включая
+    уведомления соседних сессий и проектов.
+    """
+    key = str(key or "").strip()
+    if not key:
         return None
-    return notice
+    event = {"event": "notice_dismiss", "key": key}
+    return event if _send(event) else None

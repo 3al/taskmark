@@ -200,6 +200,9 @@ class NotifyIn(BaseModel):
     agent: str | None = None
     project: str | None = None
     task: str | None = None
+    # Метка источника: по ней уведомление потом отзывают, когда повод отпал.
+    # Обычно сессия среды агента — её же отзывает её собственный хук
+    key: str | None = None
 
 
 class CriteriaPresetIn(BaseModel):
@@ -620,9 +623,29 @@ def api_notify(body: NotifyIn) -> dict:
     if not notices.enabled(body.kind):
         return {"ok": True, "sent": False, "reason": "disabled"}
     notice = notices.emit(body.kind, text, level, agent=body.agent,
-                          project=body.project, task=body.task)
+                          project=body.project, task=body.task, key=body.key)
     return {"ok": True, "sent": notice is not None,
             "reason": "" if notice else "no_listeners"}
+
+
+class DismissIn(BaseModel):
+    # Метка, которой источник пометил свои уведомления при отправке
+    key: str
+
+
+@app.post("/api/notify/dismiss")
+def api_notify_dismiss(body: DismissIn) -> dict:
+    """Убрать с доски то, что больше не ждёт человека.
+
+    Зовёт тот же, кто звал: хук среды видит момент, когда человек ответил, а
+    висящая после этого карточка говорит неправду. Доска закрыта или карточки
+    уже истаяли — отзывать нечего, и это не ошибка.
+    """
+    key = (body.key or "").strip()
+    if not key:
+        raise HTTPException(400, "Отзыв без метки погасил бы чужие уведомления")
+    return {"ok": True, "sent": notices.dismiss(key) is not None,
+            "reason": "" if notices.audience() else "no_listeners"}
 
 
 @app.get("/api/health")

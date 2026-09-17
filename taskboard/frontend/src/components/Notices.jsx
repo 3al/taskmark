@@ -95,6 +95,12 @@ function Notice({ notice, activeProject, lifetime, volume, visible, paused,
     if (closingAll && !leaving) close()
   }, [closingAll, leaving, close])
 
+  // Отозванная карточка уходит так же: повод отпал, но исчезновение всё равно
+  // должно читаться — иначе угол экрана моргает
+  useEffect(() => {
+    if (notice.dismissed && !leaving) close()
+  }, [notice.dismissed, leaving, close])
+
   useEffect(() => {
     // Ноль — «не гасить само»: таймера просто нет, уведомление ждёт крестика.
     // Уходящая карточка досчитывать тоже не должна.

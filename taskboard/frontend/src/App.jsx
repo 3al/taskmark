@@ -386,6 +386,10 @@ export default function App() {
     (notice) => setNotices((prev) => [
       ...prev.slice(-4), { ...notice, id: ++noticeSeq.current },
     ]),
+    // Отзыв: карточку не стираем из списка, а помечаем — уходит она тем же
+    // путём, что и по крестику, вместе с анимацией
+    (key) => setNotices((prev) => prev.map(
+      (n) => (n.key === key ? { ...n, dismissed: true } : n))),
   ), [refresh])
 
   const closeNotice = useCallback(

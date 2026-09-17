@@ -122,11 +122,11 @@
 | Среда | Файл | Подключение |
 |---|---|---|
 | Claude Code | `.claude/hooks/work-hint.py` | `.claude/settings.json` |
-| Claude Code | `.claude/hooks/attention-notify.py` | `PermissionRequest`, `Notification`, `UserPromptSubmit` и `Stop` в `.claude/settings.json` |
+| Claude Code | `.claude/hooks/attention-notify.py` | `PermissionRequest`, `Notification`, `UserPromptSubmit`, `Stop` и ответ на вопрос в `.claude/settings.json` |
 | opencode | `.opencode/plugin/work-hint.js` | подхватывается сам |
 | opencode | `.opencode/plugin/attention-notify.js` | подхватывается сам |
 | Codex | `.codex/hooks/work-hint.py` | `.codex/hooks.json` |
-| Codex | `.codex/hooks/permission-notify.py` | `PermissionRequest` и `PreToolUse` (вопрос) в `.codex/hooks.json` |
+| Codex | `.codex/hooks/permission-notify.py` | `PermissionRequest`, `PreToolUse` (вопрос), ответ на вопрос, `UserPromptSubmit` и `Stop` в `.codex/hooks.json` |
 
 **Подсказка при коммите** (`work-hint`). Коммит, `push` или запрос на слияние при
 задаче в работе — агенту напоминают, что передачу ведёт скилл. Ничего не
@@ -143,6 +143,10 @@
   Code). Приходит один раз за ожидание и не раньше, чем через заданную задержку:
   **Настройки (⚙) → Вид доски → «Простой терминала, мин»**, см.
   [«Доска»](02-board.md).
+
+Ответили агенту, ответили на вопрос или решили по запросу разрешения — эти
+уведомления уходят с доски сами, вместе с прежними сообщениями той же сессии.
+Уведомления соседней сессии и другого проекта остаются: они ждут своего ответа.
 
 У Codex инструмент вопроса по умолчанию есть только в режиме Plan. В режиме
 Default его включает экспериментальная функция:

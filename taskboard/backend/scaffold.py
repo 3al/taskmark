@@ -960,6 +960,12 @@ HOOK_REGISTRATION_FILE = {"claude": CLAUDE_SETTINGS, "codex": CODEX_HOOKS}
 # таймаут страхует среду, которая `async` не понимает, — иначе она ждала бы
 # обработчик дефолтные десять минут.
 #
+# **Отпавший повод убирают с доски.** Реплика человека, конец хода агента и
+# ответ на заданный вопрос — моменты, когда звать больше некого; обработчик в
+# них просит доску снять уведомления своей сессии. У вопроса момент точный
+# (среда закрывает вызов инструмента вопроса), у отклонённого разрешения
+# события нет вовсе — его карточку снимает конец хода.
+#
 # **Простой зовёт с задержкой и раз на ожидание.** Ожидание открывают реплика
 # человека (`UserPromptSubmit`) и конец хода агента (`Stop`): по ним обработчик
 # сбрасывает отметку, а отложенная проверка простоя сверяется с ней. Обе записи
@@ -977,12 +983,22 @@ HOOK_REGISTRATIONS = {
          "script": "attention-notify.py", "async": True, "timeout": 5},
         {"event": "Stop", "matcher": "*",
          "script": "attention-notify.py", "async": True, "timeout": 5},
+        {"event": "PostToolUse", "matcher": "AskUserQuestion",
+         "script": "attention-notify.py", "async": True, "timeout": 5},
+        {"event": "PostToolUseFailure", "matcher": "AskUserQuestion",
+         "script": "attention-notify.py", "async": True, "timeout": 5},
     ),
     "codex": (
         {"event": "PostToolUse", "matcher": "Bash", "script": "work-hint.py"},
         {"event": "PermissionRequest", "matcher": "*",
          "script": "permission-notify.py", "async": True, "timeout": 5},
         {"event": "PreToolUse", "matcher": "request_user_input",
+         "script": "permission-notify.py", "async": True, "timeout": 5},
+        {"event": "PostToolUse", "matcher": "request_user_input",
+         "script": "permission-notify.py", "async": True, "timeout": 5},
+        {"event": "UserPromptSubmit", "matcher": "*",
+         "script": "permission-notify.py", "async": True, "timeout": 5},
+        {"event": "Stop", "matcher": "*",
          "script": "permission-notify.py", "async": True, "timeout": 5},
     ),
 }

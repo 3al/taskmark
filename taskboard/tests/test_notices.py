@@ -434,6 +434,61 @@ class LifetimeTest(unittest.TestCase):
         self.assertEqual(6, notices.normalize_seconds(None, 6))
 
 
+class DismissTest(unittest.TestCase):
+    """Отзыв: повод отпал — карточку с доски убирают, не дожидаясь таймера."""
+
+    def setUp(self) -> None:
+        self.sent: list[str] = []
+        notices.bind(self.sent.append, lambda: 1)
+        self.addCleanup(notices.bind, None)
+
+    def test_метка_источника_едет_в_событии(self):
+        notices.emit("agent", "TASK-001 на проверке", key="сессия-1")
+
+        self.assertEqual("сессия-1", json.loads(self.sent[0])["key"])
+
+    def test_без_метки_поля_нет(self):
+        """Показывающая сторона отличает «метки нет» от «метка пустая»."""
+        notices.emit("agent", "просто сообщение")
+
+        self.assertNotIn("key", json.loads(self.sent[0]))
+
+    def test_отзыв_едет_тем_же_каналом(self):
+        notices.dismiss("сессия-1")
+
+        event = json.loads(self.sent[0])
+        self.assertEqual("notice_dismiss", event["event"])
+        self.assertEqual("сессия-1", event["key"])
+
+    def test_отзыв_без_метки_не_шлётся(self):
+        """Пустая метка погасила бы всё подряд."""
+        self.assertIsNone(notices.dismiss(""))
+        self.assertEqual([], self.sent)
+
+    def test_отзыв_молчит_без_слушателей(self):
+        notices.bind(self.sent.append, lambda: 0)
+
+        self.assertIsNone(notices.dismiss("сессия-1"))
+        self.assertEqual([], self.sent)
+
+    def test_эндпоинт_отзыва_отвечает_причиной(self):
+        from backend import app as app_module
+
+        with mock.patch.object(notices, "audience", return_value=0):
+            answer = app_module.api_notify_dismiss(app_module.DismissIn(key="сессия-1"))
+
+        self.assertFalse(answer["sent"])
+        self.assertEqual("no_listeners", answer["reason"])
+
+    def test_эндпоинт_отзыва_требует_метку(self):
+        from fastapi import HTTPException
+
+        from backend import app as app_module
+
+        with self.assertRaises(HTTPException):
+            app_module.api_notify_dismiss(app_module.DismissIn(key="  "))
+
+
 class IdleDelayTest(unittest.TestCase):
     """Через сколько минут простоя терминала звать человека."""
 
@@ -585,6 +640,17 @@ class FrontendTest(unittest.TestCase):
 
         self.assertIn("notice_kinds", source)
         self.assertIn("notice_sources", source)
+
+    def test_карточка_уходит_по_отзыву(self):
+        """Отзыв убирает карточку тем же путём, что и крестик."""
+        api = (self.SRC / "api.js").read_text(encoding="utf-8")
+        app = (self.SRC / "App.jsx").read_text(encoding="utf-8")
+        notices_jsx = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("notice_dismiss", api)
+        self.assertIn("onDismiss", api)
+        self.assertIn("dismissed", app)
+        self.assertIn("dismissed", notices_jsx)
 
     def test_время_события_видно_в_карточке(self):
         """Стопка, увиденная после разворачивания доски, не отвечает «когда»,

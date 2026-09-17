@@ -168,7 +168,7 @@ export const api = {
 }
 
 // Подписка на живые обновления (SSE)
-export function subscribeChanges(onChange, onUpdate, onNotice) {
+export function subscribeChanges(onChange, onUpdate, onNotice, onDismiss) {
   const source = new EventSource('/api/events')
   let opened = false
   // Переподключение после обрыва (перезапуск сервера, сон машины): события,
@@ -189,6 +189,13 @@ export function subscribeChanges(onChange, onUpdate, onNotice) {
         notice = JSON.parse(event.data)
       } catch {
         return  // чужая или битая строка: доске она ничем не мешает
+      }
+      // Отзыв: повод отпал, и карточки с этой меткой пора убрать. Едет тем
+      // же каналом и отличается словом события — второго соединения ради
+      // одного объекта заводить незачем
+      if (notice?.event === 'notice_dismiss') {
+        if (notice.key) onDismiss?.(notice.key)
+        return
       }
       if (notice?.event !== 'notice') return
       // Точка «доступна новая версия» — второй показ того же события, а не

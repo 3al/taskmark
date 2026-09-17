@@ -36,6 +36,16 @@
 от нас не зависит. Пометки лежат во временной папке системы, по файлу на
 сессию, — в проект пользователя они не пишутся.
 
+**Отпавший повод убирают с доски.** Реплика человека, конец хода агента и
+ответ на заданный вопрос означают, что звать больше некого: висящая карточка
+после этого врёт. В эти моменты обработчик просит скрипт доски убрать сказанное
+**своей** сессией — соседние сессии и проекты зовут по своим поводам.
+
+**Конец хода снимает только зовы среды.** Сообщение агента («работа готова,
+проверьте») посылают ровно перед концом хода: снять его там значит не показать
+вовсе. Поэтому зовы обработчика помечены отдельно (`--scope env`), и `Stop`
+убирает только их, а реплика человека — всё сказанное сессией.
+
 **Ни текст среды, ни команда инструмента не пересылаются.** В них может
 оказаться секрет; доске достаточно знать, что человека ждут.
 
@@ -87,6 +97,15 @@ AGENT = "Claude Code"
 IDLE = "idle_prompt"
 # События, открывающие новое ожидание: человек ответил или агент кончил ход
 WAIT_RESET = {"UserPromptSubmit", "Stop"}
+# Ответ на заданный вопрос: среда закрывает вызов инструмента вопроса — это
+# единственный момент, когда точно известно, что человек ответил. Отклонённое
+# разрешение такого события не даёт вовсе, поэтому его карточку убирает конец
+# хода агента
+ANSWERED = {"PostToolUse", "PostToolUseFailure"}
+# Что снимать в этот момент: «env» — только зовы среды, «all» — и сообщения
+# агента. Ответ человека читает и то и другое, конец хода — лишь свои зовы
+DISMISS_SCOPE = {"UserPromptSubmit": "all", "Stop": "env",
+                 "PostToolUse": "env", "PostToolUseFailure": "env"}
 # Задержка, если настройку на доске не сохраняли. Дубль умолчания из
 # backend/config.py: хук автономен и конфига может не найти вовсе
 DEFAULT_IDLE_MINUTES = 3
@@ -160,15 +179,14 @@ def start_wait(session: str) -> None:
     write_state(session, {"since": time.time()})
 
 
-def send(root: Path, text: str, level: str) -> None:
+def run_notify(root: Path, args: list[str]) -> None:
     """Позвать скрипт доски. Отказ на работу среды не влияет."""
     # Скрипт печатает по-русски, и на Windows без этого он ответил бы в
     # кодировке консоли — а вывод мы всё равно гасим, но падать на нём незачем
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     try:
         subprocess.run(
-            [sys.executable, str(root / "tasks" / "notify.py"), text,
-             "--agent", AGENT, "--level", level],
+            [sys.executable, str(root / "tasks" / "notify.py"), *args],
             cwd=root,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -180,6 +198,17 @@ def send(root: Path, text: str, level: str) -> None:
         )
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+def dismiss(root: Path, scope: str) -> None:
+    """Убрать с доски сказанное этой сессией: ждать больше некого."""
+    run_notify(root, ["--dismiss", scope])
+
+
+def send(root: Path, text: str, level: str) -> None:
+    """Сказать доске, что человека ждут. Зов среды помечается своим видом."""
+    run_notify(root, [text, "--agent", AGENT, "--level", level,
+                      "--scope", "env"])
 
 
 def console_less_python() -> str:
@@ -281,8 +310,14 @@ def main() -> int:
     except (json.JSONDecodeError, OSError, ValueError):
         return 0
     event = payload.get("hook_event_name")
-    if event in WAIT_RESET:
-        start_wait(str(payload.get("session_id") or ""))
+    root = project_root(payload)
+    if event in WAIT_RESET or event in ANSWERED:
+        # Ожидание кончилось: новое начинается отсюда, а сказанное доске
+        # больше не ждёт человека
+        if event in WAIT_RESET:
+            start_wait(str(payload.get("session_id") or ""))
+        if root is not None:
+            dismiss(root, DISMISS_SCOPE.get(str(event), "env"))
         return 0
     if event == "PermissionRequest":
         moment = (QUESTION if payload.get("tool_name") in ASK_TOOLS
@@ -295,7 +330,6 @@ def main() -> int:
         return 0
     text, level = moment
 
-    root = project_root(payload)
     if root is None:
         return 0
     if event == "Notification" and payload.get("notification_type") == IDLE:
