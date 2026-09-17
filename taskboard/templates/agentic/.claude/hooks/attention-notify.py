@@ -18,6 +18,16 @@
 концом уже сказанного и отличить вопрос от разрешения не даёт вовсе — тот же
 текст, никакого имени инструмента.
 
+**Простой зовёт не сразу и один раз на ожидание.** Среда сообщает о нём
+примерно через минуту после конца реплики, когда человек ещё читает ответ.
+Поэтому `idle_prompt` помечает ожидание и запускает отсоединённую проверку:
+через задержку из настроек доски (`notice_idle_minutes` глобального конфига)
+она зовёт, только если ожидание всё то же. Новое ожидание открывают реплика
+человека (`UserPromptSubmit`) и конец хода агента (`Stop`) — они стирают
+пометку. Повторный `idle_prompt` при живой пометке молчит: сколько раз среда
+его шлёт, от нас не зависит. Пометки лежат во временной папке системы, по
+файлу на сессию, — в проект пользователя они не пишутся.
+
 **Ни текст среды, ни команда инструмента не пересылаются.** В них может
 оказаться секрет; доске достаточно знать, что человека ждут.
 
@@ -31,8 +41,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
+import time
+import uuid
 from pathlib import Path
 
 # Что сказать человеку, когда работа встала до его решения в диалоге доступа.
@@ -61,6 +75,19 @@ MOMENTS = {
 # всплывашке врала бы о том, кто работает
 AGENT = "Claude Code"
 
+# Вид момента, который зовёт с задержкой и раз на ожидание
+IDLE = "idle_prompt"
+# События, открывающие новое ожидание: человек ответил или агент кончил ход
+WAIT_RESET = {"UserPromptSubmit", "Stop"}
+# Задержка, если настройку на доске не сохраняли. Дубль умолчания из
+# backend/config.py: хук автономен и конфига может не найти вовсе
+DEFAULT_IDLE_MINUTES = 3
+# Папка пометок ожидания — во временной папке системы, не в проекте
+STATE_DIR = "taskboard-attention"
+# Шаг сна отложенной проверки, секунды: чаще смотреть незачем, реже — значит
+# держать процесс после того, как человек уже ответил
+WAIT_STEP = 5
+
 # Сколько ждём скрипт доски. Он и сам не ждёт дольше секунды, но процесс
 # запускается на Windows не мгновенно
 TIMEOUT = 3
@@ -75,26 +102,52 @@ def project_root(payload: dict) -> Path | None:
     return None
 
 
-def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, OSError, ValueError):
-        return 0
-    event = payload.get("hook_event_name")
-    if event == "PermissionRequest":
-        moment = (QUESTION if payload.get("tool_name") in ASK_TOOLS
-                  else PERMISSION)
-    elif event == "Notification":
-        moment = MOMENTS.get(str(payload.get("notification_type") or ""))
-    else:
-        moment = None
-    if moment is None:
-        return 0
-    text, level = moment
+def _no_window() -> int:
+    """Флаг запуска без консольного окна: у отложенной проверки консоли нет,
+    и консольный скрипт иначе получил бы собственное окно."""
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-    root = project_root(payload)
-    if root is None:
-        return 0
+
+def idle_minutes() -> float:
+    """Задержка уведомления о простое из глобального конфига доски."""
+    try:
+        data = json.loads((Path.home() / ".taskboard" / "config.json")
+                          .read_text(encoding="utf-8"))
+        return max(0.0, float(data["notice_idle_minutes"]))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return float(DEFAULT_IDLE_MINUTES)
+
+
+def state_file(session: str) -> Path:
+    """Файл пометки ожидания одной сессии среды."""
+    name = re.sub(r"[^\w.-]", "_", session) or "default"
+    return Path(tempfile.gettempdir()) / STATE_DIR / f"{name}.json"
+
+
+def read_mark(session: str) -> str:
+    """Пометка текущего ожидания или пустая строка, если ожидание новое."""
+    try:
+        data = json.loads(state_file(session).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(data.get("idle") or "") if isinstance(data, dict) else ""
+
+
+def write_mark(session: str, mark: str) -> None:
+    """Пометить ожидание; пустая пометка открывает новое."""
+    path = state_file(session)
+    try:
+        if not mark:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"idle": mark}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def send(root: Path, text: str, level: str) -> None:
+    """Позвать скрипт доски. Отказ на работу среды не влияет."""
     # Скрипт печатает по-русски, и на Windows без этого он ответил бы в
     # кодировке консоли — а вывод мы всё равно гасим, но падать на нём незачем
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
@@ -109,9 +162,124 @@ def main() -> int:
             timeout=TIMEOUT,
             check=False,
             env=env,
+            creationflags=_no_window(),
         )
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+def console_less_python() -> str:
+    """Интерпретатор, не показывающий консольного окна.
+
+    На Windows `python.exe` — консольное приложение: у отсоединённого процесса
+    консоли нет, и система рисует ему собственное окно поверх работы человека.
+    `pythonw.exe` (GUI-подсистема) не создаёт его никогда.
+    """
+    if os.name == "nt":
+        gui = Path(sys.executable).with_name("pythonw.exe")
+        if gui.is_file():
+            return str(gui)
+    return sys.executable
+
+
+def spawn_waiter(args: list[str]) -> None:
+    """Запустить отложенную проверку отдельным процессом и не ждать её.
+
+    Среда ждёт обработчик, а задержка — минуты. Процесс отсоединяется от
+    консоли и группы среды, чтобы пережить конец обработчика.
+    """
+    command = [console_less_python(), str(Path(__file__).resolve()), *args]
+    if os.name != "nt":
+        try:
+            subprocess.Popen(command, start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True)
+        except OSError:
+            pass
+        return
+    flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+             | _no_window())
+    # Среда может держать обработчик в задании Windows, которое убьёт всё
+    # дерево по его концу. Выйти из задания разрешают не всегда — тогда
+    # запускаем без выхода
+    breakaway = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+    for extra in (breakaway, 0):
+        try:
+            subprocess.Popen(command, creationflags=flags | extra,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True)
+            return
+        except OSError:
+            continue
+
+
+def wait_and_send(session: str, mark: str, seconds: str, root: str) -> int:
+    """Отложенная проверка: ожидание всё то же — зовём, иначе молчим.
+
+    Сон разбит на шаги: ожидание кончается репликой человека, и висеть после
+    неё оставшиеся минуты процессу незачем.
+    """
+    try:
+        left = max(0.0, float(seconds))
+    except ValueError:
+        return 0
+    while left > 0:
+        step = min(WAIT_STEP, left)
+        time.sleep(step)
+        left -= step
+        if read_mark(session) != mark:
+            return 0
+    if read_mark(session) == mark:
+        text, level = MOMENTS[IDLE]
+        send(Path(root), text, level)
+    return 0
+
+
+def on_idle(payload: dict, root: Path) -> None:
+    """Простой: пометить ожидание и позвать — сразу или отложенно."""
+    session = str(payload.get("session_id") or "")
+    if read_mark(session):
+        return  # по этому ожиданию уже позвали или вот-вот позовут
+    mark = uuid.uuid4().hex
+    write_mark(session, mark)
+    minutes = idle_minutes()
+    if minutes <= 0:
+        text, level = MOMENTS[IDLE]
+        send(root, text, level)
+        return
+    spawn_waiter(["--wait", session, mark, str(minutes * 60), str(root)])
+
+
+def main() -> int:
+    if len(sys.argv) == 6 and sys.argv[1] == "--wait":
+        return wait_and_send(*sys.argv[2:])
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, OSError, ValueError):
+        return 0
+    event = payload.get("hook_event_name")
+    if event in WAIT_RESET:
+        write_mark(str(payload.get("session_id") or ""), "")
+        return 0
+    if event == "PermissionRequest":
+        moment = (QUESTION if payload.get("tool_name") in ASK_TOOLS
+                  else PERMISSION)
+    elif event == "Notification":
+        moment = MOMENTS.get(str(payload.get("notification_type") or ""))
+    else:
+        moment = None
+    if moment is None:
+        return 0
+    text, level = moment
+
+    root = project_root(payload)
+    if root is None:
+        return 0
+    if event == "Notification" and payload.get("notification_type") == IDLE:
+        on_idle(payload, root)
+    else:
+        send(root, text, level)
     return 0
 
 

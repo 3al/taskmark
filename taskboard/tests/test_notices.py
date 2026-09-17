@@ -434,6 +434,44 @@ class LifetimeTest(unittest.TestCase):
         self.assertEqual(6, notices.normalize_seconds(None, 6))
 
 
+class IdleDelayTest(unittest.TestCase):
+    """Через сколько минут простоя терминала звать человека."""
+
+    def test_дефолт_три_минуты_в_границах(self):
+        low, high = notices.IDLE_MINUTES_RANGE
+        self.assertEqual(3, DEFAULTS["notice_idle_minutes"])
+        self.assertTrue(low <= DEFAULTS["notice_idle_minutes"] <= high)
+
+    def test_значение_из_формы_прижимается_к_границам(self):
+        low, high = notices.IDLE_MINUTES_RANGE
+        self.assertEqual(7, notices.normalize_idle_minutes("7", 3))
+        self.assertEqual(high, notices.normalize_idle_minutes(10_000, 3))
+        self.assertEqual(low, notices.normalize_idle_minutes(-1, 3))
+
+    def test_ноль_допустим_это_звать_сразу(self):
+        self.assertEqual(0, notices.normalize_idle_minutes(0, 3))
+
+    def test_непонятное_значение_берёт_дефолт(self):
+        self.assertEqual(3, notices.normalize_idle_minutes("скоро", 3))
+        self.assertEqual(3, notices.normalize_idle_minutes(None, 3))
+
+    def test_настройка_сохраняется_в_глобальный_конфиг(self):
+        """Хук читает глобальный конфиг сам — значение должно туда доехать."""
+        from backend import app as app_module
+
+        saved = {}
+        with mock.patch.object(app_module.registry, "get_active", return_value=None), \
+                mock.patch.object(app_module, "load_global_config",
+                                  return_value=dict(DEFAULTS)), \
+                mock.patch.object(app_module, "save_global_config",
+                                  side_effect=saved.update):
+            app_module.api_save_config(
+                app_module.ConfigIn(updates={"notice_idle_minutes": "500"}))
+
+        self.assertEqual(notices.IDLE_MINUTES_RANGE[1],
+                         saved.get("notice_idle_minutes"))
+
+
 class FrontendTest(unittest.TestCase):
     """Всплывашка: что проверяется текстом, а не глазами."""
 
@@ -554,6 +592,7 @@ class FrontendTest(unittest.TestCase):
         notices_jsx = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
 
         self.assertIn("notice_seconds", settings)
+        self.assertIn("notice_idle_minutes", settings)
         self.assertIn("lifetime", notices_jsx)
         self.assertIn("seconds", notices_jsx)
 

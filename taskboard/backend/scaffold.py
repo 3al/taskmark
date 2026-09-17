@@ -959,6 +959,11 @@ HOOK_REGISTRATION_FILE = {"claude": CLAUDE_SETTINGS, "codex": CODEX_HOOKS}
 # **Уведомление не держит диалог доступа:** запись асинхронная, а короткий
 # таймаут страхует среду, которая `async` не понимает, — иначе она ждала бы
 # обработчик дефолтные десять минут.
+#
+# **Простой зовёт с задержкой и раз на ожидание.** Ожидание открывают реплика
+# человека (`UserPromptSubmit`) и конец хода агента (`Stop`): по ним обработчик
+# сбрасывает отметку, а отложенная проверка простоя сверяется с ней. Обе записи
+# асинхронные — реплику и конец хода уведомление не задерживает.
 NOTICE_MOMENTS = ("idle_prompt", "agent_needs_input",
                   "elicitation_dialog", "elicitation_url_dialog")
 HOOK_REGISTRATIONS = {
@@ -967,6 +972,10 @@ HOOK_REGISTRATIONS = {
         {"event": "Notification", "matcher": "|".join(NOTICE_MOMENTS),
          "script": "attention-notify.py", "timeout": 5},
         {"event": "PermissionRequest", "matcher": "*",
+         "script": "attention-notify.py", "async": True, "timeout": 5},
+        {"event": "UserPromptSubmit", "matcher": "*",
+         "script": "attention-notify.py", "async": True, "timeout": 5},
+        {"event": "Stop", "matcher": "*",
          "script": "attention-notify.py", "async": True, "timeout": 5},
     ),
     "codex": (

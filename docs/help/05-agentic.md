@@ -122,7 +122,7 @@
 | Среда | Файл | Подключение |
 |---|---|---|
 | Claude Code | `.claude/hooks/work-hint.py` | `.claude/settings.json` |
-| Claude Code | `.claude/hooks/attention-notify.py` | `PermissionRequest` и `Notification` в `.claude/settings.json` |
+| Claude Code | `.claude/hooks/attention-notify.py` | `PermissionRequest`, `Notification`, `UserPromptSubmit` и `Stop` в `.claude/settings.json` |
 | opencode | `.opencode/plugin/work-hint.js` | подхватывается сам |
 | opencode | `.opencode/plugin/attention-notify.js` | подхватывается сам |
 | Codex | `.codex/hooks/work-hint.py` | `.codex/hooks.json` |
@@ -140,7 +140,9 @@
 - **голубое «ждёт вашего ответа: задан вопрос»** — агент задал вопрос с
   вариантами;
 - **голубое «ждёт вашего ответа»** — терминал долго ждёт ввода (только Claude
-  Code).
+  Code). Приходит один раз за ожидание и не раньше, чем через заданную задержку:
+  **Настройки (⚙) → Вид доски → «Простой терминала, мин»**, см.
+  [«Доска»](02-board.md).
 
 У Codex инструмент вопроса по умолчанию есть только в режиме Plan. В режиме
 Default его включает экспериментальная функция:

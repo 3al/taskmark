@@ -297,6 +297,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
       ? {} : { notice_seconds: Number(config.notice_seconds) }),
     ...(config.notice_volume === '' || config.notice_volume == null
       ? {} : { notice_volume: Number(config.notice_volume) }),
+    ...(config.notice_idle_minutes === '' || config.notice_idle_minutes == null
+      ? {} : { notice_idle_minutes: Number(config.notice_idle_minutes) }),
     // Не выбраны — не подменяем «не спрашивали» на «обе среды не нужны»
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
@@ -733,27 +735,44 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         проверяет. Наведение мыши таймер останавливает при любом
                         значении, поэтому ноль здесь — не «мгновенно», а «ждать
                         крестика» */}
-                    {(() => {
-                      const [low, high] = config.notice_seconds_range || []
-                      const value = config.notice_seconds
-                      const bad = value !== '' && (Number(value) < low || Number(value) > high)
-                      return (
-                        <div className="w-40 mb-3">
-                          <span className={label}>Показывать, сек</span>
-                          <input
-                            className={`${field} ${bad ? 'border-rose-500' : ''}`}
-                            type="number"
-                            min={low}
-                            max={high}
-                            value={value ?? ''}
-                            onChange={(e) => set('notice_seconds', e.target.value)}
-                          />
-                          <span className="block text-[11px] text-zinc-400 mt-1">
-                            от {low} до {high}; 0 — не гасить, пока не закроете
-                          </span>
-                        </div>
-                      )
-                    })()}
+                    {/* Задержка простоя стоит рядом: её читает хук Claude Code
+                        из того же глобального конфига */}
+                    <div className="flex flex-wrap gap-x-6 mb-3">
+                      {[
+                        { key: 'notice_seconds', title: 'Показывать, сек',
+                          zero: 'не гасить, пока не закроете' },
+                        { key: 'notice_idle_minutes', title: 'Простой терминала, мин',
+                          zero: 'звать сразу',
+                          hint: 'Через сколько минут ожидания ввода в Claude Code '
+                            + 'звать «Claude ждёт вашего ответа». Вопрос и запрос '
+                            + 'разрешения зовут сразу.' },
+                      ].map((item) => {
+                        const [low, high] = config[`${item.key}_range`] || []
+                        const value = config[item.key]
+                        const bad = value !== '' && (Number(value) < low || Number(value) > high)
+                        return (
+                          <div key={item.key} className="w-48">
+                            <span
+                              className={`${label} ${item.hint ? 'cursor-help' : ''}`}
+                              title={item.hint}
+                            >
+                              {item.title}
+                            </span>
+                            <input
+                              className={`${field} ${bad ? 'border-rose-500' : ''}`}
+                              type="number"
+                              min={low}
+                              max={high}
+                              value={value ?? ''}
+                              onChange={(e) => set(item.key, e.target.value)}
+                            />
+                            <span className="block text-[11px] text-zinc-400 mt-1">
+                              от {low} до {high}; 0 — {item.zero}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
                     {/* Три столбца: сам источник и две его настройки.
                         Подписи — заголовки столбцов, а не повтор в каждой
                         строке: одна и та же надпись трижды читается как три

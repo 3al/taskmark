@@ -396,7 +396,8 @@ def api_get_config() -> dict:
         return {**cfg, "card_limits": CARD_LIMITS, "predicates": PREDICATES,
                 "notice_kinds": notices.sources_state(cfg),
                 "notice_seconds_range": list(notices.SECONDS_RANGE),
-                "notice_volume_range": list(notices.VOLUME_RANGE)}
+                "notice_volume_range": list(notices.VOLUME_RANGE),
+                "notice_idle_minutes_range": list(notices.IDLE_MINUTES_RANGE)}
     tasks_dir = Path(proj["tasks_dir"])
     cfg = load_project_config(tasks_dir)
     cfg["card_limits"] = CARD_LIMITS
@@ -406,6 +407,7 @@ def api_get_config() -> dict:
     # Границы времени показа — оттуда же, откуда их проверяет бэкенд
     cfg["notice_seconds_range"] = list(notices.SECONDS_RANGE)
     cfg["notice_volume_range"] = list(notices.VOLUME_RANGE)
+    cfg["notice_idle_minutes_range"] = list(notices.IDLE_MINUTES_RANGE)
     # Словарь предикатов: без него редактор требований знал бы список проверок
     # только из зашитого в JS перечня, и тот разошёлся бы с движком молча
     cfg["predicates"] = PREDICATES
@@ -427,6 +429,7 @@ def api_save_config(body: ConfigIn) -> dict:
     allowed = {"port", "theme", "tasks_dir", "update_check",
                "release_manifest_url", "hide_empty_columns", "notice_sources",
                "notice_sticky", "notice_sound", "notice_seconds", "notice_volume",
+               "notice_idle_minutes",
                *PROJECT_KEYS, *CARD_LIMITS, *CARD_FLAGS, *TELEGRAM_KEYS}
     updates = {k: v for k, v in body.updates.items() if k in allowed}
 
@@ -447,6 +450,9 @@ def api_save_config(body: ConfigIn) -> dict:
     if "notice_volume" in updates:
         updates["notice_volume"] = notices.normalize_volume(
             updates["notice_volume"], DEFAULTS["notice_volume"])
+    if "notice_idle_minutes" in updates:
+        updates["notice_idle_minutes"] = notices.normalize_idle_minutes(
+            updates["notice_idle_minutes"], DEFAULTS["notice_idle_minutes"])
 
     updates, invalid = validate_card_style(updates)
     if invalid:

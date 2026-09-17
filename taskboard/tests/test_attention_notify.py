@@ -20,10 +20,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -100,6 +103,20 @@ class AttentionHookDeliveryTest(_Project):
         # Среда, не знающая про async, не должна висеть на нём дефолтные 600 с
         self.assertLessEqual(handler["timeout"], 10)
 
+    def test_prompt_and_turn_end_mark_a_new_wait(self) -> None:
+        """Отложенному уведомлению нужно знать, что ожидание кончилось: его
+        кончают реплика человека и конец хода агента. Ни то ни другое ждать
+        обработчик не должно."""
+        self.deploy(CLAUDE_ONLY)
+
+        for event in ("UserPromptSubmit", "Stop"):
+            with self.subTest(event=event):
+                handler = self.entry(event)["hooks"][0]
+                self.assertIn(".claude/hooks/attention-notify.py",
+                              handler["command"])
+                self.assertTrue(handler["async"])
+                self.assertLessEqual(handler["timeout"], 10)
+
     def test_codex_keeps_its_own_handler(self) -> None:
         """У Codex события `Notification` нет — там всё ловит `PermissionRequest`."""
         self.deploy(CODEX_ONLY)
@@ -144,24 +161,69 @@ class AttentionHookDeliveryTest(_Project):
         self.assertIn("PermissionRequest", self.settings()["hooks"])
 
 
-class AttentionHookBehaviourTest(_Project):
-    """Хук зовёт скрипт проекта и ничего не решает за человека."""
+class _HookCall(_Project):
+    """Запуск обработчика с подменённым домом и временной папкой.
+
+    Задержка простоя — настройка доски в глобальном конфиге, а состояние
+    ожидания хук держит во временной папке системы: обе подменяются, чтобы
+    тесты не читали и не писали настоящие.
+    """
+
+    idle_minutes: float = 0
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.home = Path(self._tmp.name) / "дом"
+        self.temp = Path(self._tmp.name) / "tmp"
+        self.temp.mkdir(parents=True, exist_ok=True)
+        self.set_idle_minutes(self.idle_minutes)
+
+    def set_idle_minutes(self, minutes: float) -> None:
+        config = self.home / ".taskboard" / "config.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({"notice_idle_minutes": minutes}),
+                          encoding="utf-8")
+
+    def env(self) -> dict:
+        return dict(os.environ, HOME=str(self.home), USERPROFILE=str(self.home),
+                    TEMP=str(self.temp), TMP=str(self.temp),
+                    TMPDIR=str(self.temp))
 
     def call(self, event: dict) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, str(HOOK_TEMPLATE)], input=json.dumps(event),
-            capture_output=True, text=True, encoding="utf-8", timeout=10)
+            capture_output=True, text=True, encoding="utf-8", timeout=10,
+            env=self.env())
 
     def fake_notify(self) -> Path:
-        """Подставной `tasks/notify.py`: записывает, с чем его позвали."""
-        self.tasks.mkdir(parents=True)
+        """Подставной `tasks/notify.py`: записывает, с чем его позвали.
+
+        Последний вызов — в `called.json`, все вызовы по строке — в
+        `calls.log`: по нему считают, сколько раз позвали человека.
+        """
+        self.tasks.mkdir(parents=True, exist_ok=True)
         (self.tasks / "notify.py").write_text(
             "import json, sys\n"
             "from pathlib import Path\n"
+            "args = json.dumps(sys.argv[1:], ensure_ascii=False)\n"
             "Path(__file__).with_name('called.json').write_text("
-            "json.dumps(sys.argv[1:], ensure_ascii=False), encoding='utf-8')\n",
+            "args, encoding='utf-8')\n"
+            "with open(Path(__file__).with_name('calls.log'), 'a',"
+            " encoding='utf-8') as log:\n"
+            "    log.write(args + '\\n')\n",
             encoding="utf-8")
         return self.tasks / "called.json"
+
+    def calls(self) -> list:
+        log = self.tasks / "calls.log"
+        if not log.is_file():
+            return []
+        return [json.loads(line) for line in
+                log.read_text(encoding="utf-8").splitlines() if line]
+
+
+class AttentionHookBehaviourTest(_HookCall):
+    """Хук зовёт скрипт проекта и ничего не решает за человека."""
 
     def args_for(self, notification_type: str, **extra) -> list:
         return self.args_for_event({"hook_event_name": "Notification",
@@ -295,6 +357,143 @@ class AttentionHookBehaviourTest(_Project):
         self.assertEqual(0, done.returncode)
         self.assertEqual("", done.stdout)
         self.assertEqual("", done.stderr)
+
+
+
+class IdleDelayTest(_HookCall):
+    """Простой терминала зовёт человека не сразу и не больше раза за ожидание."""
+
+    # Доли минуты: тесту нужна задержка в секунды, а не в минуты
+    idle_minutes = 0.03
+    SESSION = "сессия-1"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.fake_notify()
+
+    def event(self, name: str, **extra) -> None:
+        payload = {"hook_event_name": name, "cwd": str(self.root),
+                   "session_id": self.SESSION, **extra}
+        done = self.call(payload)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("", done.stdout)
+
+    def idle(self, **extra) -> None:
+        self.event("Notification", notification_type="idle_prompt", **extra)
+
+    def wait_past_delay(self) -> None:
+        time.sleep(self.idle_minutes * 60 + 3)
+
+    def test_idle_waits_then_calls_once(self) -> None:
+        started = time.monotonic()
+        self.idle()
+
+        self.assertLess(time.monotonic() - started, self.idle_minutes * 60,
+                        "хук не должен держать среду на время задержки")
+        self.assertEqual([], self.calls(), "звать сразу рано")
+        self.wait_past_delay()
+        calls = self.calls()
+        self.assertEqual(1, len(calls))
+        self.assertIn("ответ", calls[0][0].lower())
+
+    def test_prompt_cancels_pending_call(self) -> None:
+        self.idle()
+        self.event("UserPromptSubmit", prompt="поехали дальше")
+
+        self.wait_past_delay()
+        self.assertEqual([], self.calls())
+
+    def test_repeated_idle_gives_one_call(self) -> None:
+        for _ in range(3):
+            self.idle()
+
+        self.wait_past_delay()
+        self.assertEqual(1, len(self.calls()))
+
+    def test_other_session_has_its_own_wait(self) -> None:
+        self.idle()
+        self.idle(session_id="сессия-2")
+
+        self.wait_past_delay()
+        self.assertEqual(2, len(self.calls()))
+
+
+class WaiterProcessTest(unittest.TestCase):
+    """Отложенная проверка не должна мелькать консольным окном."""
+
+    def hook_module(self):
+        spec = importlib.util.spec_from_file_location("attention_notify",
+                                                      HOOK_TEMPLATE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_waiter_runs_without_a_console(self) -> None:
+        """У отсоединённого процесса консоли нет, и Windows выдаёт ему своё
+        окно: консольным интерпретатором его запускать нельзя."""
+        module = self.hook_module()
+        chosen = Path(module.console_less_python())
+
+        if os.name == "nt" and Path(sys.executable).with_name("pythonw.exe").is_file():
+            self.assertEqual("pythonw.exe", chosen.name.lower())
+        else:
+            self.assertEqual(sys.executable, str(chosen))
+
+
+class IdleWithoutDelayTest(_HookCall):
+    """Задержка 0 — звать сразу, но всё так же раз на ожидание."""
+
+    SESSION = "сессия-1"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.fake_notify()
+
+    def event(self, name: str, **extra) -> None:
+        done = self.call({"hook_event_name": name, "cwd": str(self.root),
+                          "session_id": self.SESSION, **extra})
+        self.assertEqual(0, done.returncode, done.stderr)
+
+    def idle(self) -> None:
+        self.event("Notification", notification_type="idle_prompt")
+
+    def test_zero_calls_at_once_and_once_per_wait(self) -> None:
+        self.idle()
+        self.assertEqual(1, len(self.calls()))
+
+        self.idle()
+        self.idle()
+        self.assertEqual(1, len(self.calls()))
+
+    def test_prompt_opens_a_new_wait(self) -> None:
+        self.idle()
+        self.event("UserPromptSubmit", prompt="ещё")
+        self.idle()
+
+        self.assertEqual(2, len(self.calls()))
+
+    def test_agent_turn_without_prompt_opens_a_new_wait(self) -> None:
+        """Агент продолжил сам (фоновая команда кончилась) и снова ждёт."""
+        self.idle()
+        self.event("Stop")
+        self.idle()
+
+        self.assertEqual(2, len(self.calls()))
+
+    def test_question_and_permission_ignore_the_delay(self) -> None:
+        """Они блокируют работу — задержка простоя к ним не относится."""
+        self.set_idle_minutes(3)
+        self.event("PermissionRequest", tool_name="AskUserQuestion")
+        self.event("PermissionRequest", tool_name="Bash")
+
+        self.assertEqual(2, len(self.calls()))
+
+    def test_missing_setting_means_default_delay(self) -> None:
+        """Настройку не сохраняли — звать сразу нельзя: действует умолчание."""
+        (self.home / ".taskboard" / "config.json").unlink()
+        self.idle()
+
+        self.assertEqual([], self.calls())
 
 
 if __name__ == "__main__":

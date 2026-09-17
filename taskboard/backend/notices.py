@@ -97,6 +97,10 @@ SECONDS_RANGE: tuple[int, int] = (0, 60)
 # отдельная громкость у каждого была бы настройкой ради настройки
 VOLUME_RANGE: tuple[int, int] = (0, 100)
 
+# Задержка уведомления о простое терминала, в минутах. Ноль — звать сразу.
+# Верх — час: простой дольше него уже не «ждёт ответа», а брошенная сессия
+IDLE_MINUTES_RANGE: tuple[int, int] = (0, 60)
+
 # Куда уходит собранное уведомление. Подставляется при старте сервера
 # (`bind`), в тестах — своей функцией: служба не обязана знать про SSE
 _sender: Callable[[str], None] | None = None
@@ -223,6 +227,16 @@ def normalize_volume(value, default: int) -> int:
         return default
     low, high = VOLUME_RANGE
     return max(low, min(high, volume))
+
+
+def normalize_idle_minutes(value, default: int) -> int:
+    """Привести задержку уведомления о простое к целым минутам в границах."""
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return default
+    low, high = IDLE_MINUTES_RANGE
+    return max(low, min(high, minutes))
 
 
 def normalize_sticky(value) -> dict:
