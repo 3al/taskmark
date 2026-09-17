@@ -24,9 +24,17 @@
 через задержку из настроек доски (`notice_idle_minutes` глобального конфига)
 она зовёт, только если ожидание всё то же. Новое ожидание открывают реплика
 человека (`UserPromptSubmit`) и конец хода агента (`Stop`) — они стирают
-пометку. Повторный `idle_prompt` при живой пометке молчит: сколько раз среда
-его шлёт, от нас не зависит. Пометки лежат во временной папке системы, по
-файлу на сессию, — в проект пользователя они не пишутся.
+пометку и запоминают время, с которого ожидание пошло.
+
+**Отсчёт идёт от конца хода, а не от события среды.** Своя пауза среды иначе
+прибавлялась бы к настроенной, и «три минуты» означали бы четыре: к моменту
+события часть задержки уже прошла, поэтому ждут только остаток, а истёкший
+остаток зовёт сразу. Времени начала нет (первое ожидание после старта сессии) —
+считаем от события, как если бы оно и было началом.
+
+Повторный `idle_prompt` при живой пометке молчит: сколько раз среда его шлёт,
+от нас не зависит. Пометки лежат во временной папке системы, по файлу на
+сессию, — в проект пользователя они не пишутся.
 
 **Ни текст среды, ни команда инструмента не пересылаются.** В них может
 оказаться секрет; доске достаточно знать, что человека ждут.
@@ -124,26 +132,32 @@ def state_file(session: str) -> Path:
     return Path(tempfile.gettempdir()) / STATE_DIR / f"{name}.json"
 
 
-def read_mark(session: str) -> str:
-    """Пометка текущего ожидания или пустая строка, если ожидание новое."""
+def read_state(session: str) -> dict:
+    """Состояние ожидания сессии: когда началось и позвали ли уже."""
     try:
         data = json.loads(state_file(session).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return ""
-    return str(data.get("idle") or "") if isinstance(data, dict) else ""
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def write_mark(session: str, mark: str) -> None:
-    """Пометить ожидание; пустая пометка открывает новое."""
+def write_state(session: str, state: dict) -> None:
     path = state_file(session)
     try:
-        if not mark:
-            path.unlink(missing_ok=True)
-            return
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"idle": mark}), encoding="utf-8")
+        path.write_text(json.dumps(state), encoding="utf-8")
     except OSError:
         pass
+
+
+def read_mark(session: str) -> str:
+    """Пометка текущего ожидания или пустая строка, если ожидание новое."""
+    return str(read_state(session).get("idle") or "")
+
+
+def start_wait(session: str) -> None:
+    """Открыть новое ожидание: пометка снята, время пошло отсюда."""
+    write_state(session, {"since": time.time()})
 
 
 def send(root: Path, text: str, level: str) -> None:
@@ -239,16 +253,24 @@ def wait_and_send(session: str, mark: str, seconds: str, root: str) -> int:
 def on_idle(payload: dict, root: Path) -> None:
     """Простой: пометить ожидание и позвать — сразу или отложенно."""
     session = str(payload.get("session_id") or "")
-    if read_mark(session):
+    state = read_state(session)
+    if state.get("idle"):
         return  # по этому ожиданию уже позвали или вот-вот позовут
+    now = time.time()
+    try:
+        since = float(state["since"])
+    except (KeyError, TypeError, ValueError):
+        # Начала ожидания не знаем — считаем им само событие
+        since = now
     mark = uuid.uuid4().hex
-    write_mark(session, mark)
-    minutes = idle_minutes()
-    if minutes <= 0:
+    write_state(session, {"since": since, "idle": mark})
+    # Ждём остаток: часть задержки прошла, пока среда молчала о простое
+    left = idle_minutes() * 60 - max(0.0, now - since)
+    if left <= 0:
         text, level = MOMENTS[IDLE]
         send(root, text, level)
         return
-    spawn_waiter(["--wait", session, mark, str(minutes * 60), str(root)])
+    spawn_waiter(["--wait", session, mark, str(left), str(root)])
 
 
 def main() -> int:
@@ -260,7 +282,7 @@ def main() -> int:
         return 0
     event = payload.get("hook_event_name")
     if event in WAIT_RESET:
-        write_mark(str(payload.get("session_id") or ""), "")
+        start_wait(str(payload.get("session_id") or ""))
         return 0
     if event == "PermissionRequest":
         moment = (QUESTION if payload.get("tool_name") in ASK_TOOLS

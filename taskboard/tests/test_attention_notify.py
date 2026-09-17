@@ -410,6 +410,26 @@ class IdleDelayTest(_HookCall):
         self.wait_past_delay()
         self.assertEqual(1, len(self.calls()))
 
+    def test_delay_counts_from_the_end_of_the_turn(self) -> None:
+        """Среда сообщает о простое не сразу, и её собственная пауза не должна
+        прибавляться к настроенной: отсчёт идёт от конца хода агента."""
+        self.event("Stop")
+        time.sleep(self.idle_minutes * 60 + 0.5)
+        self.idle()
+
+        time.sleep(1.5)
+        self.assertEqual(1, len(self.calls()),
+                         "задержка уже истекла к моменту события простоя")
+
+    def test_late_event_shortens_the_wait(self) -> None:
+        """Часть задержки прошла до события — ждать остаётся только остаток."""
+        self.event("Stop")
+        time.sleep(self.idle_minutes * 60 / 2)
+        self.idle()
+
+        time.sleep(self.idle_minutes * 60 / 2 + 2)
+        self.assertEqual(1, len(self.calls()))
+
     def test_other_session_has_its_own_wait(self) -> None:
         self.idle()
         self.idle(session_id="сессия-2")
@@ -479,6 +499,14 @@ class IdleWithoutDelayTest(_HookCall):
         self.idle()
 
         self.assertEqual(2, len(self.calls()))
+
+    def test_wait_without_a_start_counts_from_the_event(self) -> None:
+        """Начала ожидания нет (первое событие после старта сессии) — считаем
+        от самого события, как раньше."""
+        self.set_idle_minutes(3)
+        self.idle()
+
+        self.assertEqual([], self.calls())
 
     def test_question_and_permission_ignore_the_delay(self) -> None:
         """Они блокируют работу — задержка простоя к ним не относится."""
