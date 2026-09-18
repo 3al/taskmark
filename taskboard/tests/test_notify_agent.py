@@ -17,6 +17,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -344,6 +345,27 @@ class NotifyScriptTest(unittest.TestCase):
                 self.script.main()
 
         self.assertNotEqual(0, ctx.exception.code)
+
+    def test_метка_берётся_из_сессии_среды(self):
+        """По ней потом отзывают: соседняя сессия зовёт по своему поводу."""
+        with mock.patch.dict(os.environ, {"CLAUDE_CODE_SESSION_ID": "ses-1"}):
+            key = self.script.session_key("agent", Path("/проект/tasks"))
+
+        self.assertIn("ses-1", key)
+        self.assertTrue(key.startswith("agent:"))
+
+    def test_без_сессии_метка_по_папке_проекта(self):
+        """Среда сессии не называет — отзыв всё равно должен работать, пусть
+        и грубее: одна метка на все сессии этого проекта."""
+        with mock.patch.dict(os.environ, {}, clear=True):
+            key = self.script.session_key("env", Path("."))
+
+        self.assertIn(":dir:", key)
+        self.assertTrue(key.startswith("env:"))
+
+    def test_ни_сессии_ни_папки_метки_нет(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual("", self.script.session_key("env"))
 
     def test_скрипт_знает_те_же_уровни(self):
         """Второй список уровней разошёлся бы со службой молча."""

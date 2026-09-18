@@ -119,10 +119,12 @@ class OpencodeAttentionBehaviourTest(_Project):
     def fake_notify(self) -> Path:
         self.tasks.mkdir(parents=True, exist_ok=True)
         (self.tasks / "notify.py").write_text(
-            "import json, sys\n"
+            "import json, os, sys\n"
             "from pathlib import Path\n"
-            "Path(__file__).with_name('called.json').write_text("
-            "json.dumps(sys.argv[1:], ensure_ascii=False), encoding='utf-8')\n",
+            "Path(__file__).with_name('called.json').write_text(json.dumps({\n"
+            "    'args': sys.argv[1:],\n"
+            "    'session': os.environ.get('OPENCODE_SESSION_ID', ''),\n"
+            "}, ensure_ascii=False), encoding='utf-8')\n",
             encoding="utf-8")
         return self.tasks / "called.json"
 
@@ -145,7 +147,8 @@ class OpencodeAttentionBehaviourTest(_Project):
             # мимо проекта отправил бы настоящую карточку на доску
             cwd=self._tmp.name)
 
-    def wait_args(self, called: Path) -> list:
+    def wait_call(self, called: Path) -> dict:
+        """Чем позвали скрипт: аргументы и метка сессии в его окружении."""
         deadline = time.monotonic() + WAIT
         while time.monotonic() < deadline:
             if called.is_file():
@@ -155,6 +158,9 @@ class OpencodeAttentionBehaviourTest(_Project):
                     pass
             time.sleep(0.1)
         self.fail("уведомление не отправлено")
+
+    def wait_args(self, called: Path) -> list:
+        return self.wait_call(called)["args"]
 
     def args_for(self, event: dict) -> list:
         called = self.fake_notify()
@@ -179,15 +185,52 @@ class OpencodeAttentionBehaviourTest(_Project):
         time.sleep(2)
         self.assertFalse(called.exists(), "звать было не за чем")
 
-    def assert_dismisses(self, event: dict) -> None:
+    def assert_dismisses(self, event: dict, scope: str = "env") -> None:
         """Повод отпал: плагин просит доску снять сказанное этой сессией."""
         called = self.fake_notify()
         done = self.fire(event)
         self.assertEqual(0, done.returncode, done.stderr)
         time.sleep(2)
         self.assertTrue(called.exists(), "отзыв не ушёл")
-        self.assertEqual(["--dismiss", "env"],
-                         json.loads(called.read_text(encoding="utf-8")))
+        call = json.loads(called.read_text(encoding="utf-8"))
+        self.assertEqual(["--dismiss", scope], call["args"])
+        session = event["properties"].get("sessionID") \
+            or event["properties"].get("info", {}).get("sessionID")
+        self.assertEqual(session, call["session"],
+                         "без метки сессии гасить нечего")
+
+    def test_shell_calls_get_the_session_too(self) -> None:
+        """Сообщения агент шлёт сам, из шелла среды: без подстановки они
+        приходят без метки, и ответ человека их не снимает."""
+        runner = Path(self._tmp.name) / "shell.mjs"
+        runner.write_text("\n".join([
+            "const [plugin, dir, event] = process.argv.slice(2)",
+            "const url = new URL('file:///' + plugin.split('\\\\').join('/'))",
+            "const mod = await import(url)",
+            "const factory = Object.values(mod)[0]",
+            "const hooks = await factory({ directory: dir, worktree: dir })",
+            "await hooks.event({ event: JSON.parse(event) })",
+            "const out = { env: {} }",
+            "await hooks['shell.env']({ cwd: dir }, out)",
+            "console.log(JSON.stringify(out.env))",
+        ]), encoding="utf-8")
+
+        done = subprocess.run(
+            [str(NODE), str(runner), str(PLUGIN), str(self.root),
+             json.dumps(self.question())],
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            cwd=self._tmp.name)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual("ses_1", json.loads(done.stdout)["OPENCODE_SESSION_ID"])
+
+    def test_call_carries_the_session(self) -> None:
+        """Среда не кладёт сессию в окружение — её кладёт плагин: иначе
+        карточка уходит безымянной и отзывать потом нечего."""
+        called = self.fake_notify()
+        self.fire(self.question())
+
+        self.assertEqual("ses_1", self.wait_call(called)["session"])
 
     def test_question_calls_for_an_answer(self) -> None:
         args = self.args_for(self.question())
@@ -226,6 +269,56 @@ class OpencodeAttentionBehaviourTest(_Project):
         """Решение по разрешению шина называет прямо — ждать конца хода незачем."""
         self.assert_dismisses({"type": "permission.replied", "properties": {
             "sessionID": "ses_1", "permissionID": "per_1", "response": "once"}})
+
+    def test_reply_dismisses_everything_said(self) -> None:
+        """Ответил в терминале — прочёл и то, что агент сказал раньше: гаснут
+        и его сообщения, а не только зовы среды."""
+        self.assert_dismisses({"type": "message.updated", "properties": {
+            "info": {"id": "msg_1", "role": "user", "sessionID": "ses_1"}}},
+            scope="all")
+
+    def test_same_reply_updates_dismiss_once(self) -> None:
+        """Ту же реплику шина обновляет и внутри хода агента: приняв это за
+        новый ответ, плагин погасил бы карточку, показанную секунду назад."""
+        called = self.fake_notify()
+        runner = Path(self._tmp.name) / "twice.mjs"
+        runner.write_text("\n".join([
+            "const [plugin, dir, events] = process.argv.slice(2)",
+            "const url = new URL('file:///' + plugin.split('\\\\').join('/'))",
+            "const hooks = await (Object.values(await import(url))[0])(",
+            "  { directory: dir, worktree: dir })",
+            "for (const event of JSON.parse(events)) {",
+            "  await hooks.event({ event })",
+            "  await new Promise((r) => setTimeout(r, 900))",
+            "}",
+            "console.log('ok')",
+        ]), encoding="utf-8")
+        reply = {"type": "message.updated", "properties": {
+            "info": {"id": "msg_1", "role": "user", "sessionID": "ses_1"}}}
+        question = self.question()
+
+        done = subprocess.run(
+            [str(NODE), str(runner), str(PLUGIN), str(self.root),
+             json.dumps([reply, question, reply])],
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            cwd=self._tmp.name)
+
+        self.assertEqual(0, done.returncode, done.stderr)
+        time.sleep(1)
+        # Последним звали показ вопроса: повторное обновление реплики молчит
+        self.assertNotIn("--dismiss",
+                         json.loads(called.read_text(encoding="utf-8"))["args"])
+
+    def test_reply_without_id_is_ignored(self) -> None:
+        """Отличить новую реплику от обновления нечем — молчим: ложный отзыв
+        гасит карточку, которую человек не видел."""
+        self.assert_silent({"type": "message.updated", "properties": {
+            "info": {"role": "user", "sessionID": "ses_1"}}})
+
+    def test_agent_message_is_not_a_reply(self) -> None:
+        """Собственные сообщения агента летят пачкой при каждом ответе."""
+        self.assert_silent({"type": "message.updated", "properties": {
+            "info": {"id": "msg_2", "role": "assistant", "sessionID": "ses_1"}}})
 
     def test_unrelated_event_stays_silent(self) -> None:
         self.assert_silent({"type": "file.edited",

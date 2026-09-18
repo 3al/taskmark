@@ -42,9 +42,9 @@ Python из Microsoft Store), `python3` (macOS/Linux).
 сессией с доски убирают. **Зовы среды и сообщения агента помечены по-разному**:
 конец хода агента снимает только зовы (`env`), потому что сообщение «работа
 готова» посылают ровно перед концом хода — гасить его там значит не показать
-вовсе. Метку сессии скрипт берёт из окружения среды сам; среда её не даёт —
-уведомление живёт по таймеру, как раньше. Обычно отзыв зовут не руками, а хуки
-среды.
+вовсе. Метку сессии скрипт берёт из окружения среды сам; среда её не называет —
+метка берётся по папке проекта, и тогда отзыв снимает карточки всех сессий
+этого проекта. Обычно отзыв зовут не руками, а хуки среды.
 
 **Сказать не удалось — не беда.** Сервер не запущен, доска закрыта, источник
 выключен в настройках: скрипт скажет об этом строкой и завершится успешно.
@@ -155,20 +155,31 @@ ENV_SCOPE = "env"
 AGENT_SCOPE = "agent"
 
 
-def session_key(scope: str = AGENT_SCOPE) -> str:
-    """Метка сессии агента или пустая строка, если среда её не называет."""
+def session_key(scope: str = AGENT_SCOPE, tasks_dir: Path | None = None) -> str:
+    """Метка сессии агента; среда молчит — метка по папке проекта.
+
+    **Запасная метка грубее**: она общая для всех сессий одного проекта, и
+    ответ в одной снимет карточки соседней. Зато отзыв работает вообще — а
+    без метки он не работал бы никак, и карточки висели бы до крестика.
+    """
     for name in SESSION_VARS:
         value = (os.environ.get(name) or "").strip()
         if value:
             return f"{scope}:{name}:{value}"
-    return ""
+    if tasks_dir is None:
+        return ""
+    try:
+        here = str(tasks_dir.resolve())
+    except OSError:
+        here = str(tasks_dir)
+    return f"{scope}:dir:{here}"
 
 
 def dismiss(tasks_dir: Path, scopes: tuple[str, ...]) -> dict:
     """Убрать с доски сказанное этой сессией. Ошибки — как у отправки."""
     answer = {"ok": True, "sent": False, "reason": "no_server"}
     for scope in scopes:
-        key = session_key(scope)
+        key = session_key(scope, tasks_dir)
         if not key:
             continue
         result = _post(tasks_dir, "/api/notify/dismiss", {"key": key})
@@ -186,7 +197,8 @@ def notify(tasks_dir: Path, text: str, agent: str = "", task: str = "",
     """
     return _post(tasks_dir, "/api/notify",
                  {"text": text, "agent": agent, "task": task, "level": level,
-                  "project": project_name(tasks_dir), "key": session_key(scope)})
+                  "project": project_name(tasks_dir),
+                  "key": session_key(scope, tasks_dir)})
 
 
 def _post(tasks_dir: Path, path: str, body: dict) -> dict:
@@ -241,8 +253,8 @@ def main() -> int:
     if args.dismiss:
         # Метки нет — гасить нечего: среда своей сессии не называет, и
         # уведомления этой сессии ничем не помечены
-        if not session_key():
-            print("[i] среда не называет сессию — отзывать нечего")
+        if not session_key(tasks_dir=tasks_dir):
+            print("[i] отзывать нечего: ни сессии, ни папки проекта")
             return 0
         scopes = (ENV_SCOPE,) if args.dismiss == ENV_SCOPE else (ENV_SCOPE, AGENT_SCOPE)
         print("[OK] сказанное этой сессией убрано с доски"

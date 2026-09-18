@@ -21,6 +21,24 @@
  * среды** своей сессии — сообщения самого агента остаются: «работа готова» он
  * посылает прямо перед концом хода.
  *
+ * **Реплика человека снимает и сообщения агента**: ответив в терминале, он уже
+ * прочёл сказанное в чате. Её видно сообщением пользователя на шине — роль
+ * приходит в разных обёртках, поэтому смотрим все известные места.
+ *
+ * **Считается только новое сообщение человека, а не всякое обновление его
+ * записи.** Шина шлёт `message.updated` по той же реплике и дальше, уже внутри
+ * хода агента: приняв это за новый ответ, плагин гасил карточку, показанную
+ * секунду назад. Поэтому реплика узнаётся по идентификатору сообщения, и
+ * повторы того же идентификатора молчат; сообщения без него не гасят ничего —
+ * ложный отзыв хуже несостоявшегося.
+ *
+ * **Сессию среда не кладёт в окружение — её кладёт плагин.** `OPENCODE_SESSION_ID`
+ * не приходит ни в шелл инструментов, ни в процесс плагина, поэтому скрипт
+ * доски не мог пометить свои карточки, а отзыв не находил, что гасить.
+ * Идентификатор виден в событиях шины: плагин запоминает последний и передаёт
+ * его своим вызовам скрипта и — через штатный хук `shell.env` — всем
+ * шелл-вызовам среды, чтобы сообщения самого агента тоже были помечены.
+ *
  * Уведомление не ждут: хуки плагинов выполняются по очереди, и медленный
  * запуск Python задержал бы саму среду. Отказ доставки на работу не влияет.
  */
@@ -44,37 +62,38 @@ const AGENT = "opencode"
 const DISMISS = new Set(["permission.replied", "question.replied", "session.idle"])
 // Инструмент, которым задаётся вопрос: его закрытый вызов и есть ответ
 const ASK_TOOL = "question"
+// Переменная, по которой скрипт доски узнаёт сессию агента
+const SESSION_VAR = "OPENCODE_SESSION_ID"
+// События сообщений: среди них приходит и реплика человека
+const MESSAGE_EVENTS = new Set(["message.updated", "message.part.updated"])
 
 // Питон зовут по-разному: лаунчера `py` может не быть, `python3` — не везде
 const PYTHONS = process.platform === "win32"
   ? ["py", "python", "python3"]
   : ["python3", "python"]
 
-function run(root, args, pythons = PYTHONS) {
+function run(root, args, session, pythons = PYTHONS) {
   const [python, ...rest] = pythons
   if (!python) return
+  const env = { ...process.env, PYTHONIOENCODING: "utf-8" }
+  // Метка сессии: без неё карточка уходит безымянной, и отзывать потом нечего
+  if (session) env[SESSION_VAR] = session
   const child = spawn(
     python,
     [join(root, "tasks", "notify.py"), ...args],
-    {
-      cwd: root,
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
-    },
+    { cwd: root, detached: true, stdio: "ignore", windowsHide: true, env },
   )
   // Такого Python нет — пробуем следующий
-  child.on("error", () => run(root, args, rest))
+  child.on("error", () => run(root, args, session, rest))
   child.unref()
 }
 
-function notify(root, text, level) {
-  run(root, [text, "--agent", AGENT, "--level", level, "--scope", "env"])
+function notify(root, text, level, session) {
+  run(root, [text, "--agent", AGENT, "--level", level, "--scope", "env"], session)
 }
 
-function dismiss(root) {
-  run(root, ["--dismiss", "env"])
+function dismiss(root, session, scope = "env") {
+  run(root, ["--dismiss", scope], session)
 }
 
 // Ответ на вопрос: шина сообщает о закрытии вызова инструмента, и это
@@ -85,21 +104,78 @@ function isDismissal(event) {
     && event?.properties?.tool === ASK_TOOL
 }
 
-export const AttentionNotify = async ({ directory, worktree }) => ({
-  event: async ({ event }) => {
-    const moment = MOMENTS[event?.type]
-    const dismissal = !moment && isDismissal(event)
-    if (!moment && !dismissal) return
-    // Только папки проекта: рабочая папка процесса может оказаться чужим
-    // проектом, и карточка ушла бы не на ту доску
-    const root = [directory, worktree]
-      .find((dir) => dir && existsSync(join(dir, "tasks", "notify.py")))
-    if (!root) return
-    try {
-      if (dismissal) dismiss(root)
-      else notify(root, ...moment)
-    } catch {
-      // уведомление вспомогательно — среду не роняем
-    }
-  },
-})
+// Идентификатор сессии лежит то на верхнем уровне события, то внутри его
+// содержимого: у сообщений — в `info`, у вызовов инструментов — рядом с ними
+function sessionOf(event) {
+  const props = event?.properties || {}
+  return props.sessionID ?? props.info?.sessionID ?? props.part?.sessionID ?? ""
+}
+
+// Идентификатор самого сообщения: по нему отличают новую реплику человека от
+// повторного обновления уже известной
+function messageIdOf(event) {
+  const props = event?.properties || {}
+  return props.info?.id ?? props.message?.id ?? props.part?.messageID
+    ?? props.messageID ?? ""
+}
+
+// Реплика человека. Роль лежит в разных обёртках в зависимости от события,
+// поэтому смотрим все известные места: промах здесь означает, что сообщения
+// агента не погаснут вовсе
+function isUserReply(event) {
+  if (!MESSAGE_EVENTS.has(event?.type)) return false
+  const props = event?.properties || {}
+  const role = props.info?.role ?? props.message?.role ?? props.part?.role
+    ?? props.role
+  return role === "user"
+}
+
+export const AttentionNotify = async ({ directory, worktree }) => {
+  // Последняя известная сессия: события шины её называют, окружение — нет.
+  // Живёт в замыкании плагина, то есть столько же, сколько сама среда
+  let session = ""
+  // Последняя реплика человека, которую уже отработали: та же запись приходит
+  // обновлениями и дальше, внутри хода агента
+  let repliedTo = ""
+
+  return {
+    event: async ({ event }) => {
+      const seen = sessionOf(event)
+      if (seen) session = seen
+      const moment = MOMENTS[event?.type]
+      // Реплика человека снимает всё сказанное сессией, остальные моменты —
+      // только зовы среды
+      let reply = false
+      if (!moment && isUserReply(event)) {
+        const id = messageIdOf(event)
+        // Без идентификатора отличить новую реплику от обновления нельзя, а
+        // ошибиться здесь значит погасить только что показанную карточку
+        if (id && id !== repliedTo) {
+          repliedTo = id
+          reply = true
+        } else {
+          return
+        }
+      }
+      const dismissal = reply || (!moment && isDismissal(event))
+      if (!moment && !dismissal) return
+      // Только папки проекта: рабочая папка процесса может оказаться чужим
+      // проектом, и карточка ушла бы не на ту доску
+      const root = [directory, worktree]
+        .find((dir) => dir && existsSync(join(dir, "tasks", "notify.py")))
+      if (!root) return
+      try {
+        if (dismissal) dismiss(root, session, reply ? "all" : "env")
+        else notify(root, ...moment, session)
+      } catch {
+        // уведомление вспомогательно — среду не роняем
+      }
+    },
+
+    // Сообщения агент шлёт сам, из шелла среды: без этой подстановки они
+    // приходят без метки, и ответ человека их не снимает
+    "shell.env": async (_input, output) => {
+      if (session && output?.env) output.env[SESSION_VAR] = session
+    },
+  }
+}
