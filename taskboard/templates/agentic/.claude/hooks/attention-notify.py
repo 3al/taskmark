@@ -36,9 +36,9 @@
 от нас не зависит. Пометки лежат во временной папке системы, по файлу на
 сессию, — в проект пользователя они не пишутся.
 
-**Отпавший повод убирают с доски.** Реплика человека, конец хода агента и
-ответ на заданный вопрос означают, что звать больше некого: висящая карточка
-после этого врёт. В эти моменты обработчик просит скрипт доски убрать сказанное
+**Отпавший повод убирают с доски.** Реплика человека, конец хода агента,
+ответ на заданный вопрос и завершение разрешённого действия означают, что
+звать больше некого: висящая карточка после этого врёт. В эти моменты обработчик просит скрипт доски убрать сказанное
 **своей** сессией — соседние сессии и проекты зовут по своим поводам.
 
 **Конец хода снимает только зовы среды.** Сообщение агента («работа готова,
@@ -97,10 +97,13 @@ AGENT = "Claude Code"
 IDLE = "idle_prompt"
 # События, открывающие новое ожидание: человек ответил или агент кончил ход
 WAIT_RESET = {"UserPromptSubmit", "Stop"}
-# Ответ на заданный вопрос: среда закрывает вызов инструмента вопроса — это
-# единственный момент, когда точно известно, что человек ответил. Отклонённое
-# разрешение такого события не даёт вовсе, поэтому его карточку убирает конец
-# хода агента
+# Завершение вызова инструмента. У вопроса это точный момент ответа: среда
+# закрывает вызов инструмента вопроса. У разрешения события решения нет вовсе,
+# и первое, что приходит после разрешения, — завершение того же действия.
+# Отказ человека хукам не сообщается вовсе: ход прерывается без `Stop`, и
+# карточку снимает его следующая реплика. Поэтому завершение любого
+# инструмента снимает карточку разрешения — но только если она есть: событие
+# приходит на каждую команду, и звать доску без повода незачем
 ANSWERED = {"PostToolUse", "PostToolUseFailure"}
 # Что снимать в этот момент: «env» — только зовы среды, «all» — и сообщения
 # агента. Ответ человека читает и то и другое, конец хода — лишь свои зовы
@@ -167,6 +170,29 @@ def write_state(session: str, state: dict) -> None:
         path.write_text(json.dumps(state), encoding="utf-8")
     except OSError:
         pass
+
+
+def permission_file(session: str) -> Path:
+    """Отметка «карточка разрешения висит» одной сессии среды."""
+    return state_file(session).with_suffix(".permission")
+
+
+def mark_permission(session: str) -> None:
+    path = permission_file(session)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    except OSError:
+        pass
+
+
+def take_permission(session: str) -> bool:
+    """Снять отметку разрешения. True — она была, и карточку пора гасить."""
+    try:
+        permission_file(session).unlink()
+    except OSError:
+        return False
+    return True
 
 
 def read_mark(session: str) -> str:
@@ -310,18 +336,27 @@ def main() -> int:
     except (json.JSONDecodeError, OSError, ValueError):
         return 0
     event = payload.get("hook_event_name")
+    session = str(payload.get("session_id") or "")
     root = project_root(payload)
+    if event in ANSWERED:
+        # Первым — снять отметку: она должна уйти и тогда, когда гасить нечем
+        pending = take_permission(session)
+        if not pending and payload.get("tool_name") not in ASK_TOOLS:
+            return 0
     if event in WAIT_RESET or event in ANSWERED:
         # Ожидание кончилось: новое начинается отсюда, а сказанное доске
         # больше не ждёт человека
         if event in WAIT_RESET:
-            start_wait(str(payload.get("session_id") or ""))
+            start_wait(session)
+            take_permission(session)
         if root is not None:
             dismiss(root, DISMISS_SCOPE.get(str(event), "env"))
         return 0
     if event == "PermissionRequest":
-        moment = (QUESTION if payload.get("tool_name") in ASK_TOOLS
-                  else PERMISSION)
+        asked = payload.get("tool_name") in ASK_TOOLS
+        moment = QUESTION if asked else PERMISSION
+        if not asked:
+            mark_permission(session)
     elif event == "Notification":
         moment = MOMENTS.get(str(payload.get("notification_type") or ""))
     else:

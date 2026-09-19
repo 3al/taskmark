@@ -963,8 +963,11 @@ HOOK_REGISTRATION_FILE = {"claude": CLAUDE_SETTINGS, "codex": CODEX_HOOKS}
 # **Отпавший повод убирают с доски.** Реплика человека, конец хода агента и
 # ответ на заданный вопрос — моменты, когда звать больше некого; обработчик в
 # них просит доску снять уведомления своей сессии. У вопроса момент точный
-# (среда закрывает вызов инструмента вопроса), у отклонённого разрешения
-# события нет вовсе — его карточку снимает конец хода.
+# (среда закрывает вызов инструмента вопроса). Решения по разрешению ни одна
+# из двух сред не сообщает: карточку снимает завершение действия (поэтому
+# завершение слушается у **любого** инструмента). Отказ у Codex прерывает ход
+# (`Interrupt`), а Claude Code о нём не сообщает ничем — карточку снимает
+# следующая реплика человека.
 #
 # **Простой зовёт с задержкой и раз на ожидание.** Ожидание открывают реплика
 # человека (`UserPromptSubmit`) и конец хода агента (`Stop`): по ним обработчик
@@ -983,9 +986,9 @@ HOOK_REGISTRATIONS = {
          "script": "attention-notify.py", "async": True, "timeout": 5},
         {"event": "Stop", "matcher": "*",
          "script": "attention-notify.py", "async": True, "timeout": 5},
-        {"event": "PostToolUse", "matcher": "AskUserQuestion",
+        {"event": "PostToolUse", "matcher": "*",
          "script": "attention-notify.py", "async": True, "timeout": 5},
-        {"event": "PostToolUseFailure", "matcher": "AskUserQuestion",
+        {"event": "PostToolUseFailure", "matcher": "*",
          "script": "attention-notify.py", "async": True, "timeout": 5},
     ),
     "codex": (
@@ -994,12 +997,16 @@ HOOK_REGISTRATIONS = {
          "script": "permission-notify.py", "async": True, "timeout": 5},
         {"event": "PreToolUse", "matcher": "request_user_input",
          "script": "permission-notify.py", "async": True, "timeout": 5},
-        {"event": "PostToolUse", "matcher": "request_user_input",
+        {"event": "PostToolUse", "matcher": "*",
          "script": "permission-notify.py", "async": True, "timeout": 5},
         {"event": "UserPromptSubmit", "matcher": "*",
          "script": "permission-notify.py", "async": True, "timeout": 5},
         {"event": "Stop", "matcher": "*",
          "script": "permission-notify.py", "async": True, "timeout": 5},
+        # Таймаут `Interrupt` у Codex не больше трёх секунд: больший он
+        # урезает с предупреждением при каждом старте сессии
+        {"event": "Interrupt", "matcher": "*",
+         "script": "permission-notify.py", "async": True, "timeout": 3},
     ),
 }
 
@@ -1061,14 +1068,32 @@ def _is_dead(entry, expected: dict) -> bool:
 
 
 def hook_registered(project_root: Path, harness: str = "claude") -> bool:
-    """Сослался ли файл настроек среды на все её обработчики поставки."""
+    """Сослался ли файл настроек среды на все её обработчики поставки.
+
+    Сверяется вся запись, кроме команды: с прежним матчером она слушает не те
+    события, с прежним таймаутом среда её урезает, и считать такую запись
+    подключённой значит не доставить новую. Команду не сверяем — она зависит
+    от платформы, и общий репозиторий спорил бы сам с собой.
+    """
     data = _read_settings(project_root, harness)
     if data is None:
         return False
     hooks = data.get("hooks") or {}
     return all(any(_is_ours(entry, spec["script"])
+                   and _without_command(entry)
+                   == _without_command(_hook_entry(harness, spec))
                    for entry in (hooks.get(spec["event"]) or []))
                for spec in HOOK_REGISTRATIONS[harness])
+
+
+def _without_command(entry: dict) -> dict:
+    """Запись хука без команды — то, что не зависит от платформы."""
+    handlers = entry.get("hooks")
+    if not isinstance(handlers, list):
+        return {**entry}
+    return {**entry, "hooks": [{k: v for k, v in handler.items() if k != "command"}
+                               if isinstance(handler, dict) else handler
+                               for handler in handlers]}
 
 
 def hooks_unregistered(project_root: Path, cfg: dict | None = None) -> list[str]:

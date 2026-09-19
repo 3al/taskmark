@@ -122,11 +122,11 @@
 | Среда | Файл | Подключение |
 |---|---|---|
 | Claude Code | `.claude/hooks/work-hint.py` | `.claude/settings.json` |
-| Claude Code | `.claude/hooks/attention-notify.py` | `PermissionRequest`, `Notification`, `UserPromptSubmit`, `Stop` и ответ на вопрос в `.claude/settings.json` |
+| Claude Code | `.claude/hooks/attention-notify.py` | `PermissionRequest`, `Notification`, `UserPromptSubmit`, `Stop`, `PostToolUse` и `PostToolUseFailure` в `.claude/settings.json` |
 | opencode | `.opencode/plugin/work-hint.js` | подхватывается сам |
 | opencode | `.opencode/plugin/attention-notify.js` | подхватывается сам |
 | Codex | `.codex/hooks/work-hint.py` | `.codex/hooks.json` |
-| Codex | `.codex/hooks/permission-notify.py` | `PermissionRequest`, `PreToolUse` (вопрос), ответ на вопрос, `UserPromptSubmit` и `Stop` в `.codex/hooks.json` |
+| Codex | `.codex/hooks/permission-notify.py` | `PermissionRequest`, `PreToolUse` (вопрос), `PostToolUse`, `UserPromptSubmit`, `Stop` и `Interrupt` в `.codex/hooks.json` |
 
 **Подсказка при коммите** (`work-hint`). Коммит, `push` или запрос на слияние при
 задаче в работе — агенту напоминают, что передачу ведёт скилл. Ничего не
@@ -144,8 +144,20 @@
   **Настройки (⚙) → Вид доски → «Простой терминала, мин»**, см.
   [«Доска»](02-board.md).
 
-Ответили агенту, ответили на вопрос или решили по запросу разрешения — эти
-уведомления уходят с доски сами, вместе с прежними сообщениями той же сессии.
+Уведомления уходят с доски сами, когда повод отпал:
+
+- **ответили агенту в терминале** — уходит всё, что сказала эта сессия, включая
+  сообщения самого агента;
+- **ответили на вопрос** — уходит карточка вопроса;
+- **разрешили действие** — карточка уходит, когда разрешённое действие
+  выполнено: долгая команда держит её до своего конца;
+- **отклонили** — в Codex карточка уходит сразу; в Claude Code — с вашей
+  следующей репликой;
+- **в opencode** карточка разрешения уходит сразу после решения — и
+  разрешения, и отказа;
+- **агент закончил ход** — уходят вопрос, разрешение и ожидание, а его
+  сообщение («работа готова») остаётся.
+
 Уведомления соседней сессии и другого проекта остаются: они ждут своего ответа.
 Если среда не называет свою сессию, уведомления помечаются проектом — тогда ваш
 ответ снимает карточки всех его сессий.

@@ -33,8 +33,8 @@ CLAUDE_ONLY = {"claude": True, "opencode": False}
 
 
 # Сколько записей поставки живёт в одном событии `PostToolUse` у Claude Code:
-# подсказка о коммите (по `Bash`) и снятие сказанного доске после ответа на
-# вопрос (по инструменту вопроса). Считается по реестру, а не числом в тесте:
+# подсказка о коммите (по `Bash`) и снятие сказанного доске по завершении
+# действия (по любому инструменту). Считается по реестру, а не числом в тесте:
 # запись, добавленная в поставку, не должна ронять соседние проверки
 OURS_IN_POST_TOOL_USE = sum(spec["event"] == "PostToolUse"
                             for spec in HOOK_REGISTRATIONS["claude"])
@@ -58,6 +58,47 @@ class RegistrationTest(unittest.TestCase):
 
     def deploy(self) -> None:
         scaffold_project(self.tasks, self.cfg, {"harnesses": CLAUDE_ONLY})
+
+    def test_stale_matcher_is_not_registered_and_button_updates_it(self) -> None:
+        """Запись поставки поменяла матчер — прежняя слушает не те события,
+        и считать её подключённой нельзя: иначе новая до проекта не доедет."""
+        self.deploy()
+        data = self.read()
+        entry = next(item for item in data["hooks"]["PostToolUseFailure"]
+                     if "attention-notify.py" in json.dumps(item))
+        entry["matcher"] = "AskUserQuestion"
+        self.settings().write_text(json.dumps(data), encoding="utf-8")
+
+        self.assertFalse(hook_registered(self.root))
+
+        register_hook(self.root, self.cfg)
+
+        self.assertTrue(hook_registered(self.root))
+
+    def test_stale_timeout_is_not_registered(self) -> None:
+        """Таймаут записи поставки поменялся — прежний не должен считаться
+        подключённым, иначе среда так и будет урезать его с предупреждением."""
+        self.deploy()
+        data = self.read()
+        entry = next(item for item in data["hooks"]["Stop"]
+                     if "attention-notify.py" in json.dumps(item))
+        entry["hooks"][0]["timeout"] = 30
+        self.settings().write_text(json.dumps(data), encoding="utf-8")
+
+        self.assertFalse(hook_registered(self.root))
+
+    def test_command_differences_do_not_matter(self) -> None:
+        """Команда зависит от платформы (`py` / `python3`): общий репозиторий
+        не должен считать чужую запись устаревшей."""
+        self.deploy()
+        data = self.read()
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for handler in entry["hooks"]:
+                    handler["command"] = handler["command"].replace("py ", "python3 ", 1)
+        self.settings().write_text(json.dumps(data), encoding="utf-8")
+
+        self.assertTrue(hook_registered(self.root))
 
     def test_file_is_created_when_absent(self) -> None:
         self.deploy()

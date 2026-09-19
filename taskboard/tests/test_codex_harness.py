@@ -249,6 +249,14 @@ class CodexHooksTest(_Project):
         self.assertNotIn("no_hooks", codes)
         self.assertNotIn("no_hook_registration", codes)
 
+    def test_interrupt_timeout_fits_codex_limit(self) -> None:
+        """Таймаут `Interrupt` Codex урезает до трёх секунд с предупреждением
+        на каждом старте сессии — запись поставки не должна его вызывать."""
+        self.deploy(CODEX_ONLY)
+        entry = self.registration()["hooks"]["Interrupt"][0]
+
+        self.assertLessEqual(entry["hooks"][0]["timeout"], 3)
+
     def test_command_path_is_relative(self) -> None:
         """`CLAUDE_PROJECT_DIR` у Codex нет, зато хук стартует из корня проекта."""
         self.deploy(CODEX_ONLY)
