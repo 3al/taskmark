@@ -573,7 +573,7 @@ class FrontendTest(unittest.TestCase):
         source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
         css = (self.SRC / "index.css").read_text(encoding="utf-8")
 
-        self.assertIn("animationPlayState", source)
+        self.assertIn("notice-bar", source)
         self.assertIn("notice-bar", css)
 
     def test_невидимая_доска_не_считает(self):
@@ -585,7 +585,47 @@ class FrontendTest(unittest.TestCase):
         self.assertIn("document.hidden", source)
         self.assertIn("|| !visible) return", source,
                       "таймер исчезания не останавливается на невидимой доске")
-        self.assertIn("paused || !visible", source, "полоска отсчёта не замирает")
+
+    def test_полоска_идёт_от_остатка_а_не_от_своего_появления(self):
+        """Анимация на полную длительность в скрытой вкладке досчитывала до
+        конца, пока отсчёт стоял: пауза доезжает до композитора только с
+        очередным кадром, а кадров там нет."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+        css = (self.SRC / "index.css").read_text(encoding="utf-8")
+
+        self.assertNotIn("animationDuration", source,
+                         "полоску по-прежнему ведёт анимация на полный срок")
+        self.assertNotIn("animationPlayState", source)
+        self.assertNotIn("@keyframes notice-bar", css)
+        self.assertIn("scaleX", source, "ширина полоски не считается от остатка")
+
+    def test_полоску_и_таймер_ведёт_один_эффект(self):
+        """Два разных места разошлись бы снова: остаток один, и ставить полоску
+        должен тот же код, который заводит таймер."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+        effect = source.split("const timer = setTimeout(close", 1)[0]
+        effect = effect.rsplit("useEffect(", 1)[1]
+
+        self.assertIn("scaleX", effect, "полоска ставится не там, где заводится таймер")
+        self.assertIn("left.current", effect)
+
+    def test_замерший_отсчёт_показывает_остаток(self):
+        """Иначе вернувшийся к доске видит долю, доставшуюся полоске от
+        прошлого кадра, а не то, сколько карточке осталось."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+        effect = source.split("const timer = setTimeout(close", 1)[0]
+        effect = effect.rsplit("useEffect(", 1)[1]
+        head = effect.split("if (paused", 1)[0]
+
+        self.assertIn("scaleX", head, "полоска встаёт на остаток только у бегущего отсчёта")
+
+    def test_ждущее_закрытия_уведомление_полоски_не_имеет(self):
+        """Полоска обещает, что карточка погаснет сама, — а она ждёт крестика."""
+        source = (self.SRC / "components" / "Notices.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("{!!life &&", source, "полоска рисуется и без срока жизни")
+        self.assertIn("const life = notice.sticky ? 0 : lifetime", source,
+                      "ждущее закрытия уведомление получает срок жизни")
 
     def test_стопку_можно_убрать_одним_движением(self):
         """Ждущие закрытия уведомления копятся — иначе крестики жмут по очереди."""

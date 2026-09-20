@@ -143,15 +143,10 @@ select option {
 }
 
 /* Полоска обратного отсчёта всплывашки: съезжает справа налево за то же время,
-   что живёт уведомление. Пауза ставится инлайном (animation-play-state) —
-   тем же наведением, что останавливает и сам таймер */
-@keyframes notice-bar {
-  from { transform: scaleX(1); }
-  to { transform: scaleX(0); }
-}
+   что осталось уведомлению. Ход задаёт JS вместе с таймером — он же ставит
+   полоску на остаток при паузе и на невидимой доске; здесь остаётся только
+   точка отсчёта ширины */
 .notice-bar {
   transform-origin: left;
-  animation-name: notice-bar;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
+  will-change: transform;
 }

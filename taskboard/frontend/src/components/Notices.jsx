@@ -59,6 +59,7 @@ function Notice({ notice, activeProject, lifetime, volume, visible, paused,
   const [leaving, setLeaving] = useState(false)
   const left = useRef(life)
   const card = useRef(null)
+  const bar = useRef(null)
 
   // Звучит только то уведомление, чей источник об этом просили: признак
   // считает бэкенд, показу остаётся проиграть. Эффект без зависимостей —
@@ -101,15 +102,36 @@ function Notice({ notice, activeProject, lifetime, volume, visible, paused,
     if (notice.dismissed && !leaving) close()
   }, [notice.dismissed, leaving, close])
 
+  // Отсчёт и полоска под ним — одно и то же: оба ведутся отсюда, от общего
+  // остатка `left.current`. Полоска со своей анимацией на полный срок расходилась
+  // с таймером: ход `transform` живёт в композиторе, и остановка доезжает туда
+  // только с очередным кадром — а в скрытой вкладке кадров нет, и полоска
+  // досчитывала до конца, пока отсчёт стоял. Расхождение копилось ровно на время,
+  // проведённое человеком в другой вкладке
   useEffect(() => {
     // Ноль — «не гасить само»: таймера просто нет, уведомление ждёт крестика.
     // Уходящая карточка досчитывать тоже не должна.
     // **Невидимая доска не считает.** Уведомление адресовано человеку,
     // который отошёл от экрана: сгорев в свёрнутом окне, оно не показалось бы
     // вовсе — а истории у службы нет, и вернуться к нему неоткуда
-    if (!life || paused || leaving || !visible) return
+    if (!life) return
+    // Полоска встаёт на долю остатка — и перед ходом, и когда отсчёт замер:
+    // вернувшийся к доске видит, сколько карточке осталось на самом деле
+    const el = bar.current
+    if (el) {
+      el.style.transition = 'none'
+      el.style.transform = `scaleX(${Math.max(0, left.current) / life})`
+    }
+    if (paused || leaving || !visible) return
     const started = Date.now()
     const timer = setTimeout(close, left.current)
+    if (el) {
+      // Перечитать размер: без этого браузер склеит обе записи `transform` в
+      // одну и полоска прыгнет в ноль вместо хода
+      void el.offsetWidth
+      el.style.transition = `transform ${left.current}ms linear`
+      el.style.transform = 'scaleX(0)'
+    }
     return () => {
       clearTimeout(timer)
       // Списываем прожитое: наведение мыши **приостанавливает** отсчёт, а не
@@ -176,16 +198,10 @@ function Notice({ notice, activeProject, lifetime, volume, visible, paused,
         </button>
       </div>
       {/* Полоска отсчёта: она же и ответ на вопрос «пауза вообще работает?».
-          Ширину ведёт CSS-анимация той же длительности, что и таймер, а
-          наведение на стопку останавливает её вместе с остальными — человек
-          видит, что отсчёт замер и продолжился с места, а не начался заново */}
-      {!!life && (
-        <div
-          className={`h-0.5 ${level.dot} opacity-40 notice-bar`}
-          style={{ animationDuration: `${life}ms`,
-                   animationPlayState: paused || !visible ? 'paused' : 'running' }}
-        />
-      )}
+          Ширину ей ставит эффект таймера, по остатку — наведение на стопку
+          останавливает её вместе с остальными, и человек видит, что отсчёт
+          замер и продолжился с места, а не начался заново */}
+      {!!life && <div ref={bar} className={`h-0.5 ${level.dot} opacity-40 notice-bar`} />}
     </div>
   )
 }
