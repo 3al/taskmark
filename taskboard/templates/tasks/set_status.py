@@ -163,9 +163,10 @@ CATALOG = {
 # skip_roles — **роли** этапов, которые этому виду работы не нужны: у обсуждения
 # и код-ревью нет ни ревью (они сами им и являются), ни выпуска — выпускать по
 # ним нечего. Роль, а не имя статуса: маршрут настраивается per-project, и
-# зашитое имя неверно для половины пользователей (TASK-272). Пропуск меняет
-# только ожидаемый следующий шаг (`--targets`), достижимость статусов остаётся
-# прежней
+# зашитое имя неверно для половины пользователей (TASK-272). Пропуск задаёт
+# маршрут этого вида работы целиком — ожидаемый следующий шаг (`--targets`),
+# скилл момента и статус конца работы (`skips_release`); достижимость статусов
+# остаётся прежней
 SKIP_ROLES = ("review", "release")
 
 TASK_TYPES = {
@@ -340,16 +341,37 @@ def release_zone(cfg: dict, pipeline: list[dict]) -> list[str]:
     return keys[max(min(marks) - 1, 0):len(keys) - 1]
 
 
+def skip_roles_of(task_type: str) -> tuple:
+    """Роли этапов, которые этому виду работы не нужны, — из каталога типов."""
+    return tuple(TASK_TYPES.get((task_type or "").strip().lower(), {})
+                 .get("skip_roles") or ())
+
+
+def skips_release(task_type: str) -> bool:
+    """Бывает ли у этого вида работы выпуск.
+
+    Не бывает — значит маршрут задачи **короче объявленного**: из проверки она
+    идёт сразу в терминальный статус, сколько бы этапов проект между ними ни
+    поставил. На этот вопрос опираются и рекомендация следующего шага, и карта
+    моментов, и граница конца работы: разойдясь, они запирали задачу — шаг,
+    который предлагали, выполнить было нельзя (TASK-292).
+
+    Признак берётся из каталога, а не перечнем имён типов здесь: новый вид
+    работы без выпуска (отчёт) получает короткий маршрут записью в поставке.
+    Тип не назван или чужой — считаем, что выпуск бывает: молчать по недостатку
+    данных нельзя, а лишний отказ виден и правится.
+    """
+    return "release" in skip_roles_of(task_type)
+
+
 def skipped_for_type(cfg: dict, pipeline: list[dict], task_type: str) -> set[str]:
     """Статусы, которые этому виду работы не нужны, — по ролям его каталога."""
-    roles = (TASK_TYPES.get((task_type or "").strip().lower(), {})
-             .get("skip_roles") or ())
     skip: set[str] = set()
-    if "review" in roles:
+    if "review" in skip_roles_of(task_type):
         target = actions_of(cfg, pipeline).get("review")
         if target:
             skip.add(target)
-    if "release" in roles:
+    if skips_release(task_type):
         skip.update(release_zone(cfg, pipeline))
     return skip
 
@@ -803,7 +825,8 @@ def set_status(tasks_dir: Path, task_id: str, status: str,
     # Конец работы — время прибрать хвосты в файле задачи: позже, при выпуске,
     # автор деталей уже не помнит
     reminders = (finish_reminders(tasks_dir, task_id, task_file, cfg)
-                 if status == work_done_status(cfg, pipeline) else [])
+                 if status == work_done_status(cfg, pipeline,
+                                               task_type_of(task_file)) else [])
 
     return {"ok": True, "task": task_id, "status": status, "section": section,
             "file": task_file.name, "from": prev, "skipped": skipped,
@@ -1448,6 +1471,21 @@ def _read_meta(path: Path) -> dict:
             key, _, value = line.partition(":")
             meta[key.strip()] = value.strip()
     return meta
+
+
+def task_type_of(task_path) -> str:
+    """Вид работы из frontmatter задачи; файла нет или поля нет — пусто.
+
+    Пустое читается как «вид работы неизвестен», и исключения каталога к такой
+    задаче не применяются: заведённая до появления поля задача идёт обычным
+    маршрутом.
+    """
+    if not task_path:
+        return ""
+    try:
+        return _one_line(_read_meta(Path(task_path)).get("type")).strip().lower()
+    except OSError:
+        return ""
 
 
 def _set_fields(path: Path, updates: dict) -> bool:
@@ -2704,7 +2742,8 @@ def waive_requirement(tasks_dir, task_id: str, req_id: str, reason: str,
 # говорит сам скрипт.
 
 
-def work_done_status(cfg: dict, pipeline: list[dict]) -> str | None:
+def work_done_status(cfg: dict, pipeline: list[dict],
+                     task_type: str = "") -> str | None:
     """Статус, в котором кончается работа автора над задачей.
 
     Это не обязательно терминальный статус. С релизным хвостом задача уходит
@@ -2715,12 +2754,17 @@ def work_done_status(cfg: dict, pipeline: list[dict]) -> str | None:
     Имена не подставляем, правило выводится из конфига: задана цель подготовки
     текстов (`actions.release_draft`) — работа кончается перед ней; не задана —
     в последнем статусе маршрута.
+
+    Вид работы, который не выпускают, хвоста не проходит вовсе: работа над ним
+    кончается в терминальном статусе, как в проекте без хвоста. Иначе хвосты
+    задачи спрашивались бы в пуле готового — там, где обсуждение не появится
+    никогда, то есть не спрашивались бы вообще.
     """
     keys = [s["key"] for s in pipeline if not s.get("offramp")]
     if not keys:
         return None
     draft = actions_of(cfg, pipeline).get("release_draft")
-    if draft in keys:
+    if draft in keys and not skips_release(task_type):
         i = keys.index(draft)
         if i > 0:
             return keys[i - 1]
@@ -2754,7 +2798,7 @@ RELEASE_SKILL = "release"
 
 
 def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
-                 target: str) -> str:
+                 target: str, task_type: str = "") -> str:
     """Какой скилл отвечает за этот момент маршрута — строкой для агента.
 
     Карта выводится из `actions`, а не из имён статусов: у каждого проекта свой
@@ -2783,8 +2827,10 @@ def moment_skill(cfg: dict, pipeline: list[dict], from_status: str | None,
         return (FIX_SKILL if there is not None and there > here else START_SKILL)
     if _is_handoff(cfg, pipeline, from_status, target):
         return HANDOFF_SKILL
-    if _in_release_tail(cfg, pipeline, target):
-        # За концом работы задачу ведёт уже выпуск, и финализировать там нечего
+    if _in_release_tail(cfg, pipeline, target, task_type):
+        # За концом работы задачу ведёт уже выпуск, и финализировать там нечего.
+        # У работы, которую не выпускают, этой ветки нет: её маршрут кончается
+        # терминальным статусом, и закрывает её та же финализация
         return RELEASE_SKILL
     if offramp:
         # Съезд ведёт та же финализация: причину отмены спрашивает она
@@ -2852,9 +2898,14 @@ def was_past_work(cfg: dict, pipeline: list[dict], task_path) -> bool:
 
 def task_moment_skill(cfg: dict, pipeline: list[dict], task_path,
                       from_status: str | None, target: str) -> str:
-    """Скилл момента с учётом истории задачи: вход в работу после сданной
-    работы — возврат, откуда бы задача ни пришла."""
-    owner = moment_skill(cfg, pipeline, from_status, target)
+    """Скилл момента с учётом самой задачи: её истории и её вида работы.
+
+    История отличает возврат от старта, вид работы — конец её маршрута от
+    конца маршрута проекта. Чистая `moment_skill` остаётся для расчёта по
+    статусам, когда файла задачи нет.
+    """
+    owner = moment_skill(cfg, pipeline, from_status, target,
+                         task_type_of(task_path))
     if owner == START_SKILL and task_path and was_past_work(cfg, pipeline, task_path):
         return FIX_SKILL
     return owner
@@ -3130,12 +3181,19 @@ def skill_deployed(tasks_dir: Path, name: str) -> bool:
                for harness in (".claude", ".opencode"))
 
 
-def _in_release_tail(cfg: dict, pipeline: list[dict], target: str) -> bool:
+def _in_release_tail(cfg: dict, pipeline: list[dict], target: str,
+                     task_type: str = "") -> bool:
     """Начался ли релизный хвост — то, что ведёт уже выпуск, а не автор задачи.
 
     Граница та же, по которой считается конец работы (`work_done_status`): цель
     подготовки текстов и всё за ней. Хвоста в проекте нет — нет и границы.
+
+    Нет его и у вида работы, который не выпускают: там, где рекомендация уже
+    ведёт задачу мимо хвоста, карта моментов обязана считать так же — иначе
+    предложенный шаг закреплён за скиллом, которому эту задачу вести нечем.
     """
+    if skips_release(task_type):
+        return False
     keys = [s["key"] for s in pipeline if not s.get("offramp")]
     draft = actions_of(cfg, pipeline).get("release_draft")
     if draft not in keys or target not in keys:

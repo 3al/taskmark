@@ -55,6 +55,7 @@ TASK_FILE = """---
 id: {task_id}
 title: {title}
 epic: ~
+type: {task_type}
 status: {status}
 created: 2026-08-01 10:00
 blocked_by: {blocked_by}
@@ -98,12 +99,13 @@ class Project(unittest.TestCase):
     def make(self, task_id: str = "TASK-001", title: str = "Первая",
              status: str = "testing", section: str = "## Testing",
              checklist: str = "- [x] Сделать", commits: str = "- `abc1234` правка",
-             blocked_by: str = "~") -> Path:
+             blocked_by: str = "~", task_type: str = "~") -> Path:
         name = f"{task_id}-{title.lower()}.md"
         path = self.tasks / name
         path.write_text(TASK_FILE.format(task_id=task_id, title=title, status=status,
                                          checklist=checklist, commits=commits,
-                                         blocked_by=blocked_by), encoding="utf-8")
+                                         blocked_by=blocked_by,
+                                         task_type=task_type), encoding="utf-8")
         board = self.tasks / "board.md"
         lines = board.read_text(encoding="utf-8").splitlines()
         for i, line in enumerate(lines):
