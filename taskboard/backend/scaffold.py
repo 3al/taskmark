@@ -32,6 +32,18 @@ HOOK_TEMPLATES = {
 }
 VAULT_TEMPLATES = TEMPLATES_DIR / "vault"
 
+
+def _has_release_tail(cfg: dict | None) -> bool:
+    """Выпускает ли проект версии — по роли подготовки текстов релиза.
+
+    Именно она означает «мы выпускаем версии»: по ней же считаются зона выпуска
+    и конец работы над задачей. Одного утверждённого состава мало — в готовом
+    маршруте «Полный» эта роль стоит на выкатке (стенд и прод), а выкатка не
+    выпуск версии: changelog там никто не пишет.
+    """
+    return bool(load_pipeline(cfg or {}).action("release_draft"))
+
+
 # Опциональные блоки шаблонов: возможность проекта → что исчезает из поставки,
 # когда она выключена. Реестр, а не пара констант: заказчик у механизма не один
 # (волт, дальше — внешние источники ревью), и вторая зашитая пара развела бы
@@ -42,11 +54,17 @@ VAULT_TEMPLATES = TEMPLATES_DIR / "vault"
 #   key    — ключ возможности в конфиге проекта
 #   marker — имя маркера в шаблонах скиллов и правил
 #   skills — скиллы, поставляемые только вместе с возможностью
+#   derive — признак, вычисляемый из конфига, вместо ключа-галочки (необязателен)
 OPTIONAL_BLOCKS = (
     {"key": "vault", "marker": "vault", "skills": ("write-vault",)},
     # Внешние источники ревью: свой скилл им не нужен — это шаги внутри
     # review-task, которых у выключившего возможность просто нет
     {"key": "review_sources", "marker": "review_sources", "skills": ()},
+    # Выпуск версий: галочки у него нет и быть не должно — маршрут проекта уже
+    # отвечает на этот вопрос, а вторая настройка рядом с ним разошлась бы.
+    # Поэтому признак вычисляемый, а реестр остаётся один на оба вида
+    {"key": "release", "marker": "release", "skills": ("release",),
+     "derive": _has_release_tail},
 )
 
 # Папка волта фиксирована: скиллы и правила ссылаются на `vault/` десятками
@@ -158,14 +176,25 @@ def _skipped_skills(features: set[str]) -> set[str]:
             for name in spec["skills"]}
 
 
-def _enabled_features(values: dict | None) -> set[str]:
+def _enabled_features(values: dict | None, cfg: dict | None = None) -> set[str]:
     """Возможности, включённые в переданном наборе.
 
     Набор — конфиг проекта или опции развёртывания: ключи в них одни и те же,
     а спрашивают у них одно и то же — какие блоки шаблонов остаются.
+
+    У вычисляемой возможности ключа в наборе нет вовсе, и её признак читается
+    из конфига проекта: чекбоксы развёртывания про маршрут ничего не знают,
+    поэтому `cfg` передаётся отдельно. Не передан — считаем по самому набору:
+    для конфига это он и есть.
     """
     values = values if isinstance(values, dict) else {}
-    return {spec["key"] for spec in OPTIONAL_BLOCKS if values.get(spec["key"])}
+    source = cfg if cfg is not None else values
+    out: set[str] = set()
+    for spec in OPTIONAL_BLOCKS:
+        derive = spec.get("derive")
+        if derive(source) if derive else values.get(spec["key"]):
+            out.add(spec["key"])
+    return out
 
 
 def strip_optional_blocks(text: str, features) -> str:
@@ -485,7 +514,7 @@ def scaffold_project(tasks_dir: Path, cfg: dict, options: dict | None = None) ->
     opt_commands = options.get("commands", active["opencode"])
     # Какие опциональные блоки остаются в текстах — решает пользователь здесь и
     # сейчас (чекбоксы развёртывания), а не состояние проекта на диске
-    opt_features = _enabled_features(options)
+    opt_features = _enabled_features(options, cfg)
     opt_vault = "vault" in opt_features
     parts = options.get("parts")
 
@@ -1470,12 +1499,21 @@ def project_features(project_root: Path, cfg: dict | None = None) -> set[str]:
     сменой эталона расхождение просто становится видно в баннере.
     Ключа нет (проект развёрнут до его появления) — определяем по самим
     файлам: у выключенной возможности блоки вырезаны вместе с маркерами.
+
+    Вычисляемая возможность по файлам не опознаётся: её ответ знает маршрут
+    проекта, он же и единственный. Опознание по маркерам говорило бы о том,
+    что развёрнуто **сейчас**, — то есть отвечало бы на вопрос «устарело ли
+    окружение» самим устаревшим окружением.
     """
     values = cfg if isinstance(cfg, dict) else {}
     out: set[str] = set()
     for spec in OPTIONAL_BLOCKS:
-        enabled = (bool(values[spec["key"]]) if spec["key"] in values
-                   else _marker_deployed(project_root, spec["marker"], cfg))
+        derive = spec.get("derive")
+        if derive:
+            enabled = derive(values)
+        else:
+            enabled = (bool(values[spec["key"]]) if spec["key"] in values
+                       else _marker_deployed(project_root, spec["marker"], cfg))
         if enabled:
             out.add(spec["key"])
     return out
