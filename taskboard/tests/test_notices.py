@@ -527,6 +527,47 @@ class IdleDelayTest(unittest.TestCase):
                          saved.get("notice_idle_minutes"))
 
 
+class IdleDelayVisibilityTest(unittest.TestCase):
+    """Настройку читает хук Claude Code — без этой среды поля быть не должно."""
+
+    SRC = Path(__file__).resolve().parents[1] / "frontend" / "src"
+
+    def form(self) -> str:
+        return (self.SRC / "components" / "SettingsModal.jsx").read_text(encoding="utf-8")
+
+    def test_поле_зависит_от_среды_проекта(self):
+        form = self.form()
+
+        self.assertIn("harnesses?.claude", form,
+                      "поле не смотрит на выбранные среды проекта")
+
+    def test_прячется_только_явно_выключенная_среда(self):
+        """Выбора сред могло не быть вовсе, и тогда прятать не по чему —
+        как и в глобальных настройках без открытого проекта."""
+        form = self.form()
+
+        self.assertIn("harnesses?.claude === false", form,
+                      "проверка срабатывает там, где выбор сред не делали")
+
+    def test_прячется_только_задержка_простоя(self):
+        """Остальные настройки уведомлений к Claude Code отношения не имеют."""
+        form = self.form()
+        fields = form.split("harnesses?.claude === false", 1)[1]
+        idle = fields.split("notice_idle_minutes", 1)[1].split("},", 1)[0]
+        seconds = fields.split("notice_seconds", 1)[1].split("},", 1)[0]
+
+        self.assertIn("claude", idle, "задержка простоя не привязана к среде")
+        self.assertNotIn("claude", seconds,
+                         "под условие попало время показа уведомлений")
+
+    def test_значение_остаётся_общим_для_проектов(self):
+        """Сервер один на реестр: спрятанное поле — не сброшенное значение."""
+        from backend.config import PROJECT_KEYS
+
+        self.assertNotIn("notice_idle_minutes", PROJECT_KEYS,
+                         "задержка стала настройкой проекта и разъедется по ним")
+
+
 class FrontendTest(unittest.TestCase):
     """Всплывашка: что проверяется текстом, а не глазами."""
 

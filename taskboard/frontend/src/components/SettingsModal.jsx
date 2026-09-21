@@ -334,6 +334,13 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     ...(notifyStatuses !== null ? { notify_statuses: notifyStatuses } : {}),
   })
 
+  // Задержку простоя читает хук Claude Code: в проекте, где эта среда выключена,
+  // настройка ничего не обещает, и поля там нет. Выключенной среду делает только
+  // снятая галочка — ключа может не быть вовсе (среды не выбирали, проект не
+  // открыт), и тогда прятать не по чему. Значение остаётся общим для всех
+  // проектов: сервер один на реестр, и спрятанное поле — не сброшенное
+  const claudeOff = config?.harnesses?.claude === false
+
   // Сначала спрашиваем бэкенд, не осиротеют ли задачи выключаемых статусов
   const check = async () => {
     setBusy(true)
@@ -736,17 +743,19 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         значении, поэтому ноль здесь — не «мгновенно», а «ждать
                         крестика» */}
                     {/* Задержка простоя стоит рядом: её читает хук Claude Code
-                        из того же глобального конфига */}
+                        из того же глобального конфига. В проекте без этой среды
+                        поля нет (`claudeOff`) */}
                     <div className="flex flex-wrap gap-x-6 mb-3">
                       {[
                         { key: 'notice_seconds', title: 'Показывать, сек',
                           zero: 'не гасить, пока не закроете' },
                         { key: 'notice_idle_minutes', title: 'Простой терминала, мин',
                           zero: 'звать сразу',
+                          claude: true,
                           hint: 'Через сколько минут ожидания ввода в Claude Code '
                             + 'звать «Claude ждёт вашего ответа». Вопрос и запрос '
                             + 'разрешения зовут сразу.' },
-                      ].map((item) => {
+                      ].filter((item) => !item.claude || !claudeOff).map((item) => {
                         const [low, high] = config[`${item.key}_range`] || []
                         const value = config[item.key]
                         const bad = value !== '' && (Number(value) < low || Number(value) > high)
