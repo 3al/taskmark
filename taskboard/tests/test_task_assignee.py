@@ -38,6 +38,7 @@ def _with_source(args: tuple[str, ...]) -> list[str]:
 from fastapi import HTTPException  # noqa: E402
 
 from backend import config as config_mod  # noqa: E402
+from backend import pipeline_sources  # noqa: E402
 from backend import registry  # noqa: E402
 from backend.app import (TaskIn, TaskUpdateIn, api_assignees,  # noqa: E402
                          api_create_task, api_task, api_update_task)
@@ -93,6 +94,33 @@ class AssigneeStatusesTest(unittest.TestCase):
                                   "assignee_statuses": ["testing"]})
         self.assertFalse(accepts_assignee(pipeline, "review"))
         self.assertTrue(accepts_assignee(pipeline, "testing"))
+
+
+class AssigneeSourceTest(unittest.TestCase):
+    """Заполнение ЖЦ из другого проекта переносит и эти галочки.
+
+    Едет не имя человека — имена у проектов свои, — а факт «на этом этапе
+    требуй исполнителя», ровно как требования этапа.
+    """
+
+    @staticmethod
+    def _cfg(**over) -> dict:
+        base = {"pipeline": ["backlog", "todo", "development", "testing", "done"]}
+        base.update(over)
+        return base
+
+    def test_key_belongs_to_the_lifecycle(self) -> None:
+        self.assertIn("assignee_statuses", pipeline_sources.LIFECYCLE_KEYS)
+
+    def test_source_carries_the_set(self) -> None:
+        source = pipeline_sources._source(
+            "project", "Соседний", "", self._cfg(assignee_statuses=["testing"]))
+        self.assertEqual(source["assignee_statuses"], ["testing"])
+
+    def test_source_without_the_set_carries_nothing(self) -> None:
+        """Пресеты галочек не несут: маршрут заменяется целиком."""
+        source = pipeline_sources._source("preset", "Пресет", "", self._cfg())
+        self.assertEqual(source["assignee_statuses"], [])
 
 
 class AssigneeListTest(unittest.TestCase):
@@ -420,6 +448,12 @@ class AssigneeUiTest(unittest.TestCase):
     def test_pipeline_editor_has_the_checkbox(self) -> None:
         text = (SRC / "components" / "PipelineEditor.jsx").read_text(encoding="utf-8")
         self.assertIn("assignee", text, "у статуса нет галочки «исполнитель»")
+
+    def test_pipeline_editor_applies_the_set_from_source(self) -> None:
+        """Выбранный источник кладёт свои галочки в форму, а не только маршрут."""
+        text = (SRC / "components" / "PipelineEditor.jsx").read_text(encoding="utf-8")
+        self.assertIn("source.assignee_statuses", text,
+                      "заполнение из источника не переносит галочки исполнителя")
 
     def test_card_preview_stays_clean(self) -> None:
         """На превью исполнителя нет: там и так тесно (решение по TASK-046)."""

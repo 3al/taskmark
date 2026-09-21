@@ -215,11 +215,12 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
   const applySource = (value) => {
     const source = sources?.[Number(value)]
     if (!source) return
-    // Требования — часть жизненного цикла, как подписи: копируя маршрут соседнего
-    // проекта, человек ждёт и его проверок. Пустые у источника (пресет их не
-    // несёт) значат «требований нет» и старые вытесняют — маршрут заменён целиком
+    // Требования и галочки этапов — часть жизненного цикла, как подписи: копируя
+    // маршрут соседнего проекта, человек ждёт и его проверок. Пустые у источника
+    // (пресет их не несёт) значат «нигде» и старые вытесняют — маршрут заменён
+    // целиком
     emit(source.pipeline, source.actions, source.statuses || {}, source.requires || {},
-         undefined, source.notify_statuses || [])
+         source.assignee_statuses || [], source.notify_statuses || [])
     setPicked(value)
   }
 
