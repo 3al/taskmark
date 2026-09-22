@@ -76,63 +76,20 @@ def get_section(section_id: str) -> dict | None:
 #
 # Справка длинная, и человек помнит слова, а не раздел. Поиск отвечает местом:
 # подзаголовком, под которым слова стоят, и номером его строки — по нему окно
-# прокручивает раздел к найденному, без якорей в самих текстах.
+# прокручивает раздел к найденному, без якорей в самих текстах. Разбор файла
+# на подразделы общий с поиском по логам — `text_match.markdown_blocks`.
 
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(?P<text>.+?)\s*#*\s*$")
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
-_LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
-_LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
-_TABLE_RULE_RE = re.compile(r"^\s*\|?[\s:|-]+\|?\s*$")
+def search_places(query: str) -> tuple[dict, list[dict]]:
+    """Места справки по запросу — фраза целиком, иначе все слова (`text_match.select`).
 
-
-def _plain(line: str) -> str:
-    """Строка markdown без разметки: ищется то, что человек видит в окне.
-
-    Адрес ссылки не виден — и не ищется, иначе `lifecycle` находил бы каждую
-    ссылку на раздел жизненного цикла.
+    Ответ — `(highlight, разделы)`: `highlight = {terms, phrase}` для подсветки,
+    разделы по порядку, в каждом найденные подразделы:
+    [{id, title, hits: [{heading, line, excerpt}]}]. Фраза или слова должны
+    стоять под одним подзаголовком: совпадения, рассыпанные по разным частям
+    раздела, места не указывают.
     """
-    if _TABLE_RULE_RE.match(line) and "-" in line:
-        return ""
-    line = _LINK_RE.sub(r"\1", line)
-    line = _LIST_RE.sub("", line)
-    line = line.lstrip("> ")
-    return re.sub(r"[*`|~]", " ", line)
-
-
-def _blocks(text: str, title: str) -> list[dict]:
-    """Файл, разрезанный по заголовкам: [{heading, line, text}].
-
-    `#` внутри блока кода — не заголовок: в справке там живут примеры команд
-    и строк доски.
-    """
-    blocks = [{"heading": title, "line": 1, "parts": []}]
-    fenced = False
-    for number, line in enumerate(text.splitlines(), start=1):
-        if _FENCE_RE.match(line):
-            fenced = not fenced
-            continue
-        heading = None if fenced else _HEADING_RE.match(line)
-        if heading:
-            name = _plain(heading.group("text")).strip()
-            blocks.append({"heading": name, "line": number, "parts": [name]})
-        else:
-            blocks[-1]["parts"].append(line if fenced else _plain(line))
-    return [{"heading": b["heading"], "line": b["line"], "text": "\n".join(b["parts"])}
-            for b in blocks if "".join(b["parts"]).strip()]
-
-
-def search(query: str) -> list[dict]:
-    """Места справки, где встречаются все слова запроса.
-
-    Ответ — разделы по порядку, в каждом найденные подразделы:
-    [{id, title, hits: [{heading, line, excerpt}]}]. Слова должны стоять под
-    одним подзаголовком: совпадения, рассыпанные по разным частям раздела,
-    места не указывают.
-    """
-    words = text_match.terms(query)
-    if not words:
-        return []
-    found = []
+    sections = []
+    places = []
     for path in _files():
         key = _section_id(path)
         if not key:
@@ -142,10 +99,18 @@ def search(query: str) -> list[dict]:
         except OSError:
             continue
         title = _title(text, key)
-        hits = [{"heading": block["heading"], "line": block["line"],
-                 "excerpt": text_match.excerpt(block["text"], words)}
-                for block in _blocks(text, title)
-                if text_match.matches(block["text"], words)]
+        sections.append((key, title))
+        places += [(key, block) for block in text_match.markdown_blocks(text, title)]
+    highlight, found = text_match.select(query, places, lambda place: place[1]["text"])
+    result = []
+    for key, title in sections:
+        hits = [{"heading": block["heading"], "line": block["line"], "excerpt": piece}
+                for (owner, block), piece in found if owner == key]
         if hits:
-            found.append({"id": key, "title": title, "hits": hits})
-    return found
+            result.append({"id": key, "title": title, "hits": hits})
+    return highlight, result
+
+
+def search(query: str) -> list[dict]:
+    """Только разделы с найденными местами — без сведений о подсветке."""
+    return search_places(query)[1]

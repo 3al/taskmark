@@ -144,6 +144,7 @@ export const api = {
   helpSection: (id) => request(`/api/help/${encodeURIComponent(id)}`),
   helpSearch: (q) => request(`/api/help/search?q=${encodeURIComponent(q)}`),
   logs: () => request('/api/logs'),
+  logsSearch: (q) => request(`/api/logs/search?q=${encodeURIComponent(q)}`),
   log: (name) => request(`/api/logs/${encodeURIComponent(name)}`),
   stopServer: () => request('/api/server/stop', { method: 'POST' }),
   restartServer: () => request('/api/server/restart', { method: 'POST' }),

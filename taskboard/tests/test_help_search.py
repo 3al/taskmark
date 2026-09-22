@@ -74,6 +74,27 @@ class TestTextMatch(unittest.TestCase):
     def test_literal_not_regex(self) -> None:
         self.assertTrue(text_match.matches('вызов api() и C++', text_match.terms('api() c++')))
 
+    def test_word_matches_from_word_start(self) -> None:
+        self.assertTrue(text_match.matches('нейросеть пишет', text_match.terms('ней')))
+        self.assertFalse(text_match.matches('линейный вывод', text_match.terms('ней')))
+
+    def test_short_word_matches_whole(self) -> None:
+        self.assertTrue(text_match.matches('путь к файлу', text_match.terms('к')))
+        self.assertFalse(text_match.matches('кэш и лишний шаг', text_match.terms('к')))
+
+    def test_identifier_parts_found(self) -> None:
+        self.assertTrue(text_match.matches('вызов set_status.py', text_match.terms('status')))
+        self.assertTrue(text_match.matches('вызов set_status.py', text_match.terms('.py')))
+
+    def test_phrase_whole_across_spaces(self) -> None:
+        query = text_match.Query('Привязать к ней  спеки')
+        self.assertTrue(query.has_phrase('решили: привязать к\nней спеки сразу'))
+        self.assertFalse(query.has_phrase('спеки привязать к ней'))
+        self.assertTrue(query.has_words('спеки привязать к ней'))
+
+    def test_phrase_is_literal(self) -> None:
+        self.assertTrue(text_match.Query('api() и C++').has_phrase('вызов API() и c++ рядом'))
+
     def test_excerpt_around_first_hit(self) -> None:
         text = 'слово ' * 60 + 'цель рядом' + ' хвост' * 60
         piece = text_match.excerpt(text, ['цель'], width=40)
@@ -115,6 +136,21 @@ class TestHelpSearch(_DocsDir):
         [section] = help_docs.search('python3')
         self.assertEqual(section['hits'][0]['heading'], 'Установка')
 
+    def test_phrase_places_only_when_phrase_found(self) -> None:
+        # Слова «перед подсказкой» есть и в другом порядке, но фраза — только в «Карточке»
+        (help_docs.DOCS_DIR / '03-more.md').write_text(
+            '# Ещё\n\n## Порядок\n\nподсказкой перед сном\n', encoding='utf-8')
+        highlight, result = help_docs.search_places('перед подсказкой')
+        self.assertEqual(highlight, {'terms': ['перед', 'подсказкой'], 'phrase': True})
+        self.assertEqual([(s['id'], [h['heading'] for h in s['hits']]) for s in result],
+                         [('board', ['Карточка'])])
+
+    def test_words_when_phrase_nowhere(self) -> None:
+        highlight, result = help_docs.search_places('простое задержка')
+        self.assertFalse(highlight['phrase'])
+        self.assertEqual(highlight['terms'], ['прост', 'задержк'])
+        self.assertEqual(result[0]['hits'][0]['heading'], 'Карточка')
+
     def test_nothing_found(self) -> None:
         self.assertEqual(help_docs.search('несуществующееслово'), [])
 
@@ -126,7 +162,12 @@ class TestHelpSearchApi(_DocsDir):
     def test_endpoint(self) -> None:
         body = app_module.api_help_search(q='Задержка ПРОСТОЕ')
         self.assertEqual(body['terms'], ['задержк', 'прост'])
+        self.assertFalse(body['phrase'])
         self.assertEqual(body['items'][0]['hits'][0]['heading'], 'Карточка')
+
+    def test_endpoint_phrase(self) -> None:
+        body = app_module.api_help_search(q='Задержка перед')
+        self.assertEqual((body['terms'], body['phrase']), (['задержка', 'перед'], True))
 
     def _route_for(self, path: str):
         return next(r for r in app_module.app.routes

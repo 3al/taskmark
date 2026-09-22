@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from backend import (autostart, baseline, changelog, console, due_watch, help_docs,
                      lifecycle, notices, notify_watch, registry, telegram_intake,
-                     telegram_source, text_match, updater, version)
+                     telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, DEFAULTS,
@@ -27,7 +27,7 @@ from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, DEFAULTS
                             validate_card_style)
 from backend.create_task_runner import create_task
 from backend.fs_browse import browse_dir
-from backend.log_files import log_kind, read_log_text
+from backend.log_files import log_kind, read_log_text, search_log_places
 from backend.task_slices import field_tasks
 from backend.epics import (annotate_epics, epic_name, epic_tasks, list_epics,
                            register_epic, set_task_epic)
@@ -73,7 +73,8 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "epic_tasks": True, "agentic_merge": True, "task_copy": True,
                 "board_sections": True, "agentic_remove": True,
                 "telegram": True, "autostart": True, "notify": True,
-                "task_slice": True, "help_search": True}
+                "task_slice": True, "help_search": True,
+                "log_search": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -1259,8 +1260,9 @@ def api_help() -> dict:
 # Объявлен до /api/help/{section_id}: иначе «search» разбирался бы как раздел
 @app.get("/api/help/search")
 def api_help_search(q: str = "") -> dict:
-    """Места справки со всеми словами запроса и сами слова — для подсветки."""
-    return {"query": q, "terms": text_match.terms(q), "items": help_docs.search(q)}
+    """Места справки по запросу и то, чем их подсвечивать: `terms` и `phrase`."""
+    highlight, items = help_docs.search_places(q)
+    return {"query": q, **highlight, "items": items}
 
 
 @app.get("/api/help/{section_id}")
@@ -1380,6 +1382,16 @@ def api_logs() -> dict:
         for f in sorted(logs_path.iterdir()) if f.is_file()
     ]
     return {"files": files}
+
+
+# Объявлен до /api/logs/{name}: иначе «search» разбирался бы как имя файла
+@app.get("/api/logs/search")
+def api_logs_search(q: str = "") -> dict:
+    """Места логов по запросу и то, чем их подсвечивать: `terms` и `phrase`."""
+    tasks_dir, cfg = _ctx()
+    logs_path = tasks_dir / cfg.get("logs_dir", "logs")
+    highlight, items = search_log_places(logs_path, q)
+    return {"query": q, **highlight, "items": items}
 
 
 @app.get("/api/logs/{name}")

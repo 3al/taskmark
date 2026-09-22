@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
+import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents } from '../markdown'
 import CopyButton from './CopyButton'
+import { HEADINGS_WITH_LINE, SearchField, SearchHits, hitTarget, useSearch } from './SearchHits'
+
+const MD_COMPONENTS = { ...mdComponents, ...HEADINGS_WITH_LINE }
 
 const logDateFormat = new Intl.DateTimeFormat('ru-RU', {
   day: '2-digit', month: '2-digit', year: 'numeric',
@@ -24,6 +28,11 @@ export default function LogsPanel({ onClose }) {
   const [current, setCurrent] = useState(null)
   const [content, setContent] = useState(null)
   const [message, setMessage] = useState('')
+  const [query, setQuery] = useState('')
+  // Место, к которому прокрутить после загрузки файла: {name, line}
+  const [target, setTarget] = useState(null)
+  const bodyRef = useRef(null)
+  const { found, terms, phrase } = useSearch(query, api.logsSearch, (e) => setMessage(`Ошибка: ${e}`))
 
   useEffect(() => {
     api.logs()
@@ -45,34 +54,99 @@ export default function LogsPanel({ onClose }) {
   }
 
   useEffect(() => {
+    if (!query.trim()) setTarget(null)
+  }, [query])
+
+  const termsKey = `${phrase}:${terms.join(' ')}`
+  // Плагин и разбивка на строки пересобираются только со словами и файлом:
+  // лог бывает в сотни килобайт, и лишняя перерисовка на каждый рендер заметна
+  const rehypePlugins = useMemo(
+    () => (terms.length ? [rehypeHighlight(terms, { wholeWord: true, inCode: true, phrase })] : []),
+    [termsKey], // eslint-disable-line react-hooks/exhaustive-deps
+  )
+  // Консольный текст — строками с номером слева. Номер рисует окно, в файле
+  // его нет: он не выделяется мышью и не попадает в копируемый текст. Метка
+  // [data-line] у строки — место для перехода из поиска
+  const textBody = useMemo(() => {
+    if (!content || content.kind === 'markdown') return null
+    const lines = content.text.split(/\r?\n/)
+    // Перевод строки в конце файла — не пустая последняя строка
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
+    const gutter = `calc(${String(lines.length).length}ch + 0.75rem)`
+    return lines.map((line, k) => (
+      <div key={k} data-line={k + 1} className="flex">
+        <span aria-hidden="true" style={{ width: gutter }}
+          className="shrink-0 pr-3 text-right text-zinc-500 select-none">{k + 1}</span>
+        <span className="flex-1 min-w-0 whitespace-pre-wrap break-words">
+          {(terms.length ? highlight(line, terms, { wholeWord: true, phrase }) : line) || ' '}
+        </span>
+      </div>
+    ))
+  }, [content, termsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!target || !content || current !== target.name || !bodyRef.current) return
+    const el = hitTarget(bodyRef.current, target.line)
+    el?.scrollIntoView({ block: el.tagName === 'MARK' ? 'center' : 'start' })
+  }, [target, content, current, rehypePlugins, textBody])
+
+  const pick = (group, hit) => {
+    setTarget({ name: group.key, line: hit.line })
+    if (current !== group.key) open(group.key)
+  }
+
+  const groups = found && found.items.map((item) => ({
+    key: item.name,
+    title: item.name,
+    more: item.more,
+    hits: item.hits.map((h) => ({
+      ...h,
+      key: String(h.line),
+      heading: item.kind === 'markdown' ? h.heading : `строка ${h.line}`,
+    })),
+  }))
+
+  useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
+    // Клик мимо окна его не закрывает: промах мышью стирал бы поиск с
+    // результатами. Закрывают × и Esc
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div
         className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-6xl h-[85vh]
           flex shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
       >
-        <div className="w-72 shrink-0 border-r border-zinc-800 flex flex-col min-h-0">
+        <div className={`${query.trim() ? 'w-80' : 'w-72'} shrink-0 border-r border-zinc-800 flex flex-col min-h-0`}>
           <div className="px-4 py-3 border-b border-zinc-800">
             <div className="font-semibold text-sm">Логи</div>
             <div className="mt-0.5 text-[11px] text-zinc-400">свежие сверху</div>
           </div>
-          <div className="overflow-y-auto">
-            {files.map((f) => {
+          {/* Поле стоит на месте, прокручивается только список под ним */}
+          <div className="pt-2">
+            <SearchField value={query} onChange={setQuery} placeholder="Поиск по логам" />
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {query.trim() && (
+              <SearchHits
+                groups={groups}
+                terms={terms}
+                phrase={phrase}
+                loading
+                activeKey={target && `${target.name}:${target.line}`}
+                onPick={pick}
+              />
+            )}
+            {!query.trim() && files.map((f) => {
               const brainstorm = isBrainstormLog(f.name)
               const active = current === f.name
               return (
                 <button
                   key={f.name}
-                  onClick={() => open(f.name)}
+                  onClick={() => { setTarget(null); open(f.name) }}
                   title={f.name}
                   className={`w-full overflow-hidden border-l-2 text-left px-4 py-2.5
                     hover:bg-zinc-800 ${active ? 'bg-zinc-800' : ''}
@@ -96,7 +170,7 @@ export default function LogsPanel({ onClose }) {
                 </button>
               )
             })}
-            {!files.length && <div className="px-4 py-3 text-xs text-zinc-400">Нет файлов</div>}
+            {!query.trim() && !files.length && <div className="px-4 py-3 text-xs text-zinc-400">Нет файлов</div>}
           </div>
         </div>
 
@@ -114,17 +188,18 @@ export default function LogsPanel({ onClose }) {
             </div>
           )}
           {!message && content?.kind === 'markdown' && (
-            <div className="flex-1 overflow-auto px-6 py-4 md-body md-tint-zinc text-sm">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            <div ref={bodyRef} className="flex-1 overflow-auto px-6 py-4 md-body md-tint-zinc text-sm">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
+                components={MD_COMPONENTS}>
                 {content.text}
               </ReactMarkdown>
             </div>
           )}
           {!message && content && content.kind !== 'markdown' && (
-            <pre className="flex-1 overflow-auto px-5 py-4 text-[13px] leading-relaxed
-              text-zinc-200 whitespace-pre-wrap font-mono">
-              {content.text}
-            </pre>
+            <div ref={bodyRef} className="log-text flex-1 overflow-auto px-3 py-4 text-[13px] leading-relaxed
+              text-zinc-200 font-mono">
+              {textBody}
+            </div>
           )}
         </div>
       </div>
