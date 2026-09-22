@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from backend import (autostart, baseline, changelog, console, due_watch, help_docs,
                      lifecycle, notices, notify_watch, registry, telegram_intake,
-                     telegram_source, updater, version)
+                     telegram_source, text_match, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, DEFAULTS,
@@ -73,7 +73,7 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "epic_tasks": True, "agentic_merge": True, "task_copy": True,
                 "board_sections": True, "agentic_remove": True,
                 "telegram": True, "autostart": True, "notify": True,
-                "task_slice": True}
+                "task_slice": True, "help_search": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -1254,6 +1254,13 @@ def api_pipeline_sources() -> dict:
 def api_help() -> dict:
     """Разделы помощи: те же файлы docs/help, на которые ссылается README."""
     return {"items": help_docs.list_sections()}
+
+
+# Объявлен до /api/help/{section_id}: иначе «search» разбирался бы как раздел
+@app.get("/api/help/search")
+def api_help_search(q: str = "") -> dict:
+    """Места справки со всеми словами запроса и сами слова — для подсветки."""
+    return {"query": q, "terms": text_match.terms(q), "items": help_docs.search(q)}
 
 
 @app.get("/api/help/{section_id}")

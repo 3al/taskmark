@@ -142,6 +142,7 @@ export const api = {
   search: (q) => request(`/api/search?q=${encodeURIComponent(q)}`),
   help: () => request('/api/help'),
   helpSection: (id) => request(`/api/help/${encodeURIComponent(id)}`),
+  helpSearch: (q) => request(`/api/help/search?q=${encodeURIComponent(q)}`),
   logs: () => request('/api/logs'),
   log: (name) => request(`/api/logs/${encodeURIComponent(name)}`),
   stopServer: () => request('/api/server/stop', { method: 'POST' }),
