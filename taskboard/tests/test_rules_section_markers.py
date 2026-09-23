@@ -389,5 +389,96 @@ class ForeignSectionTest(RulesMarkersTestCase):
         self.assertIn("TASK MANAGEMENT", self._read())
 
 
+class ForeignVaultSectionTest(RulesMarkersTestCase):
+    """Своя секция Knowledge Vault рядом с нашей: то же предупреждение, но только с волтом."""
+
+    OLD_VAULT = ("# Проект\n\n# 5. KNOWLEDGE VAULT\n\nчитай vault/SYS/README.md\n\n"
+                 "## Запись\n\nпиши при финализации\n\n# Сборка\n\nnpm\n")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.cfg["vault"] = True
+
+    def test_vault_section_reported(self) -> None:
+        self._write(self.OLD_VAULT)
+        self._press_banner_button()
+
+        message = self._degraded("extra_rules")["message"]
+        self.assertIn("CLAUDE.md", message)
+        self.assertIn("Knowledge Vault", message)
+        items = self._extra_rules()
+        self.assertEqual(len(items), 1)
+        self.assertIn("# 5. KNOWLEDGE VAULT", items[0]["label"])
+
+    def test_named_vault_sections_found(self) -> None:
+        for heading in ("## Knowledge Vault", "## 3) knowledge-vault — правила",
+                        "### Vault", "# 7. VAULT"):
+            with self.subTest(heading=heading):
+                self._write(f"# Проект\n\n{heading}\n\nсвои правила волта\n")
+                self._press_banner_button()
+
+                items = self._extra_rules()
+                self.assertEqual(len(items), 1)
+                self.assertIn(heading.lstrip("# "), items[0]["label"])
+
+    def test_vault_off_is_silent(self) -> None:
+        self.cfg["vault"] = False
+        self._write(self.OLD_VAULT)
+        self._press_banner_button()
+
+        self.assertNotIn("extra_rules", self._codes())
+        self.assertEqual(self._extra_rules(), [])
+
+    def test_mentions_and_our_section_are_not_foreign(self) -> None:
+        self._write("# Проект\n\nЗаметки лежат в vault/.\n\n"
+                    "## Сессия (дополнительно к vault)\n\nтекст\n\n"
+                    "```sh\n# vault helper\nrun\n```\n\n## Vaultwarden\n\nпароли\n")
+        self._press_banner_button()
+
+        self.assertIn("Knowledge Vault", self._read(), "наша секция несёт раздел волта")
+        self.assertNotIn("extra_rules", self._codes())
+
+    def test_diff_and_remove_cut_only_vault_section(self) -> None:
+        self._write(self.OLD_VAULT)
+        self._press_banner_button()
+        item = self._extra_rules()[0]
+
+        diff = agentic_diff(self.root, "rules", item["name"], self.cfg)
+        self.assertTrue(diff["ok"])
+        self.assertIn("-читай vault/SYS/README.md", diff["diff"])
+        self.assertIn("-пиши при финализации", diff["diff"])
+        self.assertNotIn("npm", diff["diff"])
+        self.assertNotIn("Жизненный цикл", diff["diff"])
+
+        result = remove_element(self.root, "rules", item["name"], self.cfg)
+
+        content = self._read()
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("KNOWLEDGE VAULT", content)
+        self.assertNotIn("при финализации", content)
+        self.assertIn("# Сборка\n\nnpm", content)
+        self.assertIn("Жизненный цикл статуса", content)
+        backup = (self.root / result["backup"]).read_text(encoding="utf-8")
+        self.assertIn("читай vault/SYS/README.md", backup)
+        self.assertNotIn("extra_rules", self._codes())
+
+    def test_both_old_sections_listed_separately(self) -> None:
+        self._write("# Проект\n\n## Task Management\n\nстарые задачи\n\n"
+                    "## Knowledge Vault\n\nстарый волт\n")
+        self._press_banner_button()
+
+        items = self._extra_rules()
+        self.assertEqual(len(items), 2)
+        vault = next(i for i in items if "Knowledge Vault" in i["label"])
+        remove_element(self.root, "rules", vault["name"], self.cfg)
+
+        content = self._read()
+        self.assertNotIn("старый волт", content)
+        self.assertIn("старые задачи", content)
+        left = self._extra_rules()
+        self.assertEqual(len(left), 1)
+        self.assertIn("Task Management", left[0]["label"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -105,6 +105,11 @@ _RULES_CLOSE_RE = re.compile(r"^[ \t]*<!--\s*/task_management:rules\s*-->[ \t]*(
 # подраздел чужой секции, а не секция о задачах
 _FOREIGN_RULES_RE = re.compile(r"(?:\d+[.)]?\s*)?task[\s_-]*management\b",
                                re.IGNORECASE)
+# То же для волта: своя секция Knowledge Vault спорит с блоком волта в нашей
+# секции правил — когда записывать знания и что читать первым. Ищется только
+# при включённом волте: без него блока в правилах нет и спорить не с чем
+_FOREIGN_VAULT_RE = re.compile(r"(?:\d+[.)]?\s*)?(?:knowledge[\s_-]*)?vault\b",
+                               re.IGNORECASE)
 
 # Рубрики внутри раздела создания задач: по ним create_task.py раскладывает
 # новое. Выводятся из каталога типов — рубрика и тип это одно и то же понятие,
@@ -414,11 +419,13 @@ def _put_rules(content: str, section: str) -> str:
     return content[:span[0]] + block + after
 
 
-def _foreign_rules(content: str) -> list[tuple[int, int, str, int]]:
-    """Посторонние секции о задачах: [(начало, конец, заголовок, номер строки)].
+def _foreign_rules(content: str, patterns: tuple[re.Pattern, ...] = (_FOREIGN_RULES_RE,)
+                   ) -> list[tuple[int, int, str, int]]:
+    """Посторонние секции правил: [(начало, конец, заголовок, номер строки)].
 
-    Заголовок любого уровня, названный Task Management, вне нашей секции —
-    старые или свои правила, которые агент прочтёт рядом с актуальными.
+    Заголовок любого уровня, названный по одному из patterns (Task Management,
+    при волте — и Knowledge Vault), вне нашей секции — старые или свои
+    правила, которые агент прочтёт рядом с актуальными.
     Секция тянется до заголовка того же или старшего уровня; строки внутри
     блоков кода заголовками не считаются. Упоминание в тексте — не секция.
     """
@@ -448,7 +455,7 @@ def _foreign_rules(content: str) -> list[tuple[int, int, str, int]]:
             continue
         if found and start < found[-1][1]:
             continue  # подраздел уже найденной секции
-        if not _FOREIGN_RULES_RE.match(text):
+        if not any(p.match(text) for p in patterns):
             continue
         end = next((h[0] for h in headings[i + 1:] if h[1] <= level), len(content))
         if span and start < span[0] < end:
@@ -1344,11 +1351,14 @@ def _foreign_rules_targets(project_root: Path, cfg: dict | None = None
     несёт номер строки заголовка — правка файла меняет имя, и кнопка,
     нажатая по устаревшему списку, откажет вместо удаления не того.
     """
+    patterns = (_FOREIGN_RULES_RE,)
+    if "vault" in project_features(project_root, cfg):
+        patterns += (_FOREIGN_VAULT_RE,)
     out: list[tuple[str, Path, int, int, str]] = []
     for file_name in rules_deployed(project_root, cfg):
         path = project_root / file_name
         content = _read(path) or ""
-        for start, end, heading, lineno in _foreign_rules(content):
+        for start, end, heading, lineno in _foreign_rules(content, patterns):
             out.append((f"{file_name}#L{lineno}", path, start, end, heading))
     return out
 
