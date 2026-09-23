@@ -7,10 +7,12 @@ import mimetypes
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend import (autostart, baseline, changelog, console, due_watch, help_docs,
                      lifecycle, notices, notify_watch, registry, reveal,
@@ -77,6 +79,17 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "log_search": True, "task_reveal": True}
 
 app = FastAPI(title="taskboard")
+
+
+# Ошибка действия на доске видна человеку красной строкой — и исчезает вместе
+# с ней. Строка в логе остаётся: её можно прислать мейнтейнеру. Пишем только
+# `/api/*`: промах мимо API (favicon, старый адрес ассета) — шум, а не ошибка
+@app.exception_handler(StarletteHTTPException)
+async def _logged_http_error(request: Request, exc: StarletteHTTPException):
+    if request.url.path.startswith("/api/"):
+        console.log(f"ошибка {exc.status_code}: {request.method} {request.url.path} — "
+                    f"{exc.detail}")
+    return await http_exception_handler(request, exc)
 watcher = TasksWatcher()
 # Служба уведомлений едет тем же каналом, что и правки файлов задач: второй
 # путь до браузера означал бы второе переподключение и вторую точку отказа

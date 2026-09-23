@@ -13,6 +13,7 @@ Windows, — и лаунчер, выводивший проект из рабо�
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 import tempfile
 import unittest
@@ -149,15 +150,18 @@ class HeadlessLaunchTest(TmpTest):
             self.assertIsNotNone(stream, "писать по-прежнему некуда")
             self.assertIs(self.launcher.sys.stderr, stream,
                           "stderr остался пустым — падение uvicorn не запишется")
-            stream.close()
+            self.launcher.close_log_stream()
         self.assertTrue(self.launcher.log_file(8765).is_file())
 
-    def test_с_консолью_ничего_не_подменяется(self) -> None:
-        """Обычный запуск из терминала пишет человеку, а не в файл."""
-        before = self.launcher.sys.stdout
-        self.launcher.ensure_log_stream(8765)
-        self.assertIs(self.launcher.sys.stdout, before)
-        self.assertFalse(self.launcher.log_file(8765).exists())
+    def test_с_консолью_вывод_остаётся_человеку(self) -> None:
+        """Запуск из терминала пишет человеку — и заодно в файл (TASK-231)."""
+        console = io.StringIO()
+        with mock.patch.multiple(self.launcher.sys, stdout=console, stderr=console):
+            self.launcher.ensure_log_stream(8765)
+            self.launcher.log("видно в консоли")
+            self.launcher.close_log_stream()
+        self.assertIn("видно в консоли", console.getvalue())
+        self.assertTrue(self.launcher.log_file(8765).is_file())
 
     def test_поток_заводится_до_старта_сервера(self) -> None:
         """Порядок решает: подмена после `uvicorn.run` бессмысленна."""

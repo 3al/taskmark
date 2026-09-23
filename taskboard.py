@@ -473,29 +473,85 @@ def log_file(port: int) -> Path:
     return UPDATE_DIR / f"server_{port}.log"
 
 
-def ensure_log_stream(port: int) -> None:
-    """Дать процессу без консоли, куда писать.
+class _Tee:
+    """Поток, пишущий в консоль и в файл лога разом.
 
-    Автозапуск идёт через `pythonw`, у которого нет ни stdout, ни stderr:
-    `sys.stdout` равен `None`. Свои сообщения лаунчер при этом просто теряет,
-    но хуже другое — `uvicorn.run` на старте падает, его конфиг логирования
-    ссылается на `ext://sys.stdout`, и `dictConfig` на `None` бросает
-    `ValueError`. Без файла сервер при входе в систему не поднимался вовсе, и
-    узнать об этом было неоткуда: сообщать не через что (TASK-233).
+    Консоль — для человека у терминала, файл — чтобы вывод пережил закрытие
+    окна и его можно было прислать. Сбой одного адресата не глушит другой.
     """
-    if sys.stdout is not None and sys.stderr is not None:
-        return
+
+    def __init__(self, console, file) -> None:
+        self._streams = (console, file)
+        self.encoding = getattr(console, "encoding", None) or "utf-8"
+
+    def write(self, text: str) -> int:
+        for stream in self._streams:
+            try:
+                stream.write(text)
+            except (OSError, ValueError, UnicodeError):
+                pass
+        return len(text)
+
+    def flush(self) -> None:
+        for stream in self._streams:
+            try:
+                stream.flush()
+            except (OSError, ValueError):
+                pass
+
+    def isatty(self) -> bool:
+        # Цвета uvicorn — управляющие коды: в файле они мусор
+        return False
+
+
+# Открытый файл лога: закрывает его выход процесса (а тесты — явно)
+_log_stream = None
+
+
+def ensure_log_stream(port: int) -> None:
+    """Писать вывод процесса ещё и в файл лога — при любом запуске.
+
+    Файл нужен, чтобы у пользователя было что прислать, когда что-то не
+    работает. Консоль при этом остаётся: вывод идёт в оба места.
+
+    Без консоли (автозапуск через `pythonw`) потоков нет вовсе — `sys.stdout`
+    равен `None`, и файл становится единственным адресатом. Иначе падал бы и
+    `uvicorn.run`: его конфиг логирования ссылается на `ext://sys.stdout`, и
+    `dictConfig` на `None` бросает `ValueError` (TASK-233). Перезапуск из доски
+    отдаёт процессу `DEVNULL` — поток есть, но пустой, и без файла вывод
+    перезапущенного сервера пропадал целиком.
+    """
+    global _log_stream
     try:
         UPDATE_DIR.mkdir(parents=True, exist_ok=True)
         path = log_file(port)
-        # Лог пишется всю жизнь машины — подрезаем, чтобы не рос без края
+        # Лог пишется всю жизнь машины — подрезаем, чтобы не рос без края.
+        # Файл может держать соседний процесс (dev-супервизор): тогда не режем
         if path.exists() and path.stat().st_size > 1_000_000:
-            path.unlink()
-        stream = path.open("a", encoding="utf-8", buffering=1)
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        stream = path.open("a", encoding="utf-8", errors="replace", buffering=1)
     except OSError:
         return  # писать некуда — молча, иначе некуда и жаловаться
-    sys.stdout = sys.stderr = stream
-    log(f"--- запуск без консоли ({time.strftime('%Y-%m-%d %H:%M:%S')}) ---")
+    _log_stream = stream
+    headless = sys.stdout is None or sys.stderr is None
+    if headless:
+        sys.stdout = sys.stderr = stream
+    else:
+        sys.stdout = _Tee(sys.stdout, stream)
+        sys.stderr = _Tee(sys.stderr, stream)
+    kind = "запуск без консоли" if headless else "запуск"
+    log(f"--- {kind} ({time.strftime('%Y-%m-%d %H:%M:%S')}), лог: {path} ---")
+
+
+def close_log_stream() -> None:
+    """Закрыть файл лога (нужен тестам: Windows не удалит открытый файл)."""
+    global _log_stream
+    if _log_stream is not None:
+        _log_stream.close()
+        _log_stream = None
 
 
 def resolve_tasks_dir(explicit: str | None, cwd: Path) -> tuple[Path, str]:
