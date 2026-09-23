@@ -66,9 +66,18 @@ _PART_WORDING = {
 
 _STATE_INDEX = {"missing": 0, "partial": 1, "outdated": 2, "extra": 3}
 
+# Скиллы есть, но в папке, которую выбранные среды не читают: сменился адрес,
+# а не наличие. Имена — только когда в новой папке часть скиллов уже лежит
+_MOVED_WORDING = ("Сменились среды: скиллы нужны в {target}, копия лежит в {source}",
+                  "Сменились среды: скиллы нужны в {target}, копия лежит в {source}: {names}")
+
 
 def _issue_message(issue: dict) -> str:
     """Сообщение о пробеле поставки по реестру частей."""
+    if issue["state"] == "moved":
+        template = _MOVED_WORDING[0 if issue["whole"] else 1]
+        return template.format(target=issue["target"], source=issue["source"],
+                               names=", ".join(issue["names"]))
     wording = _PART_WORDING[issue["part"]]
     template = wording[_STATE_INDEX[issue["state"]]]
     return template.format(names=", ".join(issue["names"]))

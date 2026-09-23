@@ -891,6 +891,44 @@ def _skills_dirs(project_root: Path,
     return dirs or [("", project_root / ".claude" / "skills")]
 
 
+# Все папки, откуда какая-нибудь среда читает скиллы. Действующие выбирает
+# `_skills_dirs`, остальные после смены сред остаются на диске с прежней копией
+SKILL_LOCATIONS = (".claude/skills", ".opencode/skills", ".codex/skills")
+
+
+def _skill_moves(project_root: Path, targets: list[tuple[str, Path, str]],
+                 absent: list[str], cfg: dict | None = None) -> list[dict]:
+    """Недостающие скиллы, которые лежат в неактивной папке: переезд, а не нехватка.
+
+    Сменили среды — действующим стало другое расположение, и скиллов там
+    правда нет. Но файлы на месте, в прежней папке: сменилось не наличие, а
+    адрес, и говорить об этом «не хватает» значит пугать человека пропажей.
+    Возвращает [{source, target, names, whole}] на пару папок; `whole` — в новой
+    папке нет ещё ни одного скилла поставки.
+    """
+    active = {d.resolve() for _p, d in _skills_dirs(project_root, cfg)}
+    inactive = [rel for rel in SKILL_LOCATIONS
+                if (project_root / rel).resolve() not in active]
+    wanted = set(absent)
+    moves: dict[tuple[str, str], list[str]] = {}
+    for name, path, _text in targets:
+        if name not in wanted:
+            continue
+        skill, folder = path.parent.name, path.parent.parent
+        source = next((rel for rel in inactive
+                       if (project_root / rel / skill / "SKILL.md").is_file()), None)
+        if source:
+            target = folder.relative_to(project_root).as_posix()
+            moves.setdefault((source, target), []).append(name)
+    out = []
+    for (source, target), names in moves.items():
+        in_target = [n for n, path, _t in targets
+                     if path.parent.parent.relative_to(project_root).as_posix() == target]
+        out.append({"source": source, "target": target, "names": names,
+                    "whole": set(in_target) <= set(names)})
+    return out
+
+
 def _deployed_skills(project_root: Path, cfg: dict | None = None) -> Path:
     """Основная копия скиллов — там, где её ищут вопросы «развёрнуто ли вообще»."""
     return _skills_dirs(project_root, cfg)[0][1]
@@ -2152,8 +2190,17 @@ def environment_issues(tasks_dir: Path, cfg: dict) -> list[dict]:
             missing = hooks_unregistered(project_root, cfg)
             outdated = []
         elif part in ("skills", "commands", "hooks", "vault"):
-            missing, partial, outdated = _targets_state(
-                project_root, part, part_targets(project_root, part, cfg), cfg)
+            targets = part_targets(project_root, part, cfg)
+            missing, partial, outdated = _targets_state(project_root, part, targets, cfg)
+            if part == "skills":
+                # Переезд говорит своей строкой; оставшееся — уже не «часть не
+                # развёрнута», а нехватка отдельных скиллов
+                for move in _skill_moves(project_root, targets, missing + partial, cfg):
+                    issues.append({"part": part, "code": spec["missing"],
+                                   "state": "moved", **move})
+                    moved = set(move["names"])
+                    partial = [n for n in missing + partial if n not in moved]
+                    missing = []
         else:  # rules
             missing = rules_missing(project_root, cfg)
             _m, _absent, outdated = _targets_state(
