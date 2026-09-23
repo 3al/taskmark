@@ -79,7 +79,7 @@ class TestCrossLinks(unittest.TestCase):
 
     def test_modal_intercepts_section_links(self) -> None:
         src = (FRONTEND / 'components' / 'HelpModal.jsx').read_text(encoding='utf-8')
-        self.assertIn('setCurrent(target)', src,
+        self.assertIn('go(target)', src,
                       'ссылка на раздел не переключает окно помощи')
 
 
