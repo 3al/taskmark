@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
+import { roleSegments, segmentSource } from '../brainstormLog'
 import { highlight, rehypeHighlight } from '../highlight'
 import { mdComponents } from '../markdown'
 import CopyButton from './CopyButton'
@@ -20,6 +21,14 @@ function formatLogDate(mtime) {
 
 function isBrainstormLog(name) {
   return /-brainstorm(?:-team)?-log\.md$/i.test(name)
+}
+
+// Цвета ролей протокола брейншторма: полоса слева и лёгкий фон. Цвета не
+// пересекаются с фиолетовой меткой «брейншторм» и зелёной подсветкой поиска
+const ROLE_STYLE = {
+  architect: 'border-l-2 border-sky-400/70 bg-sky-500/5 pl-4 pr-2 py-1 my-3 rounded-r',
+  pragmatist: 'border-l-2 border-amber-400/70 bg-amber-500/5 pl-4 pr-2 py-1 my-3 rounded-r',
+  judge: 'border-l-2 border-rose-400/70 bg-rose-500/5 pl-4 pr-2 py-1 my-3 rounded-r',
 }
 
 // Панель просмотра логов tasks/logs/ (read-only)
@@ -58,6 +67,12 @@ export default function LogsPanel({ onClose }) {
   }, [query])
 
   const termsKey = `${phrase}:${terms.join(' ')}`
+  // Markdown — кусками: у протокола брейншторма ответ каждой роли в своём
+  // цвете, остальное одним куском. Номера строк кусков совпадают с файлом
+  const mdParts = useMemo(() => {
+    if (content?.kind !== 'markdown') return []
+    return isBrainstormLog(current) ? roleSegments(content.text) : [{ role: null, start: 1, text: content.text }]
+  }, [content, current])
   // Плагин и разбивка на строки пересобираются только со словами и файлом:
   // лог бывает в сотни килобайт, и лишняя перерисовка на каждый рендер заметна
   const rehypePlugins = useMemo(
@@ -189,10 +204,14 @@ export default function LogsPanel({ onClose }) {
           )}
           {!message && content?.kind === 'markdown' && (
             <div ref={bodyRef} className="flex-1 overflow-auto px-6 py-4 md-body md-tint-zinc text-sm">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
-                components={MD_COMPONENTS}>
-                {content.text}
-              </ReactMarkdown>
+              {mdParts.map((part) => (
+                <div key={part.start} className={ROLE_STYLE[part.role]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
+                    components={MD_COMPONENTS}>
+                    {segmentSource(part)}
+                  </ReactMarkdown>
+                </div>
+              ))}
             </div>
           )}
           {!message && content && content.kind !== 'markdown' && (
