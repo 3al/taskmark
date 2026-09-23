@@ -136,9 +136,20 @@ py tasks/set_status.py TASK-004 --position 2      # 2-е место в своё�
 py tasks/set_status.py TASK-004 --after TASK-002  # сразу за TASK-002
 py tasks/set_status.py --changelog                # тексты утверждённого выпуска
 py tasks/set_status.py TASK-004 --note "суть" --agent "Имя (модель)"
+py tasks/set_status.py TASK-004 testing --via handoff-task   # переход, который ведёт скилл
+py tasks/set_status.py TASK-004 testing --manual "причина"   # переход в обход скилла
+py tasks/set_status.py TASK-004 --confirm verified "что сказал человек"
+py tasks/set_status.py TASK-004 --unconfirm verified         # снять подтверждение
+py tasks/set_status.py TASK-004 --waive verified --reason "почему"
+py tasks/set_status.py TASK-004 --unwaive verified           # снять списание
 ```
 
 - Смена статуса правит и `status:`, и `board.md`.
+- Переход, за которым закреплён скилл, без `--via` не выполнится: скрипт назовёт
+  скилл (см. [«Агентское окружение и среды»](05-agentic.md)).
+- `--confirm` записывает ваше подтверждение требования, `--waive` — списывает
+  требование с причиной. Без значения `--unconfirm` и `--unwaive` снимают все
+  отметки задачи.
 - `--position` и `--after` без статуса переставляют задачу внутри раздела, не
   меняя статус и дату. Со сменой статуса `--position` принимает только `start` и
   `end`.

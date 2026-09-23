@@ -132,11 +132,11 @@
 
 | Среда | Файл | Подключение |
 |---|---|---|
-| Claude Code | `.claude/hooks/work-hint.py` | `.claude/settings.json` |
+| Claude Code | `.claude/hooks/work-hint.py` | `PostToolUse` в `.claude/settings.json` |
 | Claude Code | `.claude/hooks/attention-notify.py` | `PermissionRequest`, `Notification`, `UserPromptSubmit`, `Stop`, `PostToolUse` и `PostToolUseFailure` в `.claude/settings.json` |
 | opencode | `.opencode/plugin/work-hint.js` | подхватывается сам |
 | opencode | `.opencode/plugin/attention-notify.js` | подхватывается сам |
-| Codex | `.codex/hooks/work-hint.py` | `.codex/hooks.json` |
+| Codex | `.codex/hooks/work-hint.py` | `PostToolUse` в `.codex/hooks.json` |
 | Codex | `.codex/hooks/permission-notify.py` | `PermissionRequest`, `PreToolUse` (вопрос), `PostToolUse`, `UserPromptSubmit`, `Stop` и `Interrupt` в `.codex/hooks.json` |
 
 **Подсказка при коммите** (`work-hint`). Коммит, `push` или запрос на слияние при
