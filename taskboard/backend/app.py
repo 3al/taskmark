@@ -13,8 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import (autostart, baseline, changelog, console, due_watch, help_docs,
-                     lifecycle, notices, notify_watch, registry, telegram_intake,
-                     telegram_source, updater, version)
+                     lifecycle, notices, notify_watch, registry, reveal,
+                     telegram_intake, telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
 from backend.board_repair import apply_repair, plan_repair, visible_columns
 from backend.config import (CARD_FLAGS, CARD_LIMITS, DEFAULT_TASK_TYPE, DEFAULTS,
@@ -74,7 +74,7 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "board_sections": True, "agentic_remove": True,
                 "telegram": True, "autostart": True, "notify": True,
                 "task_slice": True, "help_search": True,
-                "log_search": True}
+                "log_search": True, "task_reveal": True}
 
 app = FastAPI(title="taskboard")
 watcher = TasksWatcher()
@@ -915,6 +915,20 @@ def api_add_comment(task_id: str, body: CommentIn) -> dict:
     if note is None:
         raise HTTPException(400, "Пустой комментарий не записывается")
     return {"ok": True, "note": note}
+
+
+@app.post("/api/tasks/{task_id}/reveal")
+def api_task_reveal(task_id: str) -> dict:
+    """Показать файл задачи в файловом менеджере системы, выделив его."""
+    tasks_dir, _cfg = _ctx()
+    path = find_task_file(tasks_dir, task_id)
+    if path is None:
+        raise HTTPException(404, f"Задача не найдена: {task_id}")
+    try:
+        reveal.reveal(path)
+    except reveal.RevealError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return {"ok": True}
 
 
 @app.post("/api/tasks/{task_id}/confirm")

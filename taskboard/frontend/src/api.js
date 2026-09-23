@@ -115,6 +115,9 @@ export const api = {
   addComment: (id, text) =>
     request(`/api/tasks/${encodeURIComponent(id)}/comment`,
             { method: 'POST', body: JSON.stringify({ text }) }),
+  // Файл задачи в файловом менеджере системы, с выделением
+  revealTask: (id) =>
+    request(`/api/tasks/${encodeURIComponent(id)}/reveal`, { method: 'POST' }),
   updateTask: (id, updates) =>
     request(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }),
   criteriaPresets: () => request('/api/criteria-presets'),

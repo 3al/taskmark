@@ -385,6 +385,20 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onOpe
     }
   }
 
+  // Файл задачи в файловом менеджере: окно открывает сервер, он же на этой
+  // машине. Ответ — только успех или причина отказа
+  const [revealError, setRevealError] = useState(null)
+  useEffect(() => { setRevealError(null) }, [taskId])
+
+  const revealFile = async () => {
+    setRevealError(null)
+    try {
+      await api.revealTask(taskId)
+    } catch (e) {
+      setRevealError(e.message)
+    }
+  }
+
   // Простой задачи: что показываем и что правим. Форма ввода открывается по
   // кнопке — панель не должна занимать место, пока задача никого не ждёт
   const stall = task?.stall
@@ -1043,8 +1057,20 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onOpe
             </button>
           )}
           {task && (
+            <button
+              onClick={revealFile}
+              className={`${onCopy ? '' : 'ml-auto'} inline-flex items-center justify-center w-5 h-5 shrink-0 rounded transition
+                text-zinc-400 hover:text-zinc-300 hover:bg-zinc-700/60`}
+              title="Показать файл в папке"
+            >
+              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none"
+                   stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+                <path d="M1.5 4.5v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-6.5a1 1 0 0 0-1-1H7.5L6 3.5H2.5a1 1 0 0 0-1 1z" />
+              </svg>
+            </button>
+          )}
+          {task && (
             <CopyButton
-              className={onCopy ? '' : 'ml-auto'}
               text={taskCopyText(task, taskId)}
               title="Копировать содержимое задачи"
             />
@@ -1060,6 +1086,7 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onOpe
 
         <div className={`overflow-y-auto px-5 py-4 md-body text-sm ${style.mdTint}`}>
           {error && <div className="text-rose-400">{error}</div>}
+          {revealError && <div className="text-xs text-rose-400 mb-2">{revealError}</div>}
           {!task && !error && <div className="text-zinc-400">Загрузка…</div>}
           {task && blocks.map((block, i) => (
             <div key={i} className="md-block group relative">
