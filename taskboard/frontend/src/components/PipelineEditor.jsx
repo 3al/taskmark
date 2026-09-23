@@ -627,7 +627,7 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
         <div>
           Выключение статуса с задачами спросит, куда их перенести.
           {onOpenHelp && (
-            <button className="ml-1 underline hover:text-zinc-400"
+            <button className="ml-1 text-sky-500 hover:text-sky-400"
                     onClick={() => onOpenHelp('lifecycle')}>
               Подробнее о жизненном цикле
             </button>

@@ -962,7 +962,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     и .claude/skills. Codex её не читает — с ним появляется вторая
                     копия в .codex/skills
                     {onOpenHelp && (
-                      <button className="ml-1 underline hover:text-zinc-400"
+                      <button className="ml-1 text-sky-500 hover:text-sky-400"
                               onClick={() => onOpenHelp('agentic')}>подробнее</button>
                     )}
                   </div>
@@ -1044,7 +1044,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     Пусто — подготовка выпуска доводится до changelog, а выпускаете вы сами.
                     {onOpenHelp && (
                       <button
-                        className="ml-1 underline hover:text-zinc-400"
+                        className="ml-1 text-sky-500 hover:text-sky-400"
                         onClick={() => onOpenHelp('release')}
                       >
                         подробнее
