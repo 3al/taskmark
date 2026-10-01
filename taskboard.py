@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import webbrowser
@@ -376,9 +377,45 @@ def server_alive(port: int) -> dict | None:
         return None
 
 
-def register_in_running(port: int, tasks_dir: Path) -> bool:
+def open_browser_when_ready(port: int, timeout: float = 60.0,
+                            interval: float = 0.3) -> threading.Thread:
+    """Открыть доску в браузере, когда сервер начнёт отвечать.
+
+    Открытая раньше вкладка берёт страницу из кэша браузера, а первые запросы
+    к API падают «Failed to fetch» — доска пустая до обновления. Ждём в фоне:
+    сервер стартует в этом же процессе или в дочернем. Не дождались — вкладку
+    всё равно открываем: пустая доска лучше, чем никакой.
+    """
+    def run() -> None:
+        deadline = time.monotonic() + timeout
+        while server_alive(port) is None and time.monotonic() < deadline:
+            time.sleep(interval)
+        webbrowser.open(f"http://127.0.0.1:{port}")
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
+def activate_on_start(tasks_dir: Path, explicit: bool) -> bool:
+    """Делать ли проект запуска активным.
+
+    Старт открывает последний активный проект реестра: автозагрузка и ручной
+    запуск идут из одной и той же папки, и выбор человека в UI иначе
+    сбрасывался бы при каждом перезапуске. Переключают только явный
+    `--tasks-dir` и проект, которого в реестре ещё нет.
+    """
+    if explicit:
+        return True
+    sys.path.insert(0, str(TOOL_DIR))
+    from backend import registry
+
+    return registry.find_project(tasks_dir) is None
+
+
+def register_in_running(port: int, tasks_dir: Path, activate: bool) -> bool:
     """Зарегистрировать проект в уже запущенном сервере."""
-    payload = json.dumps({"tasks_dir": str(tasks_dir), "activate": True}).encode()
+    payload = json.dumps({"tasks_dir": str(tasks_dir), "activate": activate}).encode()
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/api/projects",
         data=payload, headers={"Content-Type": "application/json"}, method="POST",
@@ -396,7 +433,7 @@ def stop_marker(port: int) -> Path:
     return Path.home() / ".taskboard" / f"stop_{port}.flag"
 
 
-def dev_supervisor(args, tasks_dir: Path) -> None:
+def dev_supervisor(args) -> None:
     """
     Dev-режим: свой супервизор вместо uvicorn --reload.
 
@@ -404,7 +441,6 @@ def dev_supervisor(args, tasks_dir: Path) -> None:
     изменениях. uvicorn --reload на Windows в связке с watchdog/SSE
     зависает при перезапуске, поэтому reload реализован снаружи.
     """
-    import threading
     import time
 
     from watchdog.events import FileSystemEventHandler
@@ -419,10 +455,14 @@ def dev_supervisor(args, tasks_dir: Path) -> None:
             if event.src_path.endswith(".py"):
                 restart.set()
 
+    # Явный `--tasks-dir` — поручение на первый старт. Перезапуски идут без
+    # него: иначе каждый из них возвращал бы проект старта, а не тот, на
+    # который человек переключился в UI
     child_args = [
         sys.executable, str(Path(__file__).resolve()),
-        "--port", str(args.port), "--tasks-dir", str(tasks_dir), "--no-browser",
+        "--port", str(args.port), "--no-browser",
     ]
+    first_args = child_args + (["--tasks-dir", args.tasks_dir] if args.tasks_dir else [])
     # Маркер для backend/lifecycle.py: сервер под супервизором,
     # перезапуск из UI = просто умереть, спавнить замену не нужно
     child_env = {**os.environ, "TASKBOARD_SUPERVISED": "1"}
@@ -431,8 +471,8 @@ def dev_supervisor(args, tasks_dir: Path) -> None:
     # Сбросить маркер остановки от прошлых сессий: свежий маркер
     # появится только при остановке из UI в этой сессии
     stop_marker(args.port).unlink(missing_ok=True)
-    proc = subprocess.Popen(child_args, env=child_env)
-    webbrowser.open(f"http://127.0.0.1:{args.port}")
+    proc = subprocess.Popen(first_args, env=child_env)
+    open_browser_when_ready(args.port)
 
     observer = Observer()
     observer.schedule(_Handler(), str(TOOL_DIR / "backend"), recursive=False)
@@ -630,7 +670,7 @@ def main() -> None:
     elif refusal == "not_project":
         log(f"ВНИМАНИЕ: это не проект Taskmark — в папке задач нет доски: {tasks_dir}")
     if refusal:
-        log("Сервер стартует без активного проекта — зарегистрируйте проект в UI.")
+        log("Папка не зарегистрирована — откроется прежний активный проект.")
 
     # Если сервер уже жив — регистрируем проект в нём и выходим
     health = server_alive(args.port)
@@ -653,15 +693,16 @@ def main() -> None:
             log(f"  текущая копия: {ROOT}")
             log("Запросы пойдут СТАРОМУ коду! Остановите его: UI → Настройки → "
                 "«Остановить», или: lsof -ti:8765 | xargs kill")
-        if not refusal and register_in_running(args.port, tasks_dir):
-            log(f"Проект активирован: {tasks_dir}")
+        activate = not refusal and activate_on_start(tasks_dir, bool(args.tasks_dir))
+        if not refusal and register_in_running(args.port, tasks_dir, activate):
+            log(f"Проект {'активирован' if activate else 'зарегистрирован'}: {tasks_dir}")
         if not args.no_browser:
             webbrowser.open(f"http://127.0.0.1:{args.port}")
         return
 
     # Стартуем сервер
     if args.dev:
-        dev_supervisor(args, tasks_dir)
+        dev_supervisor(args)
         return
 
     sys.path.insert(0, str(TOOL_DIR))
@@ -673,13 +714,16 @@ def main() -> None:
     os.environ["TASKBOARD_PORT"] = str(args.port)
 
     if not refusal:
-        proj = registry.register_project(tasks_dir, activate=True)
-        log(f"Активный проект: {proj['name']} ({tasks_dir})")
+        registry.register_project(
+            tasks_dir, activate=activate_on_start(tasks_dir, bool(args.tasks_dir)))
+    proj = registry.get_active()
+    if proj:
+        log(f"Активный проект: {proj['name']} ({proj['tasks_dir']})")
 
     url = f"http://127.0.0.1:{args.port}"
     log(f"Запуск сервера: {url}")
     if not args.no_browser:
-        webbrowser.open(url)
+        open_browser_when_ready(args.port)
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
 
 

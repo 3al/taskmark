@@ -40,6 +40,15 @@ def list_projects() -> dict:
     return data
 
 
+def find_project(tasks_dir: Path) -> dict | None:
+    """Запись проекта по папке задач или None, если такой нет в реестре."""
+    tasks_dir = tasks_dir.resolve()
+    for proj in _load().get("projects", []):
+        if Path(proj["tasks_dir"]) == tasks_dir:
+            return proj
+    return None
+
+
 def register_project(tasks_dir: Path, name: str | None = None, activate: bool = True) -> dict:
     """
     Зарегистрировать проект (или обновить существующий по tasks_dir).
