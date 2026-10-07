@@ -72,6 +72,18 @@ class CommitBranchTest(unittest.TestCase):
         self.assertRegex(block, r"[Вв]етки нет", "не сказано, что делать без ветки")
 
 
+class WorkBranchTest(unittest.TestCase):
+    """Ветку проверяют до первой правки, а не только перед коммитом."""
+
+    def test_work_starts_in_the_branch(self) -> None:
+        for skill in ("start-task", "fix-task"):
+            with self.subTest(skill=skill):
+                block = release_blocks(AGENTIC / ".claude" / "skills" / skill / "SKILL.md")
+                self.assertIn("integration_branch", block)
+                self.assertIn("до первой правки", block)
+                self.assertRegex(block, r"[Вв]етки нет")
+
+
 class HelpContractTest(unittest.TestCase):
     def test_contract_documents_commits_and_conflict(self) -> None:
         text = HELP.read_text(encoding="utf-8")
