@@ -12,9 +12,14 @@
         {"ok": true, "current": "1.0.0", "next": "1.1.0", "blockers": []}
         Ничего не меняет. Скилл зовёт до вопросов человеку.
 
-    release.py --apply --bump LEVEL --notes ФАЙЛ --tasks TASK-001,TASK-002
+    release.py --apply --bump LEVEL --notes ФАЙЛ --tasks TASK-001,TASK-002 --commits abc1234
         {"ok": true, "version": "1.1.0", "tag": "v1.1.0"}
-        Отказ — ненулевой код возврата и {"ok": false, "error": "..."}.
+        Отказ — ненулевой код возврата и {"ok": false, "error": "..."}; коммит,
+        которому нужен код вне состава, — отказ с {"conflict": {"commit", "needs"}}.
+
+    Интеграционная ветка (`integration_branch` проекта, по умолчанию `dev`):
+    работа идёт в ней, а `--apply` переносит в `main` только `--commits`,
+    пересобирает фронтенд, ставит тег и вливает `main` обратно.
 
     release.py --history
         [{"version": "1.1.0", "tag": "v1.1.0", "released_at": "...",
@@ -43,6 +48,16 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 MANIFEST = ROOT / "release.json"
 FRONTEND_SRC = ROOT / "taskboard" / "frontend" / "src"
 FRONTEND_DIST = ROOT / "taskboard" / "frontend" / "dist"
+
+# Собранный фронтенд в переносах не участвует: каждый коммит задачи пересобирает
+# его под свои исходники, и файлы с хэшами в именах конфликтуют на любом переносе.
+# В выпускаемой ветке он собирается один раз — из её собственных исходников
+GENERATED = ("taskboard/frontend/dist",)
+
+# Выпускаемая ветка: из неё пользователи получают тег и манифест
+RELEASE_BRANCH = "main"
+# Дефолт интеграционной ветки — тот же, что в поставке (`backend/config.py`)
+DEFAULT_INTEGRATION = "dev"
 
 LEVELS = ("major", "minor", "patch")
 
@@ -75,8 +90,19 @@ def parse_version(value: str) -> tuple[int, ...]:
     return tuple(int(p) for p in text.split("."))
 
 
-def current_version() -> str:
-    return VERSION_FILE.read_text(encoding="utf-8").strip()
+def _paths(root: Path) -> dict:
+    """Файлы выпуска относительно корня репозитория."""
+    if root == ROOT:
+        return {"version": VERSION_FILE, "changelog": CHANGELOG, "manifest": MANIFEST,
+                "src": FRONTEND_SRC, "dist": FRONTEND_DIST}
+    return {"version": root / "taskboard" / "VERSION", "changelog": root / "CHANGELOG.md",
+            "manifest": root / "release.json",
+            "src": root / "taskboard" / "frontend" / "src",
+            "dist": root / "taskboard" / "frontend" / "dist"}
+
+
+def current_version(root: Path = ROOT) -> str:
+    return _paths(root)["version"].read_text(encoding="utf-8").strip()
 
 
 def next_version(current: str, bump: str) -> str:
@@ -234,40 +260,77 @@ def notes_problems(notes: str) -> list[str]:
     return [f"текст заметок испорчен перекодировкой (UTF-8 прочитан как cp1251): {sample}"]
 
 
-def blockers() -> list[str]:
+def blockers(root: Path = ROOT) -> list[str]:
     """Что мешает выпускать прямо сейчас. Список, а не первое встреченное.
 
     Человеку нужно увидеть всё сразу: чинить по одному, каждый раз запуская
     выпуск заново, — худший из возможных сценариев.
     """
+    paths = _paths(root)
+    integration = integration_branch(root)
     found: list[str] = []
     try:
-        if _git("status", "--porcelain", "--untracked-files=no"):
+        if _git("status", "--porcelain", "--untracked-files=no", cwd=root):
             found.append("в рабочем дереве есть незакоммиченные правки")
-        if _git("rev-parse", "--abbrev-ref", "HEAD") != "main":
-            found.append("выпуск делается не с ветки main")
+        branch = _git("rev-parse", "--abbrev-ref", "HEAD", cwd=root)
+        if integration:
+            # Работа и выпуск идут из интеграционной ветки: с неё скрипт уходит
+            # в выпускаемую и на неё же возвращается
+            if branch != integration:
+                found.append(f"выпуск делается не с ветки {integration}")
+            if not _branch_exists(root, RELEASE_BRANCH):
+                found.append(f"нет ветки {RELEASE_BRANCH}, куда переносится выпуск")
+        elif branch != RELEASE_BRANCH:
+            found.append(f"выпуск делается не с ветки {RELEASE_BRANCH}")
     except (subprocess.CalledProcessError, FileNotFoundError):
         found.append("git недоступен или это не репозиторий")
-    if not dist_is_fresh():
+    # Со схемой фронтенд собирается в выпускаемой ветке заново — свежесть
+    # сборки интеграционной ветки выпуску не важна
+    if not integration and not dist_is_fresh(paths["src"], paths["dist"]):
         found.append("собранный фронтенд старее исходников — нужен npm run build")
     try:
         # Совпадение — норма: между выпусками changelog описывает установленную
         # версию. Расхождение значит, что VERSION и changelog подняли порознь
-        section = top_section()
-        if section["version"] != current_version():
+        section = top_section(paths["changelog"])
+        if section["version"] != current_version(root):
             found.append(
                 f"changelog описывает {section['version']}, "
-                f"а установлена {current_version()} — они разошлись")
+                f"а установлена {current_version(root)} — они разошлись")
     except (ValueError, OSError) as exc:
         found.append(f"changelog: {exc}")
     return found
 
 
-def check(bump: str | None = None) -> dict:
+def warnings(root: Path = ROOT) -> list[str]:
+    """Что выпуску не мешает, но человеку стоит знать.
+
+    Коммит интеграционной ветки, не записанный ни в одну задачу, не попадёт ни
+    в один выпуск: переносятся только коммиты из «Истории коммитов» задач.
+    """
+    integration = integration_branch(root)
+    if not integration or not _branch_exists(root, RELEASE_BRANCH) \
+            or not _branch_exists(root, integration):
+        return []
+    try:
+        pending = _pending(root, integration)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return []
+    listed = listed_commits(root / "tasks")
+    out = []
+    for sha in pending:
+        if any(sha.startswith(short) for short in listed):
+            continue
+        subject = _git("log", "-1", "--format=%s", sha, cwd=root)
+        out.append(f"коммит {sha[:7]} «{subject}» не записан ни в одну задачу — "
+                   f"в выпуск он не попадёт")
+    return out
+
+
+def check(bump: str | None = None, root: Path = ROOT) -> dict:
     """Что скилл показывает человеку до подтверждения. Ничего не меняет."""
-    current = current_version()
+    current = current_version(root)
     result: dict = {"ok": True, "current": current, "next": None,
-                    "blockers": blockers()}
+                    "blockers": blockers(root), "warnings": warnings(root)}
     if bump:
         try:
             result["next"] = next_version(current, bump)
@@ -277,31 +340,208 @@ def check(bump: str | None = None) -> dict:
     return result
 
 
+# --- Интеграционная ветка ----------------------------------------------------
+
+
+def integration_branch(root: Path = ROOT) -> str:
+    """Ветка, куда коммитится проверенное. Пусто — схема выключена.
+
+    Слои те же, что у скриптов задач: дефолт → глобальный конфиг → проект.
+    """
+    value = DEFAULT_INTEGRATION
+    for path in (Path.home() / ".taskboard" / "config.json",
+                 root / "tasks" / ".taskboard.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and "integration_branch" in data:
+            value = data["integration_branch"]
+    return str(value or "").strip()
+
+
+_COMMIT_LINE = re.compile(r"^\s*[-*]\s*`(?P<hash>[0-9a-fA-F]{7,40})`", re.M)
+
+
+def listed_commits(tasks_dir: Path) -> set[str]:
+    """Хэши из «Истории коммитов» всех задач проекта (в нижнем регистре)."""
+    found: set[str] = set()
+    for path in tasks_dir.glob("TASK-*.md"):
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except OSError:
+            continue
+        _, _, tail = text.partition("## История коммитов")
+        found.update(m.group("hash").lower() for m in _COMMIT_LINE.finditer(tail))
+    return found
+
+
+def _run(root: Path, *args: str) -> subprocess.CompletedProcess:
+    """git без исключения на ненулевой код: отказ переноса — ответ, а не сбой."""
+    return subprocess.run(("git", *args), cwd=root, capture_output=True,
+                          text=True, encoding="utf-8")
+
+
+def _branch_exists(root: Path, name: str) -> bool:
+    return _run(root, "rev-parse", "--verify", "--quiet",
+                f"refs/heads/{name}").returncode == 0
+
+
+def _pending(root: Path, integration: str) -> list[str]:
+    """Коммиты интеграционной ветки, которых нет в выпускаемой, от старых к новым.
+
+    Перенесённый коммит в выпускаемой ветке живёт под другим хэшем, поэтому
+    сравнение идёт по содержимому (`git cherry`), а не по хэшам.
+    """
+    out = _git("cherry", RELEASE_BRANCH, integration, cwd=root)
+    fresh = {line[2:].strip() for line in out.splitlines() if line.startswith("+")}
+    order = _git("rev-list", "--reverse", "--no-merges",
+                 f"{RELEASE_BRANCH}..{integration}", cwd=root).splitlines()
+    return [sha for sha in order if sha in fresh]
+
+
+def _drop_generated(root: Path) -> None:
+    """Вернуть собранные файлы к состоянию HEAD: перенос их не трогает."""
+    for rel in GENERATED:
+        _run(root, "reset", "-q", "--", rel)
+        _run(root, "checkout", "-q", "HEAD", "--", rel)
+        extra = _run(root, "ls-files", "--others", "--exclude-standard", "--", rel)
+        for name in extra.stdout.splitlines():
+            (root / name).unlink(missing_ok=True)
+
+
+def transfer(root: Path, commits: list[str], integration: str) -> dict:
+    """Перенести коммиты состава из интеграционной ветки в выпускаемую.
+
+    Порядок — как в интеграционной ветке, а не как в аргументе. Уже
+    перенесённые пропускаются. Коммит, который не ложится без кода вне состава,
+    откатывает перенос целиком: выпускаемая ветка остаётся как была, а работа
+    возвращается на интеграционную.
+    """
+    pending = _pending(root, integration)
+    selected: dict[str, str] = {}
+    for short in commits:
+        res = _run(root, "rev-parse", "--verify", "--quiet", f"{short}^{{commit}}")
+        sha = res.stdout.strip()
+        if res.returncode or not sha:
+            return {"ok": False, "error": f"коммит {short} не найден в репозитории"}
+        if _run(root, "merge-base", "--is-ancestor", sha, integration).returncode:
+            return {"ok": False,
+                    "error": f"коммит {short} не лежит в ветке {integration}"}
+        selected[sha] = short
+    moving = [sha for sha in pending if sha in selected]
+
+    start = _git("rev-parse", RELEASE_BRANCH, cwd=root)
+    _git("switch", "-q", RELEASE_BRANCH, cwd=root)
+    moved: list[str] = []
+    for sha in moving:
+        _run(root, "cherry-pick", "--no-commit", sha)
+        _drop_generated(root)
+        unmerged = _run(root, "diff", "--name-only", "--diff-filter=U").stdout.split()
+        if unmerged:
+            # Кто из невыбранных трогал те же файлы раньше — без них и не ложится
+            touched = set(_git("rev-list", f"{RELEASE_BRANCH}..{sha}~1", "--",
+                               *unmerged, cwd=root).splitlines())
+            needs = [_git("rev-parse", "--short", c, cwd=root) for c in pending
+                     if c not in selected and c in touched]
+            rollback(root, start, integration)
+            return {"ok": False,
+                    "error": f"коммит {selected[sha]} не переносится без кода вне "
+                             f"выпуска: {', '.join(unmerged)}",
+                    "conflict": {"commit": selected[sha], "needs": needs}}
+        if _run(root, "diff", "--cached", "--quiet").returncode:
+            _git("commit", "-q", "--no-verify", "-C", sha, cwd=root)
+            moved.append(selected[sha])
+        _run(root, "cherry-pick", "--quit")
+    return {"ok": True, "start": start, "moved": moved}
+
+
+def rollback(root: Path, start: str, integration: str) -> None:
+    """Вернуть выпускаемую ветку к началу переноса и уйти на интеграционную."""
+    _run(root, "cherry-pick", "--quit")
+    _run(root, "reset", "-q", "--hard", start)
+    _drop_generated(root)
+    _run(root, "switch", "-q", integration)
+
+
+def merge_back(root: Path, integration: str) -> dict:
+    """Влить выпуск в интеграционную ветку и вернуться на неё.
+
+    Без этого версия, changelog и манифест в ней отстанут, а следующий выпуск
+    не узнает, что коммиты уже перенесены. Собранный фронтенд остаётся свой:
+    сборка интеграционной ветки построена из её исходников, а они полнее.
+    """
+    _git("switch", "-q", integration, cwd=root)
+    _run(root, "merge", "--no-ff", "--no-commit", RELEASE_BRANCH)
+    _drop_generated(root)
+    unmerged = _run(root, "diff", "--name-only", "--diff-filter=U").stdout.split()
+    if unmerged:
+        _run(root, "merge", "--abort")
+        return {"ok": False,
+                "error": f"слияние {RELEASE_BRANCH} в {integration} упёрлось в "
+                         f"конфликт: {', '.join(unmerged)} — влейте вручную"}
+    _git("commit", "-q", "--no-verify", "--no-edit", cwd=root)
+    return {"ok": True}
+
+
+def build_frontend(root: Path) -> None:
+    """Пересобрать фронтенд в рабочем дереве (`npm run build`)."""
+    npm = shutil.which("npm")
+    if npm is None:
+        raise RuntimeError("npm не найден — фронтенд выпуска собрать нечем")
+    subprocess.run((npm, "run", "build"), cwd=root / "taskboard" / "frontend",
+                   check=True, capture_output=True, text=True, encoding="utf-8")
+
+
 # --- Выпуск ----------------------------------------------------------------
 
 
-def apply(bump: str, notes: str, tasks: list[str]) -> dict:
-    """Выпустить версию: changelog → VERSION → манифест → коммит → тег.
+def apply(bump: str, notes: str, tasks: list[str], commits: list[str] | None = None,
+          root: Path = ROOT, build=build_frontend) -> dict:
+    """Выпустить версию: перенос → changelog → VERSION → манифест → коммит → тег.
+
+    При интеграционной ветке в выпускаемую переносятся только `commits`, после
+    выпуска она вливается обратно, и работа продолжается на интеграционной.
 
     Пуш и GitHub Release здесь не делаются: они необратимы для пользователей,
     и решение остаётся за человеком (скилл спрашивает и зовёт `--publish`).
     """
-    version = next_version(current_version(), bump)
+    paths = _paths(root)
+    version = next_version(current_version(root), bump)
     # Испорченный текст ни на одном шаге не падает и уезжает в тег и манифест —
     # поэтому это преграда, а не предупреждение
-    stoppers = notes_problems(notes) + blockers()
+    stoppers = notes_problems(notes) + blockers(root)
     if stoppers:
         return {"ok": False, "error": "; ".join(stoppers)}
 
-    insert_section(CHANGELOG, version, date.today().isoformat(), notes)
-    VERSION_FILE.write_text(version + "\n", encoding="utf-8")
-    manifest = build_manifest(CHANGELOG, version)
-    MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                        encoding="utf-8")
+    integration = integration_branch(root)
+    result: dict = {}
+    if integration:
+        if commits is None:
+            return {"ok": False, "error": "при интеграционной ветке нужен --commits: "
+                                          "в выпуск уходят только коммиты состава"}
+        moved = transfer(root, commits, integration)
+        if not moved["ok"]:
+            return moved
+        result["moved"] = moved["moved"]
+        try:
+            build(root)
+        except Exception as exc:  # noqa: BLE001 — откатываем при любом провале сборки
+            rollback(root, moved["start"], integration)
+            return {"ok": False, "error": f"сборка фронтенда не удалась: {exc}"}
 
-    _git("add", "--", str(VERSION_FILE), str(CHANGELOG), str(MANIFEST))
+    insert_section(paths["changelog"], version, date.today().isoformat(), notes)
+    paths["version"].write_text(version + "\n", encoding="utf-8")
+    manifest = build_manifest(paths["changelog"], version)
+    paths["manifest"].write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                                 encoding="utf-8")
+
+    _git("add", "--", str(paths["version"]), str(paths["changelog"]),
+         str(paths["manifest"]), cwd=root)
+    if integration:
+        _git("add", "-A", "--", *GENERATED, cwd=root)
     body = "Задачи выпуска: " + ", ".join(tasks) if tasks else "Выпуск без привязки к задачам."
-    _git("commit", "-m", f"Релиз {version}", "-m", body)
+    _git("commit", "-q", "--no-verify", "-m", f"Релиз {version}", "-m", body, cwd=root)
 
     # Заметки в аннотацию тега: их читают из консоли (`git show`, `git tag -n`).
     # На странице тега разметка не рендерится — это работа Release, см. publish()
@@ -310,15 +550,18 @@ def apply(bump: str, notes: str, tasks: list[str]) -> dict:
         tmp.write(f"Taskmark {version}\n\n{manifest['notes'].strip()}\n")
         annotation = Path(tmp.name)
     try:
-        _git(*tag_args(manifest["tag"], annotation))
+        _git(*tag_args(manifest["tag"], annotation), cwd=root)
     finally:
         annotation.unlink(missing_ok=True)
-    return {"ok": True, "version": version, "tag": manifest["tag"],
-            "commit": _git("rev-parse", "--short", "HEAD")}
+    commit = _git("rev-parse", "--short", "HEAD", cwd=root)
+    if integration:
+        result["merged"] = merge_back(root, integration)
+    return {"ok": True, "version": version, "tag": manifest["tag"], "commit": commit,
+            **result}
 
 
-def publish() -> dict:
-    """Отправить коммит и тег, затем создать GitHub Release.
+def publish(root: Path = ROOT) -> dict:
+    """Отправить ветки и тег, затем создать GitHub Release.
 
     Отдельный шаг: наружу — только по решению человека. Release создаётся **после**
     пуша: без тега на удалённом создавать нечего. Его провал выпуск не отменяет —
@@ -327,9 +570,13 @@ def publish() -> dict:
     Версия, тег и заметки берутся из `release.json` — он единственный источник
     и уже лежит в релизном коммите.
     """
-    _git("push", "origin", "main", "--tags")
+    branches = [RELEASE_BRANCH]
+    integration = integration_branch(root)
+    if integration:
+        branches.append(integration)
+    _git("push", "origin", *branches, "--tags", cwd=root)
 
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest = json.loads(_paths(root)["manifest"].read_text(encoding="utf-8"))
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md",
                                      delete=False) as tmp:
         tmp.write(manifest["notes"].strip() + "\n")
@@ -415,6 +662,8 @@ def main() -> int:
     parser.add_argument("--bump", choices=LEVELS, help="разряд версии")
     parser.add_argument("--notes", help="файл с текстом секции changelog")
     parser.add_argument("--tasks", default="", help="состав выпуска: TASK-001,TASK-002")
+    parser.add_argument("--commits", default=None,
+                        help="коммиты состава через запятую (при интеграционной ветке)")
     args = parser.parse_args()
 
     result: dict | list
@@ -428,7 +677,9 @@ def main() -> int:
                 raise ValueError("для --apply нужны --bump и --notes")
             notes = Path(args.notes).read_text(encoding="utf-8")
             tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
-            result = apply(args.bump, notes, tasks)
+            commits = (None if args.commits is None else
+                       [c.strip() for c in args.commits.split(",") if c.strip()])
+            result = apply(args.bump, notes, tasks, commits=commits)
         elif args.publish:
             result = publish()
         else:
