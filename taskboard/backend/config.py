@@ -21,6 +21,10 @@ DEFAULTS: dict = {
     # значит своё, и универсального механизма тут быть не может. Задан — скилл
     # выпуска зовёт его; не задан — доводит подготовку и останавливается
     "release_script": "",
+    # Интеграционная ветка: сюда коммитится проверенное, а выпуск переносит
+    # в выпускаемую ветку только коммиты отобранных задач. Включена по умолчанию —
+    # неожиданный код в выпуске хуже лишнего шага; пустое значение выключает схему
+    "integration_branch": "dev",
     "logs_dir": "logs",
     "queue_section": "Queue",
     "queued_status": "queued",
@@ -297,7 +301,7 @@ TELEGRAM_KEYS = {"telegram", "telegram_token", "telegram_route",
 SECRET_KEYS = {"telegram_token", "telegram_proxy"}
 
 PROJECT_KEYS = {"pipeline", "actions", "statuses", "requires", "release_script",
-                "dnd_full_board", "harnesses", "vault", "delete_tasks",
+                "integration_branch", "dnd_full_board", "harnesses", "vault", "delete_tasks",
                 # Ходить ли агенту во внешний форж — свойство репозитория и
                 # договорённостей вокруг него, а не инструмента
                 "review_sources",

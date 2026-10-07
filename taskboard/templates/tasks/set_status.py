@@ -104,6 +104,7 @@ DEFAULTS = {
                 # а маршрут без него роль просто теряет (`actions_of`)
                 "review": "review", "release_draft": "release_notes",
                 "release_lock": "to_release"},
+    "integration_branch": "dev",
 }
 
 # Каталог статусов — дубль backend/statuses.py (см. выше про автономность).
@@ -1414,15 +1415,35 @@ def changelog(tasks_dir: Path, status: str = "") -> dict:
             continue
         path = find_task_file(tasks_dir, m.group("id"))
         notes = None
+        commits: list[str] = []
         if path is not None:
             try:
-                notes = _section_text(
-                    path.read_text(encoding="utf-8-sig").splitlines(), RELEASE_SECTION)
+                task_lines = path.read_text(encoding="utf-8-sig").splitlines()
             except OSError:
-                notes = None
+                task_lines = None
+            if task_lines is not None:
+                notes = _section_text(task_lines, RELEASE_SECTION)
+                commits = _commit_hashes(task_lines)
         out["tasks"].append({"id": m.group("id"), "title": m.group("title"),
-                             "file": m.group("file"), "notes": notes})
+                             "file": m.group("file"), "notes": notes,
+                             "commits": commits})
     return out
+
+
+# Строка «Истории коммитов»: «- `abc1234` сообщение». Строки без хэша (пояснения
+# текстом) коммитами не считаются
+_COMMIT_LINE_RE = re.compile(r"^\s*[-*]\s*`(?P<hash>[0-9a-fA-F]{7,40})`")
+
+
+def _commit_hashes(lines: list[str]) -> list[str]:
+    """Хэши коммитов задачи в порядке секции «История коммитов».
+
+    По ним выпуск переносит в выпускаемую ветку только код отобранных задач.
+    """
+    body = _section_text(lines, COMMITS_SECTION)
+    if not body:
+        return []
+    return [m.group("hash") for m in map(_COMMIT_LINE_RE.match, body.splitlines()) if m]
 
 
 # --- Простой задачи: блокировки и пауза -------------------------------------
@@ -3363,6 +3384,9 @@ def describe(tasks_dir: Path, task_id: str | None = None) -> dict:
         # Чем проект выпускает версии. Пусто — своего механизма нет, скилл
         # выпуска доводит подготовку и останавливается, а не гадает
         "release_script": (cfg.get("release_script") or "").strip(),
+        # Куда коммитится проверенное. Пусто — схема выключена, выпуск идёт
+        # из текущей ветки целиком
+        "integration_branch": (cfg.get("integration_branch") or "").strip(),
     }
     if task_id:
         status = current_status(Path(tasks_dir), task_id)

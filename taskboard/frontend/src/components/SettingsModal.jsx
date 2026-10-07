@@ -274,6 +274,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     dnd_full_board: !!config.dnd_full_board,
     delete_tasks: !!config.delete_tasks,
     release_script: (config.release_script || '').trim(),
+    // Пустая строка — выбор «схема выключена», а не «не задано»
+    integration_branch: (config.integration_branch ?? '').trim(),
     // Размеры превью: пустое поле — «не меняли», иначе бэкенд получит ноль
     ...Object.fromEntries(['card_title_size', 'card_title_lines', 'card_meta_size',
       'card_stale_days', 'card_fresh_minutes']
@@ -1042,6 +1044,26 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                   <div className="text-[11px] text-zinc-400 mt-1">
                     Путь к вашему скрипту в проекте, например <code>tools/release.py</code>.
                     Пусто — подготовка выпуска доводится до changelog, а выпускаете вы сами.
+                    {onOpenHelp && (
+                      <button
+                        className="ml-1 text-sky-500 hover:text-sky-400"
+                        onClick={() => onOpenHelp('release')}
+                      >
+                        подробнее
+                      </button>
+                    )}
+                  </div>
+
+                  <span className={`${label} mt-4`}>Интеграционная ветка</span>
+                  <input
+                    className={field}
+                    placeholder="выключено"
+                    value={config.integration_branch ?? ''}
+                    onChange={(e) => set('integration_branch', e.target.value)}
+                  />
+                  <div className="text-[11px] text-zinc-400 mt-1">
+                    Ветка, куда коммитится проверенное. В выпуск попадают только коммиты
+                    отобранных задач. Пусто — выпускается вся текущая ветка.
                     {onOpenHelp && (
                       <button
                         className="ml-1 text-sky-500 hover:text-sky-400"
