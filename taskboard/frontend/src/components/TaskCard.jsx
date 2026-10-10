@@ -125,7 +125,8 @@ function stripeKind(task) {
 }
 
 export default function TaskCard({ task, status, onOpen, indicatorAllowed = true,
-                                   query, match, onDelete, onOpenEpic, onContextMenu }) {
+                                   query, match, onDelete, onOpenEpic, onContextMenu,
+                                   brainstorming, brainstormResult, onOpenLog }) {
   const style = statusStyle(status)
   const stripe = stripeKind(task)
   const type = taskType(task.type)
@@ -343,6 +344,23 @@ export default function TaskCard({ task, status, onOpen, indicatorAllowed = true
              title={task.title}>
           {highlight(task.title, query)}
         </div>
+        {(brainstorming || brainstormResult) && (
+          <div className="mt-1 text-[10px] text-violet-300/80">
+            {brainstorming ? (
+              <span className="inline-flex items-center gap-1.5" title="Идёт брейншторм — подробности в открытой задаче">
+                <span className="brainstorm-card-dot" aria-hidden="true" />
+                брейншторм
+              </span>
+            ) : (
+              <button type="button" className="hover:text-violet-200 transition inline-flex items-center gap-1"
+                      title="Посмотреть последний протокол брейншторма"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => { e.stopPropagation(); onOpenLog?.(brainstormResult) }}>
+                <span aria-hidden="true">≋</span> Результат
+              </button>
+            )}
+          </div>
+        )}
         {/* Нашлось в теле задачи — показываем, где именно: иначе непонятно,
             почему карточка попала в выдачу */}
         {match && !match.in_title && match.excerpt && (

@@ -246,9 +246,33 @@ def main() -> int:
     parser.add_argument("--task", default="", help="Задача (TASK-NNN)")
     parser.add_argument("--tasks-dir", default=None,
                         help="Папка задач (по умолчанию — папка этого скрипта)")
+    parser.add_argument("--brainstorm", choices=("simple", "team"),
+                        help="Показать брейншторм в превью: обычный или командный")
+    parser.add_argument("--phase", choices=("research", "critique", "responses",
+                                           "final", "synthesis", "finished", "cancelled"),
+                        help="Этап брейншторма")
+    parser.add_argument("--run", default="", help="Уникальная метка запуска брейншторма")
     args = parser.parse_args()
 
     tasks_dir = Path(args.tasks_dir) if args.tasks_dir else Path(__file__).parent
+
+    if args.brainstorm:
+        if args.dismiss or args.text:
+            parser.error("--brainstorm не совмещается с уведомлением или --dismiss")
+        if not all((args.phase, args.run.strip(), args.task.strip(), args.agent.strip())):
+            parser.error("--brainstorm требует --phase, --run, --task и --agent")
+        if args.brainstorm == "simple" and args.phase in ("responses", "final"):
+            parser.error("Этот этап есть только у командного брейншторма")
+        result = _post(tasks_dir, "/api/brainstorm", {
+            "project": project_name(tasks_dir), "task": args.task.strip(),
+            "run": args.run.strip(), "mode": args.brainstorm,
+            "phase": args.phase, "agent": args.agent.strip(),
+        })
+        print("[OK] этап брейншторма передан доске" if result.get("ok")
+              else "[i] доска не приняла этап брейншторма")
+        return 0
+    if args.phase or args.run:
+        parser.error("--phase и --run используются только с --brainstorm")
 
     if args.dismiss:
         # Метки нет — гасить нечего: среда своей сессии не называет, и
