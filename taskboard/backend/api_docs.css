@@ -1,0 +1,149 @@
+/* Swagger UI на /docs в цветах доски: тёмная палитра zinc, акцент sky.
+   Цвета методов (GET, POST…) остаются штатными: по ним эндпоинты и читаются */
+
+body { margin: 0; background: #09090b; }
+
+.swagger-ui,
+.swagger-ui .info .title,
+.swagger-ui .info p, .swagger-ui .info li, .swagger-ui .info table,
+.swagger-ui .opblock-tag,
+.swagger-ui .opblock-tag small,
+.swagger-ui .opblock .opblock-summary-path,
+.swagger-ui .opblock .opblock-summary-path__deprecated,
+.swagger-ui .opblock .opblock-summary-operation-id,
+.swagger-ui .opblock .opblock-summary-description,
+.swagger-ui .opblock-description-wrapper p,
+.swagger-ui .opblock-external-docs-wrapper p,
+.swagger-ui .opblock-title_normal p,
+.swagger-ui .opblock .opblock-section-header h4,
+.swagger-ui .opblock .opblock-section-header > label,
+.swagger-ui .tab li, .swagger-ui .tab li button.tablinks,
+.swagger-ui .parameter__name, .swagger-ui .parameter__type,
+.swagger-ui .parameter__in, .swagger-ui .parameter__extension,
+.swagger-ui .response-col_status, .swagger-ui .response-col_links,
+.swagger-ui .response-col_description,
+.swagger-ui .responses-inner h4, .swagger-ui .responses-inner h5,
+.swagger-ui table thead tr th, .swagger-ui table thead tr td,
+.swagger-ui .markdown p, .swagger-ui .markdown li,
+.swagger-ui .renderedMarkdown p, .swagger-ui .renderedMarkdown li,
+.swagger-ui section.models h4, .swagger-ui section.models h5,
+.swagger-ui .model-title, .swagger-ui .model, .swagger-ui .model .property,
+.swagger-ui .model-toggle::after,
+.swagger-ui .prop-format, .swagger-ui .prop-type,
+.swagger-ui label, .swagger-ui .btn,
+.swagger-ui .scheme-container .schemes > label,
+.swagger-ui .loading-container .loading::after,
+.swagger-ui .dialog-ux .modal-ux-header h3,
+.swagger-ui .dialog-ux .modal-ux-content p,
+.swagger-ui .dialog-ux .modal-ux-content h4,
+.swagger-ui .servers-title, .swagger-ui .servers > label,
+.swagger-ui .errors-wrapper .errors h4, .swagger-ui .errors-wrapper hgroup h4 {
+  color: #d4d4d8;
+}
+
+.swagger-ui .info .title { color: #f4f4f5; }
+.swagger-ui .info .title small { background: #3f3f46; }
+.swagger-ui .info .title small.version-stamp { background: #0284c7; }
+.swagger-ui .info .title small pre { color: #f4f4f5; }
+.swagger-ui .info a, .swagger-ui .info .base-url,
+.swagger-ui a.nostyle, .swagger-ui .markdown a, .swagger-ui .renderedMarkdown a {
+  color: #38bdf8;
+}
+.swagger-ui .info .base-url { color: #a1a1aa; }
+
+.swagger-ui .opblock-tag { border-bottom-color: #3f3f46; }
+.swagger-ui .opblock-tag:hover { background: rgba(255, 255, 255, .03); }
+.swagger-ui .expand-operation svg,
+.swagger-ui .opblock-control-arrow svg,
+.swagger-ui .models-control svg,
+.swagger-ui .model-box-control svg,
+.swagger-ui .authorization__btn svg,
+.swagger-ui svg.arrow { fill: #a1a1aa; }
+
+.swagger-ui .opblock { box-shadow: none; }
+.swagger-ui .opblock .opblock-summary { border-bottom-color: #3f3f46; }
+.swagger-ui .opblock .opblock-section-header {
+  background: #18181b;
+  box-shadow: none;
+}
+.swagger-ui .opblock-body pre.microlight,
+.swagger-ui .highlight-code > .microlight,
+.swagger-ui .model-box pre {
+  background: #18181b !important;
+  border: 1px solid #3f3f46;
+}
+.swagger-ui .opblock .opblock-summary-method { color: #fff; }
+.swagger-ui .opblock-summary-control:focus { outline-color: #0ea5e9; }
+
+.swagger-ui .scheme-container {
+  background: #18181b;
+  box-shadow: none;
+  border-bottom: 1px solid #27272a;
+}
+
+.swagger-ui section.models { border-color: #3f3f46; }
+.swagger-ui section.models.is-open h4 { border-bottom-color: #3f3f46; }
+.swagger-ui section.models .model-container { background: #18181b; }
+.swagger-ui section.models .model-container:hover { background: #27272a; }
+.swagger-ui .model-box { background: transparent; }
+.swagger-ui .model .property.primitive, .swagger-ui .prop-format { color: #a1a1aa; }
+.swagger-ui .prop-type { color: #c4b5fd; }
+.swagger-ui table.model tr.description, .swagger-ui .model-hint { color: #a1a1aa; }
+.swagger-ui .model-hint { background: #27272a; }
+
+.swagger-ui table thead tr th, .swagger-ui table thead tr td,
+.swagger-ui .parameters-col_description,
+.swagger-ui .responses-table td { border-bottom-color: #3f3f46; }
+.swagger-ui .parameter__name.required::after,
+.swagger-ui .parameter__name.required span { color: #fb7185; }
+.swagger-ui .response-col_links { color: #a1a1aa; }
+
+.swagger-ui input[type=text], .swagger-ui input[type=password],
+.swagger-ui input[type=search], .swagger-ui input[type=email],
+.swagger-ui input[type=file], .swagger-ui textarea, .swagger-ui select {
+  background: #27272a;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
+}
+.swagger-ui select {
+  background-color: #27272a;
+  box-shadow: none;
+}
+.swagger-ui textarea.curl { background: #18181b; color: #e4e4e7; }
+.swagger-ui input::placeholder, .swagger-ui textarea::placeholder { color: #71717a; }
+.swagger-ui input.invalid, .swagger-ui textarea.invalid, .swagger-ui select.invalid {
+  background: #4c0519;
+  border-color: #fb7185;
+}
+
+.swagger-ui .btn { border-color: #52525b; background: transparent; box-shadow: none; }
+.swagger-ui .btn:hover { box-shadow: none; background: #27272a; }
+.swagger-ui .btn.execute { background: #0284c7; border-color: #0284c7; color: #fff; }
+.swagger-ui .btn.execute:hover { background: #0ea5e9; }
+.swagger-ui .btn.cancel { border-color: #fb7185; color: #fb7185; }
+.swagger-ui .btn.authorize { border-color: #34d399; color: #34d399; }
+.swagger-ui .try-out__btn { color: #d4d4d8; }
+
+.swagger-ui .tab li:first-of-type::after { background: #52525b; }
+.swagger-ui .opblock-description-wrapper,
+.swagger-ui .opblock-external-docs-wrapper,
+.swagger-ui .opblock-title_normal { color: #d4d4d8; }
+
+.swagger-ui .markdown code, .swagger-ui .renderedMarkdown code {
+  background: #27272a;
+  color: #fde68a;
+}
+
+.swagger-ui .dialog-ux .modal-ux {
+  background: #18181b;
+  border-color: #3f3f46;
+}
+.swagger-ui .dialog-ux .modal-ux-header { border-bottom-color: #3f3f46; }
+.swagger-ui .dialog-ux .backdrop-ux { background: rgba(0, 0, 0, .6); }
+
+.swagger-ui .errors-wrapper { background: rgba(244, 63, 94, .1); border-color: #fb7185; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #09090b; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #52525b; }

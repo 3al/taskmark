@@ -1446,6 +1446,14 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     <div className="text-[11px] text-zinc-400 mt-1">
                       Перезапуск применяет смену порта и перечитывает конфиги
                     </div>
+                    <a
+                      href="/docs"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block mt-2 text-sm text-sky-500 hover:text-sky-400"
+                    >
+                      Документация API
+                    </a>
                   </div>
                 </>
               )}
