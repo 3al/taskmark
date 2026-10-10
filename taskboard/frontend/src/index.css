@@ -153,3 +153,30 @@ pre mark.search-hit, .log-text mark.search-hit { @apply px-0; }
   transform-origin: left;
   will-change: transform;
 }
+
+/* Роль движется только на том этапе, где она работает. */
+.brainstorm-orbit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.35;
+}
+.brainstorm-dot { width: 0.35rem; height: 0.35rem; border-radius: 50%; }
+.brainstorm-orbit-active { opacity: 1; animation: brainstorm-turn 2.4s linear infinite; animation-delay: var(--role-delay); }
+.brainstorm-orbit-active .brainstorm-dot { transform: translateY(-0.45rem); }
+@keyframes brainstorm-turn { to { transform: rotate(360deg); } }
+.brainstorm-card-dot {
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: brainstorm-breathe 1.6s ease-in-out infinite;
+}
+@keyframes brainstorm-breathe { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .brainstorm-orbit-active, .brainstorm-card-dot { animation: none; }
+}

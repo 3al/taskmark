@@ -19,6 +19,7 @@ import HelpModal from './components/HelpModal'
 import UpdateModal from './components/UpdateModal'
 import ContextMenu from './components/ContextMenu'
 import Notices from './components/Notices'
+import { useBrainstorm } from './useBrainstorm'
 
 // Колонки таскаем по указателю (pointerWithin), карточки — по пересечению
 // прямоугольников: для карточки важна площадь перекрытия, иначе вставка между
@@ -61,6 +62,9 @@ export default function App() {
   const [board, setBoard] = useState(null)
   const [health, setHealth] = useState(null)
   const [projects, setProjects] = useState({ active: null, projects: [] })
+  const brainstorms = useBrainstorm(null, projects.active)
+  const brainstorming = useMemo(() => new Set(brainstorms.items.map((s) => s.task)),
+                                [brainstorms.items])
   const [openTask, setOpenTask] = useState(null)
   const [openEpic, setOpenEpic] = useState(null)
   // Срез по полю задачи: { field, value } — автор, исполнитель
@@ -97,6 +101,8 @@ export default function App() {
   const [copySource, setCopySource] = useState(null)
   const closeNewTask = () => { setShowNewTask(false); setCopySource(null) }
   const [showLogs, setShowLogs] = useState(false)
+  const [initialLog, setInitialLog] = useState(null)
+  const openLog = (name = null) => { setInitialLog(name); setShowLogs(true) }
   const [showSettings, setShowSettings] = useState(false)
   // Вкладка, ради которой настройки открыли: из шестерёнки — никакая (запомнится
   // прошлая), из плашки «что нового» — та, про которую там и говорилось
@@ -942,7 +948,7 @@ export default function App() {
         hasCustomOrder={hasCustomOrder}
         onSwitchProject={switchProject}
         onNewTask={() => setShowNewTask(true)}
-        onShowLogs={() => setShowLogs(true)}
+        onShowLogs={() => openLog()}
         onRefresh={refresh}
         onResetColumns={() => saveColumnOrder(null)}
         onOpenSettings={() => openSettings()}
@@ -1133,6 +1139,9 @@ export default function App() {
                     onDelete={deleteTask}
                     onOpenEpic={(key) => pushView({ epic: key })}
                     onCollapse={() => setColumnCollapsed(col.status, true)}
+                    brainstorming={brainstorming}
+                    brainstormResults={brainstorms.results}
+                    onOpenLog={openLog}
                     onTaskContextMenu={openTaskMenu}
                     columnIndicator={indicator}
                   />
@@ -1382,6 +1391,9 @@ export default function App() {
       {openTask && (
         <TaskModal
           taskId={openTask}
+          project={projects.active}
+          brainstormResult={brainstorms.results[openTask]}
+          onOpenLog={openLog}
           query={searchText}
           onOpenTask={(id) => pushView({ task: id })}
           onOpenEpic={(key) => pushView({ epic: key })}
@@ -1420,7 +1432,7 @@ export default function App() {
           onCreated={refresh}
         />
       )}
-      {showLogs && <LogsPanel onClose={() => setShowLogs(false)} />}
+      {showLogs && <LogsPanel initialFile={initialLog} onClose={() => setShowLogs(false)} />}
       {showSettings && (
         <SettingsModal
           initialTab={settingsTab}

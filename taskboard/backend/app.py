@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from backend import (autostart, baseline, changelog, console, due_watch, help_docs,
+from backend import (autostart, baseline, brainstorm, changelog, console, due_watch, help_docs,
                      lifecycle, notices, notify_watch, registry, reveal,
                      telegram_intake, telegram_source, updater, version)
 from backend.board_parser import annotate_age, annotate_fresh, parse_board
@@ -95,7 +95,7 @@ API_GROUPS = [
     ("Настройки", "Конфиг инструмента и проекта, жизненный цикл статусов",
      ("config", "pipeline", "requires")),
     ("Агентское окружение", "Развёртывание и обновление скиллов, правил и волта",
-     ("agentic", "scaffold")),
+     ("agentic", "scaffold", "brainstorm")),
     ("Уведомления", "Сообщения агентов человеку на доске",
      ("notify",)),
     ("Обновления", "Проверка и установка новой версии, список изменений",
@@ -269,6 +269,15 @@ class NotifyIn(BaseModel):
     # Метка источника: по ней уведомление потом отзывают, когда повод отпал.
     # Обычно сессия среды агента — её же отзывает её собственный хук
     key: str | None = None
+
+
+class BrainstormIn(BaseModel):
+    project: str
+    task: str
+    run: str
+    mode: str
+    phase: str
+    agent: str
 
 
 class CriteriaPresetIn(BaseModel):
@@ -668,6 +677,49 @@ def api_autostart_set(body: AutostartIn) -> dict:
     if not result.get("ok"):
         raise HTTPException(400, result.get("error", "Не удалось изменить автозапуск"))
     return result
+
+
+def _brainstorm_project(name: str) -> dict:
+    """Адресат указан отправителем, а не глобальным выбором другой вкладки."""
+    for project in registry.list_projects().get("projects", []):
+        if project["name"] == name:
+            return project
+    raise HTTPException(404, f"Проект не найден: {name}")
+
+
+@app.post("/api/brainstorm")
+def api_brainstorm_update(body: BrainstormIn) -> dict:
+    """Сообщить режим и этап брейншторма для превью задачи.
+
+    Завершение снимает только указанный запуск. Состояние хранится до
+    завершения, перезапуска сервера или 30 минут без обновления этапа.
+    """
+    project = _brainstorm_project(body.project)
+    if not parse_task(Path(project["tasks_dir"]), body.task):
+        raise HTTPException(404, f"Задача не найдена: {body.task}")
+    try:
+        brainstorm.activity.update(body.project, body.task, body.run,
+                                   body.mode, body.phase, body.agent)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return {"ok": True}
+
+
+@app.get("/api/brainstorm/{task_id}")
+def api_brainstorm_state(task_id: str, project: str) -> dict:
+    """Активные брейнштормы задачи в указанном проекте."""
+    _brainstorm_project(project)
+    return {"items": brainstorm.activity.get(project, task_id)}
+
+
+@app.get("/api/brainstorm")
+def api_brainstorm_snapshot(project: str) -> dict:
+    """Активные брейнштормы и ссылки на последние протоколы проекта."""
+    found = _brainstorm_project(project)
+    tasks_dir = Path(found["tasks_dir"])
+    cfg = load_project_config(tasks_dir)
+    return {"items": brainstorm.activity.get(project),
+            "results": brainstorm.log_results(tasks_dir / cfg.get("logs_dir", "logs"))}
 
 
 @app.post("/api/notify")

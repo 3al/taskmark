@@ -30,6 +30,11 @@ export const api = {
   health: () => request('/api/health'),
   board: () => request('/api/board'),
   task: (id) => request(`/api/task/${id}`),
+  brainstorm: (id, project, signal) =>
+    request(`/api/brainstorm/${encodeURIComponent(id)}?project=${encodeURIComponent(project)}`,
+            { signal }),
+  brainstorms: (project, signal) =>
+    request(`/api/brainstorm?project=${encodeURIComponent(project)}`, { signal }),
   projects: () => request('/api/projects'),
   registerProject: (tasksDir, name) =>
     request('/api/projects', {

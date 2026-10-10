@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import BrainstormActivity from './BrainstormActivity'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
@@ -124,8 +125,8 @@ export function splitSections(body, sections) {
 // query — активный поиск: совпадения подсвечиваются прямо в тексте задачи.
 // onOpenTask — переход к другой задаче (номер блокера кликабелен),
 // onChanged — простой поменялся: доске нужно перечитать карточки
-export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onOpenSlice, onChanged,
-                                    onCopy, onBack, backTo, onClose }) {
+export default function TaskModal({ taskId, project, query, onOpenTask, onOpenEpic, onOpenSlice, onChanged,
+                                    onCopy, onBack, backTo, onClose, brainstormResult, onOpenLog }) {
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
   // Чистку тела и сборку копируемого текста держит общий модуль: то же самое
@@ -1084,6 +1085,8 @@ export default function TaskModal({ taskId, query, onOpenTask, onOpenEpic, onOpe
           </button>
         </div>
 
+        <BrainstormActivity key={`${project}:${taskId}`} taskId={taskId} project={project}
+                            result={brainstormResult} onOpenLog={onOpenLog} />
         <div className={`overflow-y-auto px-5 py-4 md-body text-sm ${style.mdTint}`}>
           {error && <div className="text-rose-400">{error}</div>}
           {revealError && <div className="text-xs text-rose-400 mb-2">{revealError}</div>}

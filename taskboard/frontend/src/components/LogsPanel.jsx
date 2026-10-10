@@ -32,7 +32,7 @@ const ROLE_STYLE = {
 }
 
 // Панель просмотра логов tasks/logs/ (read-only)
-export default function LogsPanel({ onClose }) {
+export default function LogsPanel({ onClose, initialFile = null }) {
   const [files, setFiles] = useState([])
   const [current, setCurrent] = useState(null)
   const [content, setContent] = useState(null)
@@ -61,6 +61,8 @@ export default function LogsPanel({ onClose }) {
       setMessage(`Ошибка: ${e.message}`)
     }
   }
+
+  useEffect(() => { if (initialFile) open(initialFile) }, [initialFile])
 
   useEffect(() => {
     if (!query.trim()) setTarget(null)
