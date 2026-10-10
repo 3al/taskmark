@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import mimetypes
 import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -78,7 +81,56 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "task_slice": True, "help_search": True,
                 "log_search": True, "task_reveal": True}
 
-app = FastAPI(title="taskboard")
+# Документация API — штатные /docs, /redoc и /openapi.json FastAPI. Группа
+# эндпоинта определяется первым сегментом пути после /api/, заголовок — первой
+# строкой docstring (см. _document_api). Полноту сверяет test_api_docs: новый
+# сегмент без группы или эндпоинт без docstring роняют прогон
+API_GROUPS = [
+    ("Проекты", "Реестр проектов и выбор активного",
+     ("projects", "fs")),
+    ("Доска", "Колонки, очередь, поиск и живые обновления",
+     ("board", "queue", "search", "slice", "events")),
+    ("Задачи", "Чтение, создание, правка, перемещение и удаление задач",
+     ("task", "tasks", "epics", "assignees", "criteria-presets")),
+    ("Настройки", "Конфиг инструмента и проекта, жизненный цикл статусов",
+     ("config", "pipeline", "requires")),
+    ("Агентское окружение", "Развёртывание и обновление скиллов, правил и волта",
+     ("agentic", "scaffold")),
+    ("Уведомления", "Сообщения агентов человеку на доске",
+     ("notify",)),
+    ("Обновления", "Проверка и установка новой версии, список изменений",
+     ("update", "changelog")),
+    ("Telegram", "Задачи из чата Telegram",
+     ("telegram",)),
+    ("Справка", "Разделы помощи и поиск по ним",
+     ("help",)),
+    ("Логи", "Рабочие логи агентов в tasks/logs",
+     ("logs",)),
+    ("Сервер", "Состояние, автозапуск, остановка и перезапуск",
+     ("health", "autostart", "server")),
+]
+
+app = FastAPI(
+    title="Taskmark",
+    version=version.current(),
+    description=("HTTP API канбан-доски поверх Markdown-файлов задач. "
+                 "Им пользуются веб-интерфейс доски и скрипты `tasks/`; запросы относятся к "
+                 "активному проекту, если в пути не сказано иное."),
+    openapi_tags=[{"name": name, "description": about} for name, about, _ in API_GROUPS],
+    # /docs отдаём своим маршрутом: штатная страница Swagger UI белая
+    docs_url=None,
+)
+
+API_DOCS_CSS = Path(__file__).with_name("api_docs.css")
+
+
+@app.get("/docs", include_in_schema=False)
+def api_docs_page() -> HTMLResponse:
+    """Swagger UI в цветах доски: штатная страница плюс тёмная таблица стилей."""
+    page = get_swagger_ui_html(openapi_url=app.openapi_url, title="Taskmark — API")
+    css = API_DOCS_CSS.read_text(encoding="utf-8")
+    html = page.body.decode("utf-8").replace("</head>", f"<style>{css}</style>\n</head>", 1)
+    return HTMLResponse(html)
 
 
 # Ошибка действия на доске видна человеку красной строкой — и исчезает вместе
@@ -280,6 +332,7 @@ def _resolve_tasks_dir(path: Path) -> Path:
 
 @app.get("/api/projects")
 def api_projects() -> dict:
+    """Зарегистрированные проекты и активный из них."""
     return registry.list_projects()
 
 
@@ -297,6 +350,7 @@ def api_fs_dirs(path: str = "") -> dict:
 
 @app.post("/api/projects")
 def api_register(body: ProjectIn) -> dict:
+    """Добавить проект в реестр по пути к его корню."""
     tasks_dir = _resolve_tasks_dir(Path(body.tasks_dir))
     # Несуществующая папка допустима: структуру можно развернуть из UI (scaffold)
     proj = registry.register_project(tasks_dir, name=body.name, activate=body.activate)
@@ -308,6 +362,7 @@ def api_register(body: ProjectIn) -> dict:
 
 @app.post("/api/projects/activate")
 def api_activate(body: ActivateIn) -> dict:
+    """Сделать проект активным: дальнейшие запросы относятся к нему."""
     proj = registry.activate_project(body.name)
     if not proj:
         raise HTTPException(404, f"Проект не найден: {body.name}")
@@ -317,6 +372,7 @@ def api_activate(body: ActivateIn) -> dict:
 
 @app.delete("/api/projects/{name}")
 def api_remove_project(name: str) -> dict:
+    """Убрать проект из реестра. Файлы проекта не трогаются."""
     if not registry.remove_project(name):
         raise HTTPException(404, f"Проект не найден: {name}")
     # Если удалили активный — перенацелить watcher на новый активный проект
@@ -437,6 +493,7 @@ def api_get_config() -> dict:
 
 @app.post("/api/config")
 def api_save_config(body: ConfigIn) -> dict:
+    """Сохранить конфиг инструмента и активного проекта."""
     # Защита от мусора: разрешаем только известные ключи.
     # Проектные ключи берём реестром (PROJECT_KEYS), а не списком: перечисленные
     # руками расходились с ним молча — новая настройка проекта сохранялась в
@@ -664,6 +721,7 @@ def api_notify_dismiss(body: DismissIn) -> dict:
 
 @app.get("/api/health")
 def api_health() -> dict:
+    """Жив ли сервер: версия, папка инструмента, активный проект."""
     proj = registry.get_active()
     # Расположение инструмента: лаунчер сверяет, чтобы не подключиться
     # к серверу, запущенному из другой (напр. удалённой) папки
@@ -685,6 +743,7 @@ def api_health() -> dict:
 
 @app.get("/api/board")
 def api_board() -> dict:
+    """Доска активного проекта: колонки со строками задач и отчёт о структуре."""
     tasks_dir, cfg, report = _validate_or_400()
     pipeline = load_pipeline(cfg)
     board = parse_board(tasks_dir / cfg.get("board_file", "board.md"), pipeline)
@@ -849,6 +908,7 @@ def _debt_item(req: dict) -> dict:
 
 @app.get("/api/task/{task_id}")
 def api_task(task_id: str) -> dict:
+    """Задача целиком: поля, текст и долг перед следующими этапами."""
     tasks_dir, cfg = _ctx()
     task = parse_task(tasks_dir, task_id)
     if not task:
@@ -1003,6 +1063,7 @@ def api_stalled() -> dict:
 
 @app.post("/api/tasks")
 def api_create_task(body: TaskIn) -> dict:
+    """Создать задачу: файл из шаблона и строку на доске."""
     tasks_dir, cfg, report = _validate_or_400()
     if not report["features"]["create_task"]:
         raise HTTPException(400, "Создание задач отключено: нет create_task.py")
@@ -1196,6 +1257,7 @@ def api_delete_task(task_id: str) -> dict:
 
 @app.post("/api/tasks/{task_id}/move")
 def api_move(task_id: str, body: MoveIn) -> dict:
+    """Переместить задачу: сменить статус или место в разделе."""
     tasks_dir, cfg, _report = _validate_or_400()
     pipeline = load_pipeline(cfg)
 
@@ -1294,6 +1356,7 @@ def api_help_search(q: str = "") -> dict:
 
 @app.get("/api/help/{section_id}")
 def api_help_section(section_id: str) -> dict:
+    """Раздел справки по его id."""
     section = help_docs.get_section(section_id)
     if not section:
         raise HTTPException(404, f"Раздел помощи не найден: {section_id}")
@@ -1400,6 +1463,7 @@ def api_scaffold(body: ScaffoldIn | None = None) -> dict:
 
 @app.get("/api/logs")
 def api_logs() -> dict:
+    """Файлы логов проекта (`tasks/logs`)."""
     tasks_dir, cfg = _ctx()
     logs_path = tasks_dir / cfg.get("logs_dir", "logs")
     if not logs_path.is_dir():
@@ -1423,6 +1487,7 @@ def api_logs_search(q: str = "") -> dict:
 
 @app.get("/api/logs/{name}")
 def api_log(name: str) -> dict:
+    """Содержимое файла лога."""
     tasks_dir, cfg = _ctx()
     path = (tasks_dir / cfg.get("logs_dir", "logs") / name).resolve()
     if not str(path).startswith(str((tasks_dir / cfg.get("logs_dir", "logs")).resolve())):
@@ -1436,6 +1501,7 @@ def api_log(name: str) -> dict:
 
 @app.post("/api/server/stop")
 def api_server_stop() -> dict:
+    """Остановить сервер."""
     port = int(os.environ.get("TASKBOARD_PORT", "8765"))
     lifecycle.stop_server(port)
     return {"ok": True, "action": "stop"}
@@ -1443,6 +1509,7 @@ def api_server_stop() -> dict:
 
 @app.post("/api/server/restart")
 def api_server_restart() -> dict:
+    """Перезапустить сервер: применяет смену порта и перечитывает конфиги."""
     port = int(os.environ.get("TASKBOARD_PORT", "8765"))
     proj = registry.get_active()
     lifecycle.restart_server(port, proj["tasks_dir"] if proj else None)
@@ -1453,6 +1520,7 @@ def api_server_restart() -> dict:
 
 @app.get("/api/events")
 async def api_events():
+    """Поток событий (SSE): правки файлов задач и уведомления для доски."""
     q = watcher.subscribe()
 
     async def stream():
@@ -1472,12 +1540,36 @@ async def api_events():
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+def _document_api() -> None:
+    """Разложить эндпоинты /api/* по группам и дать им заголовки из docstring.
+
+    Первое предложение docstring — заголовок в /docs, остальное — описание. Сегмента
+    нет в API_GROUPS — эндпоинт остаётся без группы, и это ловит test_api_docs.
+    """
+    group_of = {seg: name for name, _, segments in API_GROUPS for seg in segments}
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
+            continue
+        group = group_of.get(route.path.split("/")[2])
+        if group and not route.tags:
+            route.tags = [group]
+        doc = inspect.cleandoc(route.endpoint.__doc__ or "")
+        if doc:
+            first, _, rest = doc.partition("\n")
+            head, _, tail = first.partition(". ")
+            route.summary = route.summary or head.strip().rstrip(".")
+            route.description = f"{tail}\n{rest}".strip()
+
+
+_document_api()
+
+
 # --- Статика фронтенда ---
 
 if DIST_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="frontend")
 else:
-    @app.get("/")
+    @app.get("/", include_in_schema=False)
     def no_frontend() -> dict:
         return {
             "ok": False,
