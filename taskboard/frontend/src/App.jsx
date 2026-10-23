@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DndContext, DragOverlay, PointerSensor, pointerWithin, rectIntersection, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
-import { api, subscribeChanges } from './api'
+import { api, getTabProject, handleUnknownProject, setTabProject, subscribeChanges } from './api'
 import { isDropAllowed, defaultColumnOrder, setPipeline, statusStyle } from './statuses'
 import { taskCopyText } from './taskText'
 import Header from './components/Header'
@@ -57,6 +57,23 @@ function ColumnEndZone({ active }) {
     </div>
   )
 }
+
+// Проект вкладки живёт в её адресе (`?project=`): так его сохраняют
+// обновление страницы и дублирование вкладки, а ссылкой можно поделиться
+function readProjectUrl() {
+  return new URLSearchParams(window.location.search).get('project') || null
+}
+
+function writeProjectUrl(name, replace) {
+  const url = new URL(window.location.href)
+  if (name) url.searchParams.set('project', name)
+  else url.searchParams.delete('project')
+  if (url.href === window.location.href) return
+  if (replace) window.history.replaceState(null, '', url)
+  else window.history.pushState(null, '', url)
+}
+
+setTabProject(readProjectUrl())
 
 export default function App() {
   const [board, setBoard] = useState(null)
@@ -304,22 +321,39 @@ export default function App() {
   }, [projects.active])
 
   const refresh = useCallback(async () => {
+    // Ответ, пришедший после переключения проекта, относится к прежнему —
+    // показывать его значит нарисовать чужую доску под новым именем
+    let asked = getTabProject()
     try {
       const [h, p] = await Promise.all([api.health(), api.projects()])
+      if (getTabProject() !== asked) return
+      // Вкладка без проекта в адресе открывает последний выбранный и дальше
+      // держит его сама: соседняя вкладка его уже не переключит
+      const name = h?.project?.name || null
+      if (!asked && name) {
+        setTabProject(name)
+        writeProjectUrl(name, true)
+        asked = name
+      }
       setHealth(h)
-      setProjects(p)
+      // `active` здесь — проект вкладки: его показывают шапка и все ключи вида
+      setProjects({ ...p, active: name })
       // Тумблер DnD привязан к конфигу: подхватываем сохранённое значение один раз
       if (!configLoaded.current && h?.config) {
         setDndFullBoard(!!h.config.dnd_full_board)
         configLoaded.current = true
       }
       if (h?.report?.ok) {
-        setBoard(await api.board())
+        const next = await api.board()
+        if (getTabProject() !== asked) return
+        setBoard(next)
       } else {
         setBoard(null)
       }
       setError(null)
     } catch (e) {
+      // Проект вкладки сменился, пока шёл запрос: ошибка про прежний
+      if (getTabProject() !== asked) return
       setError(e.message)
     }
   }, [])
@@ -401,11 +435,61 @@ export default function App() {
   const closeNotice = useCallback(
     (id) => setNotices((prev) => prev.filter((n) => n.id !== id)), [])
 
+  // Окна и выделения принадлежат проекту: форма, открытая в прежнем, иначе
+  // сохранила бы своё в новый
+  const resetProjectView = () => {
+    setOpenTask(null)
+    setOpenEpic(null)
+    setOpenSlice(null)
+    setTaskTrail([])
+    setShowNewTask(false)
+    setCopySource(null)
+    setShowLogs(false)
+    setInitialLog(null)
+    setShowSettings(false)
+    setShowScaffold(false)
+    setShowAgentic(false)
+    setShowRepair(false)
+    setPendingMove(null)
+    setPendingCancel(null)
+    setPendingDebt(null)
+    setMenuFor(null)
+    setBoard(null)
+  }
+
   const switchProject = async (name) => {
-    if (!name) return
+    if (!name || name === getTabProject()) return
+    // Выбор запоминается и для новых вкладок — их открывают на последнем
     await api.activateProject(name)
+    setTabProject(name)
+    writeProjectUrl(name, false)
+    resetProjectView()
     refresh()
   }
+
+  // «Назад» и «вперёд» браузера ходят по проектам вкладки
+  useEffect(() => {
+    const onPop = () => {
+      setTabProject(readProjectUrl())
+      resetProjectView()
+      refresh()
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [refresh])
+
+  // Проект вкладки убрали из списка в другой вкладке: запрос отклонён, и
+  // вкладка переходит на проект по умолчанию — писать некуда, а смотреть есть
+  useEffect(() => {
+    handleUnknownProject((gone) => {
+      setTabProject(null)
+      writeProjectUrl(null, true)
+      resetProjectView()
+      // Строка — после перечитывания: удачный refresh гасит прежнюю ошибку
+      refresh().then(() => setError(`Проект «${gone}» убран из списка`))
+    })
+    return () => handleUnknownProject(null)
+  }, [refresh])
 
   // Убрать активный проект из реестра (файлы на диске не трогаются).
   // Нужен там, где проектом оказалась чужая папка: подтверждения не спрашиваем —
@@ -414,6 +498,8 @@ export default function App() {
     if (!projects.active) return
     try {
       await api.removeProject(projects.active)
+      setTabProject(null)
+      writeProjectUrl(null, true)
       refresh()
     } catch (e) {
       setError(e.message)

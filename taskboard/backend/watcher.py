@@ -1,10 +1,11 @@
-"""Слежение за папкой tasks/ активного проекта и рассылка SSE-событий."""
+"""Слежение за папками tasks/ проектов реестра и рассылка SSE-событий."""
 
 from __future__ import annotations
 
 import queue
 import threading
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
@@ -26,7 +27,7 @@ class TasksWatcher:
         self._last_event = 0.0
         self._trailing: threading.Timer | None = None
         self._trailing_lock = threading.Lock()
-        self._watched: Path | None = None
+        self._watched: list[Path] = []
         # Флаг остановки: SSE-генераторы проверяют его, чтобы завершиться
         # при shutdown сервера (иначе uvicorn --reload виснет на open SSE)
         self.stopped = threading.Event()
@@ -54,8 +55,11 @@ class TasksWatcher:
                 pass
         self.stop()
 
-    def watch(self, path: Path) -> None:
-        """Перенавесить наблюдение на новую папку.
+    def watch(self, path: Path | Iterable[Path]) -> None:
+        """Перенавесить наблюдение на папку задач или на несколько сразу.
+
+        Несколько — у вкладок доски, открытых на разных проектах: живые
+        обновления нужны каждой, а не только той, чей проект выбран последним.
 
         **Не бросает.** Живые обновления — вспомогательная функция: доска
         работает и без них, по F5. Отказ наблюдения ронял сервер целиком —
@@ -63,8 +67,8 @@ class TasksWatcher:
         папке уводил uvicorn из жизни ещё до первого запроса (TASK-233).
         """
         with self._watch_lock:
-            self._watched = path
-            self._watching = path.is_dir()
+            self._watched = [path] if isinstance(path, Path) else list(path)
+            self._watching = any(p.is_dir() for p in self._watched)
             try:
                 self._start_observer()
             except Exception as exc:
@@ -85,13 +89,15 @@ class TasksWatcher:
         лежит весь код проекта, и правка любого исходника дёргала бы доску,
         а рекурсивный обход тащил бы ещё и node_modules со сборками.
         """
-        if not self._watched or not self._watched.is_dir():
-            return []
-        root = self._watched.parent
-        paths: list[tuple[Path, bool, frozenset[str] | None]] = [(self._watched, True, None)]
-        paths += [(p, True, None) for p in agentic_paths(root)]
-        if root.is_dir():
-            paths.append((root, False, frozenset(RULES_FILES)))
+        paths: list[tuple[Path, bool, frozenset[str] | None]] = []
+        for tasks_dir in self._watched:
+            if not tasks_dir.is_dir():
+                continue
+            root = tasks_dir.parent
+            paths.append((tasks_dir, True, None))
+            paths += [(p, True, None) for p in agentic_paths(root)]
+            if root.is_dir():
+                paths.append((root, False, frozenset(RULES_FILES)))
         return paths
 
     def _start_observer(self) -> bool:
@@ -116,8 +122,7 @@ class TasksWatcher:
 
         fresh = Observer()
         taken = 0
-        for path, recursive, only in dict.fromkeys((str(p), rec, names)
-                                                   for p, rec, names in paths):
+        for path, (recursive, only) in _merge_paths(paths).items():
             # Нечитаемый путь отсеиваем ДО подъёма наблюдателя. На Windows
             # обработчик папки открывается не в `schedule`, а в потоке эмиттера
             # при `start()` — отказ там валит подъём целиком, вместе с путями,
@@ -239,6 +244,25 @@ class TasksWatcher:
                 q.put_nowait(message)
             except queue.Full:
                 pass
+
+
+def _merge_paths(paths) -> dict[str, tuple[bool, frozenset[str] | None]]:
+    """Один путь — одно наблюдение, даже если его просят несколько проектов.
+
+    Корень одного проекта бывает папкой другого, и тот же путь приходит
+    дважды с разными флагами. Второй `schedule` на занятый путь на macOS
+    роняет эмиттер (см. `_start_observer`), поэтому просьбы сливаются: шире
+    рекурсия и шире набор имён — `None` значит «все файлы».
+    """
+    merged: dict[str, tuple[bool, frozenset[str] | None]] = {}
+    for path, recursive, only in paths:
+        key = str(path)
+        if key in merged:
+            was_rec, was_only = merged[key]
+            recursive = recursive or was_rec
+            only = None if only is None or was_only is None else only | was_only
+        merged[key] = (recursive, only)
+    return merged
 
 
 class _Handler(FileSystemEventHandler):

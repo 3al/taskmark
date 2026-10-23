@@ -1,7 +1,26 @@
 // Клиент API Taskmark
 
+// Проект этой вкладки: называется в каждом запросе. «Активный» в реестре один
+// на машину и переключается из любой вкладки — опираться на него значило бы
+// писать туда, куда смотрит соседняя (TASK-071)
+let tabProject = null
+let onUnknownProject = null
+
+export function setTabProject(name) { tabProject = name || null }
+export function getTabProject() { return tabProject }
+// Проект вкладки убрали из списка: решает App, куда ей теперь смотреть
+export function handleUnknownProject(handler) { onUnknownProject = handler }
+
+function withProject(url) {
+  if (!tabProject || !url.startsWith('/api/')) return url
+  const [path, query = ''] = url.split('?')
+  const params = new URLSearchParams(query)
+  if (!params.has('project')) params.set('project', tabProject)
+  return `${path}?${params}`
+}
+
 async function request(url, options = {}) {
-  const res = await fetch(url, {
+  const res = await fetch(withProject(url), {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
@@ -21,6 +40,7 @@ async function request(url, options = {}) {
       error.message = payload.message || detail
       error.details = payload
     }
+    if (error.code === 'unknown_project') onUnknownProject?.(tabProject)
     throw error
   }
   return res.json()
