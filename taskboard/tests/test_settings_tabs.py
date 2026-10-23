@@ -59,7 +59,7 @@ class SettingsSurviveTest(unittest.TestCase):
         src = source()
         for key in ("dnd_full_board", "port", "card_title_size", "card_title_lines",
                     "card_meta_size", "harnesses", "vault", "review_sources",
-                    "release_script"):
+                    "scenarios", "release_script"):
             self.assertIn(key, src, f"настройка {key} пропала из формы")
 
     def test_pipeline_editor_is_still_mounted(self) -> None:
@@ -77,7 +77,7 @@ class SettingsSurviveTest(unittest.TestCase):
         # начинающееся на check, и срез молча становился пустым
         payload = src[src.index("const updates = ()"):src.index("const check = async")]
         for key in ("port", "dnd_full_board", "release_script", "harnesses",
-                    "vault", "review_sources", "pipeline", "actions"):
+                    "vault", "review_sources", "scenarios", "pipeline", "actions"):
             self.assertIn(key, payload, f"{key} не уходит в сохранение")
 
 

@@ -305,6 +305,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     ...(config.harnesses ? { harnesses: config.harnesses } : {}),
     vault: !!config.vault,
     review_sources: !!config.review_sources,
+    scenarios: !!config.scenarios,
     telegram: !!config.telegram,
     telegram_token: (config.telegram_token || '').trim(),
     telegram_route: config.telegram_route !== false,
@@ -955,6 +956,29 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                       <div className="text-[11px] text-zinc-400">
                         скилл review-task берёт предмет из merge request через
                         MCP-инструменты окружения; выключено — этих шагов в скилле нет
+                      </div>
+                    </span>
+                  </label>
+                  {/* Согласование результата до кода меняет порядок работы —
+                      включает его человек, а не поставка */}
+                  <label className="flex items-start gap-2 text-sm cursor-pointer select-none mt-2">
+                    <input
+                      type="checkbox"
+                      checked={!!config.scenarios}
+                      onChange={(e) => set('scenarios', e.target.checked)}
+                      className="mt-0.5 accent-sky-500"
+                    />
+                    <span>
+                      Сценарии до кода
+                      <div className="text-[11px] text-zinc-400">
+                        скилл scenarios: агент описывает результат задачи сценариями
+                        КОГДА/ТОГДА и согласует их до кода, при сдаче — трасса к тестам
+                        {onOpenHelp && (
+                          <button type="button" className="ml-1 text-sky-500 hover:text-sky-400"
+                                  onClick={(e) => { e.preventDefault(); onOpenHelp('agentic') }}>
+                            подробнее
+                          </button>
+                        )}
                       </div>
                     </span>
                   </label>
