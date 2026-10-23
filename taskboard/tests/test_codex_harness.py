@@ -156,6 +156,8 @@ class CodexHooksTest(_Project):
                          / "work-hint.py").is_file())
         self.assertTrue((self.root / ".codex" / "hooks"
                          / "permission-notify.py").is_file())
+        self.assertTrue((self.root / ".codex" / "hooks"
+                         / "codex_approval.py").is_file())
         self.assertTrue(hook_registered(self.root, "codex"))
 
     def test_permission_hook_is_codex_own_handler(self) -> None:
@@ -167,7 +169,8 @@ class CodexHooksTest(_Project):
         self.assertEqual("*", entry["matcher"])
         handler = entry["hooks"][0]
         self.assertIn(".codex/hooks/permission-notify.py", handler["command"])
-        self.assertTrue(handler["async"], "уведомление не должно задерживать диалог")
+        self.assertFalse(handler.get("async", False),
+                         "подписка на решение должна успеть до показа диалога")
 
         claude_root = Path(self._tmp.name) / "claude"
         claude_tasks = claude_root / "tasks"

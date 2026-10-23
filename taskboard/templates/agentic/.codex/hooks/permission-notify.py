@@ -11,7 +11,10 @@ Codex вызывает этот обработчик на PermissionRequest и �
 вопроса) означают, что звать больше некого; в эти моменты обработчик просит
 доску снять сказанное своей сессией.
 
-**Решения по разрешению Codex не сообщает** — первым после него приходит:
+**Решение снимает карточку через локальный канал Codex App Server.**
+`codex_approval.py` подписывается до показа диалога и ждёт
+`serverRequest/resolved`. Это не хук Codex; подписка работает только с уже
+загруженной сессией. Без доступного канала остаётся прежний отзыв хуками:
 
 - разрешили — завершение того же действия (`PostToolUse` любого инструмента);
 - отклонили — прерывание хода (`Interrupt`); `Stop` в прерванном ходе не
@@ -40,6 +43,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import uuid
 
 
 # Событие → что сказать и каким тоном. Разрешение останавливает работу
@@ -86,13 +90,15 @@ def _permission_file(session: str) -> Path:
     return Path(tempfile.gettempdir()) / STATE_DIR / f"{name}.permission"
 
 
-def _mark_permission(session: str) -> None:
+def _mark_permission(session: str) -> str:
     path = _permission_file(session)
+    generation = uuid.uuid4().hex
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+        path.write_text(generation, encoding="utf-8")
     except OSError:
-        pass
+        return ""
+    return generation
 
 
 def _take_permission(session: str) -> bool:
@@ -154,11 +160,16 @@ def main() -> int:
     moment = _moment(payload)
     if moment is None:
         return 0
-    if moment is PERMISSION:
-        _mark_permission(session)
+    generation = _mark_permission(session) if moment is PERMISSION else ""
     message, level = moment
     _run(root, [message, "--agent", "Codex", "--level", level,
                 "--scope", "env"], session)
+    if generation:
+        try:
+            from codex_approval import start_watch
+            start_watch(root, session, _permission_file(session), generation)
+        except (ImportError, OSError, subprocess.SubprocessError):
+            pass
     return 0
 
 

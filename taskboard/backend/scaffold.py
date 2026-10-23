@@ -1067,8 +1067,10 @@ HOOK_REGISTRATIONS = {
     ),
     "codex": (
         {"event": "PostToolUse", "matcher": "Bash", "script": "work-hint.py"},
+        # Подписка на решение должна успеть до показа диалога: фоновый хук
+        # может пропустить быстрый ответ человека. Ожидание подписки ≤ 1,2 с.
         {"event": "PermissionRequest", "matcher": "*",
-         "script": "permission-notify.py", "async": True, "timeout": 5},
+         "script": "permission-notify.py", "timeout": 5},
         {"event": "PreToolUse", "matcher": "request_user_input",
          "script": "permission-notify.py", "async": True, "timeout": 5},
         {"event": "PostToolUse", "matcher": "*",
