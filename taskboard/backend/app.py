@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import mimetypes
 import os
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -79,7 +81,10 @@ CAPABILITIES = {"move_after_task_id": True, "server_lifecycle": True,
                 "board_sections": True, "agentic_remove": True,
                 "telegram": True, "autostart": True, "notify": True,
                 "task_slice": True, "help_search": True,
-                "log_search": True, "task_reveal": True}
+                "log_search": True, "task_reveal": True,
+                # Запрос называет проект сам (`?project=`): без этого вкладка
+                # нового фронта у старого сервера пишет в активный (TASK-071)
+                "tab_project": True}
 
 # Документация API — штатные /docs, /redoc и /openapi.json FastAPI. Группа
 # эндпоинта определяется первым сегментом пути после /api/, заголовок — первой
@@ -114,8 +119,8 @@ app = FastAPI(
     title="Taskmark",
     version=version.current(),
     description=("HTTP API канбан-доски поверх Markdown-файлов задач. "
-                 "Им пользуются веб-интерфейс доски и скрипты `tasks/`; запросы относятся к "
-                 "активному проекту, если в пути не сказано иное."),
+                 "Им пользуются веб-интерфейс доски и скрипты `tasks/`; запрос относится к "
+                 "проекту из параметра `project`, без него — к активному."),
     openapi_tags=[{"name": name, "description": about} for name, about, _ in API_GROUPS],
     # /docs отдаём своим маршрутом: штатная страница Swagger UI белая
     docs_url=None,
@@ -142,6 +147,59 @@ async def _logged_http_error(request: Request, exc: StarletteHTTPException):
         console.log(f"ошибка {exc.status_code}: {request.method} {request.url.path} — "
                     f"{exc.detail}")
     return await http_exception_handler(request, exc)
+
+
+# Проект, который назвал сам запрос (`?project=`). Активный в реестре один на
+# машину, а вкладок доски несколько: вкладка, показывающая один проект, писала
+# в другой, если соседняя переключилась последней (TASK-071). Без параметра
+# действует активный — так ходят скрипты `tasks/` и лаунчер
+_request_project: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "request_project", default=None)
+
+# Пути, которым проект вкладки не нужен. Список проектов — то, чем вкладка
+# выбирает, куда перейти, когда её проект убрали: отказывать ему значит
+# оставить вкладку без выхода. SSE — общий канал всех проектов
+_PROJECT_FREE = ("/api/projects", "/api/events")
+
+
+class _ProjectScope:
+    """ASGI-прослойка: проект из `?project=` действует на весь запрос.
+
+    Неизвестное имя — отказ до эндпоинта: вкладка смотрит на проект, которого
+    больше нет в реестре, и любой её запрос, отданный активному, ушёл бы туда,
+    куда она не целилась.
+    """
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send) -> None:
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        if not path.startswith("/api/") or path.startswith(_PROJECT_FREE):
+            await self.inner(scope, receive, send)
+            return
+        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
+        name = (query.get("project") or [""])[0].strip()
+        if not name:
+            await self.inner(scope, receive, send)
+            return
+        proj = next((p for p in registry.list_projects().get("projects", [])
+                     if p["name"] == name), None)
+        if proj is None:
+            console.log(f"ошибка 404: {scope.get('method')} {path} — "
+                        f"проект не найден: {name}")
+            response = JSONResponse(status_code=404, content={"detail": {
+                "code": "unknown_project", "message": f"Проект не найден: {name}"}})
+            await response(scope, receive, send)
+            return
+        token = _request_project.set(proj)
+        try:
+            await self.inner(scope, receive, send)
+        finally:
+            _request_project.reset(token)
+
+
+app.add_middleware(_ProjectScope)
 watcher = TasksWatcher()
 # Служба уведомлений едет тем же каналом, что и правки файлов задач: второй
 # путь до браузера означал бы второе переподключение и вторую точку отказа
@@ -303,9 +361,14 @@ class ScaffoldIn(BaseModel):
 
 # --- Вспомогательные ---
 
+def _current_project() -> dict | None:
+    """Проект запроса: названный вкладкой, иначе активный из реестра."""
+    return _request_project.get() or registry.get_active()
+
+
 def _active_project() -> dict:
-    """Активный проект из реестра или 404."""
-    proj = registry.get_active()
+    """Проект запроса или 404."""
+    proj = _current_project()
     if not proj:
         raise HTTPException(404, "Нет активного проекта")
     return proj
@@ -316,6 +379,20 @@ def _ctx() -> tuple[Path, dict]:
     proj = _active_project()
     tasks_dir = Path(proj["tasks_dir"])
     return tasks_dir, load_project_config(tasks_dir)
+
+
+def _watch_projects() -> None:
+    """Наблюдать за папками всех проектов реестра, а не только активного.
+
+    Вкладки доски открыты на разных проектах, и живые обновления нужны каждой.
+    Событие общее: вкладка перечитывает свой проект, о каком бы ни было
+    изменение, — лишнее перечитывание дешевле второго канала событий.
+    """
+    dirs = [Path(p["tasks_dir"]) for p in registry.list_projects().get("projects", [])]
+    if dirs:
+        watcher.watch(dirs)
+    else:
+        watcher.stop()
 
 
 def _validate_or_400() -> tuple[Path, dict, dict]:
@@ -363,19 +440,17 @@ def api_register(body: ProjectIn) -> dict:
     tasks_dir = _resolve_tasks_dir(Path(body.tasks_dir))
     # Несуществующая папка допустима: структуру можно развернуть из UI (scaffold)
     proj = registry.register_project(tasks_dir, name=body.name, activate=body.activate)
-    if body.activate and tasks_dir.is_dir():
-        watcher.watch(Path(proj["tasks_dir"]))
+    _watch_projects()
     return {"ok": True, "project": proj,
             "structure": "present" if tasks_dir.is_dir() else "missing"}
 
 
 @app.post("/api/projects/activate")
 def api_activate(body: ActivateIn) -> dict:
-    """Сделать проект активным: дальнейшие запросы относятся к нему."""
+    """Сделать проект активным: его открывают вкладки и запросы без `project`."""
     proj = registry.activate_project(body.name)
     if not proj:
         raise HTTPException(404, f"Проект не найден: {body.name}")
-    watcher.watch(Path(proj["tasks_dir"]))
     return {"ok": True, "project": proj}
 
 
@@ -384,12 +459,7 @@ def api_remove_project(name: str) -> dict:
     """Убрать проект из реестра. Файлы проекта не трогаются."""
     if not registry.remove_project(name):
         raise HTTPException(404, f"Проект не найден: {name}")
-    # Если удалили активный — перенацелить watcher на новый активный проект
-    proj = registry.get_active()
-    if proj:
-        watcher.watch(Path(proj["tasks_dir"]))
-    else:
-        watcher.stop()
+    _watch_projects()
     return {"ok": True}
 
 
@@ -431,7 +501,7 @@ def api_update_apply() -> dict:
 
     updater.clear_result()
     updater.request_apply(plan)
-    proj = registry.get_active()
+    proj = _current_project()
     lifecycle.apply_update(int(os.environ.get("TASKBOARD_PORT", 8765)),
                            proj["tasks_dir"] if proj else None)
     return {"ok": True, "version": plan["version"], "tag": plan["tag"]}
@@ -472,7 +542,7 @@ def api_get_config() -> dict:
     превью. Форма ограничивает поля по ним, а не по числам, вписанным в JS:
     иначе границы разъедутся с проверкой бэкенда при первой же правке.
     """
-    proj = registry.get_active()
+    proj = _current_project()
     if not proj:
         cfg = load_global_config()
         return {**cfg, "card_limits": CARD_LIMITS, "predicates": PREDICATES,
@@ -552,7 +622,7 @@ def api_save_config(body: ConfigIn) -> dict:
                                   "errors": invalid,
                                   "fields": fields})
 
-    proj = registry.get_active()
+    proj = _current_project()
     tasks_dir = Path(proj["tasks_dir"]) if proj else None
     old_cfg = load_project_config(tasks_dir) if tasks_dir else load_global_config()
 
@@ -598,7 +668,7 @@ def api_preview_config(body: ConfigIn) -> dict:
     числом, и живые задачи, прошедшие этап раньше, упрутся на следующем шаге
     вперёд. Цена показывается до сохранения (`gated`), а не выясняется потом.
     """
-    proj = registry.get_active()
+    proj = _current_project()
     if not proj:
         return {"removals": [], "gated": []}
     tasks_dir = Path(proj["tasks_dir"])
@@ -774,7 +844,7 @@ def api_notify_dismiss(body: DismissIn) -> dict:
 @app.get("/api/health")
 def api_health() -> dict:
     """Жив ли сервер: версия, папка инструмента, активный проект."""
-    proj = registry.get_active()
+    proj = _current_project()
     # Расположение инструмента: лаунчер сверяет, чтобы не подключиться
     # к серверу, запущенному из другой (напр. удалённой) папки
     tool_dir = str(Path(__file__).parent.parent.parent.resolve())
@@ -1386,7 +1456,7 @@ def api_pipeline() -> dict:
 @app.get("/api/pipeline/sources")
 def api_pipeline_sources() -> dict:
     """Готовые жизненные циклы: пресеты и пайплайны других проектов реестра."""
-    proj = registry.get_active()
+    proj = _current_project()
     return {"items": list_sources(Path(proj["tasks_dir"]) if proj else None)}
 
 
@@ -1507,7 +1577,8 @@ def api_scaffold(body: ScaffoldIn | None = None) -> dict:
     # Скрипт проекта только что обновился — теперь он знает про «Комментарии»,
     # и файлы задач можно переименовать вслед за ним, не дожидаясь рестарта
     rename_notes_section(tasks_dir, cfg)
-    watcher.watch(tasks_dir)
+    # Папки задач могло не быть до развёртывания — наблюдать было нечего
+    _watch_projects()
     return {"ok": True, **result}
 
 
@@ -1563,7 +1634,7 @@ def api_server_stop() -> dict:
 def api_server_restart() -> dict:
     """Перезапустить сервер: применяет смену порта и перечитывает конфиги."""
     port = int(os.environ.get("TASKBOARD_PORT", "8765"))
-    proj = registry.get_active()
+    proj = _current_project()
     lifecycle.restart_server(port, proj["tasks_dir"] if proj else None)
     return {"ok": True, "action": "restart"}
 
@@ -1671,10 +1742,8 @@ def restart_telegram_poller() -> None:
 
 
 def start_watcher() -> None:
-    """Навесить watcher на активный проект (вызывается при старте сервера)."""
-    proj = registry.get_active()
-    if proj:
-        watcher.watch(Path(proj["tasks_dir"]))
+    """Навесить watcher на проекты реестра (вызывается при старте сервера)."""
+    _watch_projects()
 
 
 @app.on_event("startup")
