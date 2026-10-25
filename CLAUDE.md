@@ -25,6 +25,7 @@ cd taskboard/frontend && npm run dev                    # dev-сервер фр�
 taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v
 # один тест
 taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v -k test_registry
+cd taskboard/frontend && npm test                       # тесты компонентов (Vitest + jsdom); общий прогон зовёт их сам
 
 py tools/release.py --history  # история выпусков: когда вышла версия и что в неё вошло
 ```
@@ -32,6 +33,7 @@ py tools/release.py --history  # история выпусков: когда в�
 - `taskboard.py` сам создаёт `taskboard/.venv` и перезапускается под ним — вручную venv не создавай.
 - `-t taskboard` в команде тестов обязателен: модули импортируются как `backend.*` (не `taskboard.backend.*`), потому что лаунчер кладёт `taskboard/` в `sys.path`.
 - **Не** используй `uvicorn --reload`: на Windows в связке с watchdog/SSE он зависает при перезапуске, поэтому reload реализован своим супервизором (`taskboard.py:dev_supervisor`).
+- Тесты компонентов фронта — `*.test.jsx` рядом с компонентом (`src/`), Vitest + jsdom + Testing Library. Общий прогон запускает их через `test_frontend_components`; без `node` или `node_modules` они пропускаются с причиной. Подменяется только сеть (`fetch`) и то, чего нет в jsdom (`scrollIntoView`).
 - Линтера, тайпчека и CI нет. Проверяй изменения запуском сервера.
 - **Про выпуски не гадай по коммитам:** `tools/release.py --history` отдаёт JSON — версия, тег,
   время выпуска и состав задач, от свежего к старому. Скрипт только читает git; в поставку

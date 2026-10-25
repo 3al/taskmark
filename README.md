@@ -150,8 +150,9 @@ cd taskboard/frontend
 npm install                    # зависимости фронтенда
 npm run build                  # пересборка (dist коммитится)
 
-# тесты (stdlib unittest, из корня репозитория)
+# тесты (stdlib unittest, из корня репозитория; запускает и тесты компонентов)
 taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v
+cd taskboard/frontend && npm test   # только тесты компонентов (Vitest + jsdom)
 ```
 
 ## Лицензия
