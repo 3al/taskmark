@@ -975,7 +975,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         КОГДА/ТОГДА и согласует их до кода, при сдаче — трасса к тестам
                         {onOpenHelp && (
                           <button type="button" className="ml-1 text-sky-500 hover:text-sky-400"
-                                  onClick={(e) => { e.preventDefault(); onOpenHelp('agentic') }}>
+                                  onClick={(e) => { e.preventDefault(); onOpenHelp('agentic#сценарии-до-кода') }}>
                             подробнее
                           </button>
                         )}
@@ -1071,7 +1071,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     {onOpenHelp && (
                       <button
                         className="ml-1 text-sky-500 hover:text-sky-400"
-                        onClick={() => onOpenHelp('release')}
+                        onClick={() => onOpenHelp('release#свой-скрипт-выпуска')}
                       >
                         подробнее
                       </button>
@@ -1091,7 +1091,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                     {onOpenHelp && (
                       <button
                         className="ml-1 text-sky-500 hover:text-sky-400"
-                        onClick={() => onOpenHelp('release')}
+                        onClick={() => onOpenHelp('release#интеграционная-ветка')}
                       >
                         подробнее
                       </button>
@@ -1167,7 +1167,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                           У @BotFather: /newbot → выключить Group Privacy → добавить бота в чат
                           {onOpenHelp && (
                             <button
-                              onClick={() => onOpenHelp('telegram')}
+                              onClick={() => onOpenHelp('telegram#как-включить')}
                               className="ml-1 text-sky-500 hover:text-sky-400"
                             >
                               Подробнее
