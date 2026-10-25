@@ -911,55 +911,55 @@ export default function App() {
     // Устаревшие файлы поставки ведут в то же окно расхождений, что и скиллы:
     // расхождение может оказаться вашей правкой, и «Обновить» вслепую её
     // потеряет. В окне видно причину, diff и выбор исхода
-    outdated_template: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
-    outdated_script: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_template: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
+    outdated_script: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
     no_status_script: { part: 'status_script', label: 'Создать' },
-    outdated_status_script: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_status_script: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
     no_notify_script: { part: 'notify_script', label: 'Создать' },
-    outdated_notify_script: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_notify_script: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
     // Скрипт не знает про объявленные требования этапов — чинится тем же
     // обновлением: пользователю всё равно, какую из двух кнопок нажать
     requires_unsupported: { part: 'status_script', label: 'Обновить' },
     // Снимок требований отстал от поставки. Чинится не разворачиванием файлов,
     // а дописыванием в конфиг проекта — поэтому свой путь, а не `part`
     requires_exceptions_stale: { action: 'requiresExceptions', label: 'Дописать',
-                                 help: 'lifecycle' },
+                                 help: 'lifecycle#кого-требование-не-касается' },
     // Требование придумал человек — дописать за него нельзя, применимо оно
     // к новому типу или нет, знает только он. Кнопка открывает настройки и
     // гасит повторный вопрос: настроит или решит, что относится, — его дело
     requires_types_unreviewed: { action: 'typesReviewed', label: 'Настроить',
-                                 help: 'lifecycle' },
+                                 help: 'lifecycle#кого-требование-не-касается' },
     // Статус есть в маршруте, а раздела под него на доске нет — колонки не будет.
     // Создаётся тем же, чем раздел очереди, поэтому свой путь, а не `part`
     no_board_sections: { action: 'boardSections', label: 'Создать разделы',
-                         help: 'validation' },
+                         help: 'validation#жёлтый-баннер--часть-возможностей-отключена' },
     // Правила — часть механизма, а не опция: без них агент не знает процесса
-    no_rules: { part: 'rules', label: 'Развернуть', help: 'agentic' },
+    no_rules: { part: 'rules', label: 'Развернуть', help: 'agentic#секция-правил' },
     // Отсутствие целой части чинится так же, как её устаревание: одной кнопкой
-    no_skills: { part: 'skills', label: 'Развернуть', help: 'agentic' },
-    no_commands: { part: 'commands', label: 'Развернуть', help: 'agentic' },
-    no_hooks: { part: 'hooks', label: 'Развернуть', help: 'agentic' },
+    no_skills: { part: 'skills', label: 'Развернуть', help: 'agentic#скиллы' },
+    no_commands: { part: 'commands', label: 'Развернуть', help: 'agentic#скиллы' },
+    no_hooks: { part: 'hooks', label: 'Развернуть', help: 'agentic#хуки' },
     // Ссылка на обработчик в настройках проекта: правится только наша запись
     no_hook_registration: { part: 'hook_registration', label: 'Подключить',
-                            help: 'agentic' },
+                            help: 'agentic#хуки' },
     // Состав поставки зависит от сред, а их знает только пользователь
     no_harness_choice: { modal: 'scaffold', label: 'Настроить', help: 'agentic' },
     // Скилл выключенной возможности остался на диске. В то же окно: удаление
     // необратимо, и решать по имени в баннере, не видя содержимого, нельзя
-    extra_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
-    extra_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    extra_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
+    extra_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
     // Агентское окружение — не «обновить всё вслепую»: сначала подробности,
     // где видно каждый элемент, его diff и точечное обновление
-    outdated_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
-    outdated_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
-    outdated_hooks: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
-    outdated_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    outdated_skills: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
+    outdated_commands: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
+    outdated_hooks: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
+    outdated_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
     // Старая секция правил: что в ней, видно только в окне — там же и удаление
-    extra_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    extra_rules: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
     // Волт: скиллы уже ссылаются на vault/, поэтому его отсутствие — пробел,
     // а не «ещё не завели»
-    no_vault: { part: 'vault', label: 'Развернуть', help: 'agentic' },
-    outdated_vault: { modal: 'agentic', label: 'Подробности', help: 'agentic' },
+    no_vault: { part: 'vault', label: 'Развернуть', help: 'agentic#knowledge-vault' },
+    outdated_vault: { modal: 'agentic', label: 'Подробности', help: 'agentic#обновление-и-правки' },
   }
   const fixDegraded = async (code) => {
     const fix = DEGRADED_FIX[code]
@@ -1063,7 +1063,7 @@ export default function App() {
           <div className="font-semibold flex items-center gap-2">
             Критические проблемы структуры tasks/:
             <button className="text-xs underline text-rose-300/80 hover:text-rose-200"
-                    onClick={() => openHelp('validation')}>что это значит?</button>
+                    onClick={() => openHelp('validation#красный-баннер--критично')}>что это значит?</button>
           </div>
           {report.critical.map((c, i) => <div key={i}>• {c}</div>)}
         </div>
@@ -1086,7 +1086,7 @@ export default function App() {
                   <button
                     className="text-amber-300/70 hover:text-amber-100 transition"
                     title="Что это значит"
-                    onClick={() => openHelp(DEGRADED_FIX[d.code].help || 'validation')}
+                    onClick={() => openHelp(DEGRADED_FIX[d.code].help || 'validation#жёлтый-баннер--часть-возможностей-отключена')}
                   >
                     ?
                   </button>
@@ -1111,7 +1111,7 @@ export default function App() {
               <button
                 className="text-amber-300/70 hover:text-amber-100 transition"
                 title="Что это значит"
-                onClick={() => openHelp('validation')}
+                onClick={() => openHelp('validation#кнопка-починить-данные')}
               >
                 ?
               </button>
@@ -1177,7 +1177,7 @@ export default function App() {
               окружение выбранных сред агентов
             </div>
             <button className="text-xs underline text-zinc-400 hover:text-zinc-300"
-                    onClick={() => openHelp('start')}>
+                    onClick={() => openHelp('start#развернуть-структуру')}>
               Что это создаст и зачем
             </button>
           </div>

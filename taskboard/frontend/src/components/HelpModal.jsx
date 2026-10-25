@@ -5,6 +5,7 @@ import { api } from '../api'
 import { rehypeHighlight } from '../highlight'
 import { mdComponents } from '../markdown'
 import { back, visit } from '../helpTrail'
+import { parseHelpRef, slugify } from '../helpAnchor'
 import { HEADINGS_WITH_LINE, SearchField, SearchHits, hitTarget, useSearch } from './SearchHits'
 
 // Ссылка на соседний раздел внутри документации: docs/help/02-board.md.
@@ -21,13 +22,17 @@ function sectionOf(href) {
 // Текст не дублируется в коде — сервер отдаёт те же файлы docs/help,
 // на которые ссылается README, поэтому расходиться нечему.
 export default function HelpModal({ section, onClose }) {
+  // Кнопка «подробнее» может вести на подраздел: `agentic#сценарии-до-кода`
+  const opened = useMemo(() => parseHelpRef(section), []) // eslint-disable-line react-hooks/exhaustive-deps
   const [items, setItems] = useState([])
-  const [current, setCurrent] = useState(section || null)
+  const [current, setCurrent] = useState(opened.section || null)
   const [doc, setDoc] = useState(null)
   const [error, setError] = useState(null)
   const [query, setQuery] = useState('')
-  // Место, к которому прокрутить после рендера: {section, line}
-  const [target, setTarget] = useState(null)
+  // Место, к которому прокрутить после рендера: {section, line} — найденное
+  // поиском, {section, anchor} — заголовок по ссылке с якорем
+  const [target, setTarget] = useState(
+    opened.anchor ? { section: opened.section, anchor: opened.anchor } : null)
   const bodyRef = useRef(null)
   // История переходов живёт, пока окно открыто: при новом открытии начинаем с
   // чистого листа, как новая вкладка браузера
@@ -56,8 +61,11 @@ export default function HelpModal({ section, onClose }) {
   }, [current])
 
   const { found, terms, phrase } = useSearch(query, api.helpSearch, setError)
+  // Найденное место живёт, пока есть запрос; заголовок по якорю — пока поиска нет:
+  // иначе каждая буква запроса снова прокручивала бы к нему
   useEffect(() => {
-    if (!query.trim()) setTarget(null)
+    const searching = !!query.trim()
+    setTarget((t) => (!t || (t.anchor ? !searching : searching) ? t : null))
   }, [query])
 
   // Плагин пересобирается только со словами: новый на каждый рендер заставлял бы
@@ -69,7 +77,11 @@ export default function HelpModal({ section, onClose }) {
 
   useEffect(() => {
     if (!target || !doc || doc.id !== target.section || !bodyRef.current) return
-    const el = hitTarget(bodyRef.current, target.line)
+    // Якорь не совпал ни с одним заголовком — раздел остаётся открытым сверху
+    const el = target.anchor
+      ? [...bodyRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6')]
+        .find((h) => slugify(h.textContent) === target.anchor)
+      : hitTarget(bodyRef.current, target.line)
     el?.scrollIntoView({ block: el.tagName === 'MARK' ? 'center' : 'start' })
   }, [target, doc, rehypePlugins])
 
@@ -194,13 +206,16 @@ export default function HelpModal({ section, onClose }) {
                   ...HEADINGS_WITH_LINE,
                   // Ссылка на соседний раздел переключает окно, а не уводит
                   // из приложения на несуществующий по этому адресу файл
+                  // Якорь — к заголовку: `#…` в том же разделе, `файл.md#…` — в другом
                   a: ({ href, children, ...props }) => {
-                    const target = sectionOf(href)
+                    const own = (href || '').startsWith('#')
+                    const target = own ? current : sectionOf(href)
                     if (!target) return <a href={href} target="_blank" rel="noreferrer" {...props}>{children}</a>
+                    const { anchor } = parseHelpRef(href)
                     return (
                       <a
                         href={href}
-                        onClick={(e) => { e.preventDefault(); go(target) }}
+                        onClick={(e) => { e.preventDefault(); go(target, anchor ? { section: target, anchor } : null) }}
                         {...props}
                       >
                         {children}
