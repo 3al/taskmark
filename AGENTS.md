@@ -11,7 +11,7 @@
 - Dev-режим бэкенда с авто-перезагрузкой: `py taskboard.py --dev` (свой супервизор; **не** используй `uvicorn --reload` — на Windows он зависает в связке с watchdog/SSE, см. комментарий в `taskboard.py:dev_supervisor`).
 - Пересборка фронтенда: `cd taskboard/frontend && npm install && npm run build` — `frontend/dist/` **закоммичен**; бэкенд раздаёт его, поэтому изменения фронтенда нужно пересобрать и закоммитить dist, иначе они не попадут в релиз.
 - Dev-сервер фронтенда: `npm run dev` в `taskboard/frontend` (проксирует `/api` на `127.0.0.1:8765`).
-- Тесты (stdlib unittest): `taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v` из корня репо. Линтера, тайпчека и CI нет. Проверяй изменения запуском сервера.
+- Тесты (stdlib unittest): `taskboard/.venv/Scripts/python.exe -m unittest discover -s taskboard/tests -t taskboard -v` из корня репо; он же запускает тесты компонентов фронта (`*.test.jsx` в `src/`, Vitest + jsdom, отдельно — `npm test` в `taskboard/frontend`; без `node`/`node_modules` пропускаются с причиной). Линтера, тайпчека и CI нет. Проверяй изменения запуском сервера.
 - История выпусков: `py tools/release.py --history` — JSON с версией, тегом, временем выпуска и составом задач, от свежего к старому. **Про выпуски не гадай по коммитам.** Скрипт только читает git; в поставку пользователям он не идёт, у них выпуск устроен по-своему.
 
 ## Архитектура
