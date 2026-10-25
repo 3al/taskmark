@@ -91,6 +91,17 @@ def status_module(tasks_dir: Path, cfg: dict):
         return None
 
 
+def yaml_writer(tasks_dir: Path, cfg: dict):
+    """Как писать значение в шапку: правилом кавычек соседнего set_status.py.
+
+    Кавычки пишутся, только если сосед умеет их снимать при чтении: со старым
+    set_status.py заголовок в кавычках показался бы в `--queue` и уведомлениях
+    вместе с ними. Тогда значение пишется как раньше, без кавычек.
+    """
+    module = status_module(tasks_dir, cfg)
+    return getattr(module, "yaml_value", None) or str
+
+
 def section_of_type(task_type: str) -> str | None:
     """Рубрика бэклога для типа задачи — из каталога соседнего set_status.py.
 
@@ -456,18 +467,19 @@ def create_task(
     tasks_dir = Path(__file__).parent
     cfg = load_config(tasks_dir)
     status_key, intake_section = intake_status(tasks_dir, cfg)
+    quote = yaml_writer(tasks_dir, cfg)
 
     frontmatter = f"""---
 id: TASK-{task_num:03d}
-title: {title}
+title: {quote(title)}
 epic: {epic_value}
 type: {task_type or "~"}
 size: ~
 due: {due_value or "~"}
 status: {status_key}
 created: {created_date}
-author: {author_value}
-origin: {origin_value}{blocked_by_line}
+author: {quote(author_value)}
+origin: {quote(origin_value)}{blocked_by_line}
 ---"""
 
     # Структуру задаёт `_TEMPLATE.md` проекта; встроенная копия — запасной

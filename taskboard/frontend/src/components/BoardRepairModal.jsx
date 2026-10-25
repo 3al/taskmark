@@ -50,7 +50,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
   const total = plan
     ? plan.add.length + (plan.move?.length ?? 0) + plan.lost.length
       + (plan.relink?.length ?? 0) + (plan.retitle?.length ?? 0)
-      + (plan.blocks?.length ?? 0)
+      + (plan.blocks?.length ?? 0) + (plan.header?.length ?? 0)
     : 0
 
   const apply = async () => {
@@ -94,6 +94,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
             {' '}и <code>blocks</code> у обеих задач. Починка сводит концы вместе,
             считая <strong>файлы задач источником правды</strong>: доска
             подстраивается под них. Ничего не удаляется.
+            Значения шапки, которые не разбирает YAML, берутся в кавычки.
           </div>
           {error && <div className="text-sm text-rose-400">{error}</div>}
           {plan === null && <div className="text-sm text-zinc-400">Загружаю…</div>}
@@ -104,6 +105,7 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
               {done.relinked > 0 && <>, ссылок исправлено {done.relinked}</>}
               {done.retitled > 0 && <>, заголовков обновлено {done.retitled}</>}
               {done.blocks > 0 && <>, блокировок сведено {done.blocks}</>}
+              {done.headers > 0 && <>, шапок исправлено {done.headers}</>}
               {done.failed?.length > 0 && (
                 <div className="text-rose-300 mt-1">Не удалось: {done.failed.join('; ')}</div>
               )}
@@ -189,6 +191,19 @@ export default function BoardRepairModal({ onClose, onRepaired }) {
                 <span className={i.action === 'add' ? 'text-emerald-300/80' : 'text-rose-300/80'}>
                   {i.task}
                 </span>
+              </>
+            )}
+          />
+
+          <Group
+            title="Исправить шапку файла"
+            hint="значение с «: » или служебным символом в начале не разбирают GitHub и Obsidian — его возьмём в кавычки, текст не изменится"
+            tone="text-teal-300"
+            items={plan?.header}
+            render={(i) => (
+              <>
+                <span className="text-zinc-400">{i.id}</span> · {i.file}
+                <span className="text-zinc-400"> : {i.fields.join(', ')}</span>
               </>
             )}
           />

@@ -22,6 +22,8 @@ frontmatter, — и агент, правящий один конец без вт
              подтверждает, что задача та же)
 - `retitle` — ссылка у строки точная, а заголовок чужой или устаревший:
              строка повторяет заголовок из frontmatter файла
+- `header` — шапку файла не разбирает YAML (значение с `: ` без кавычек):
+             такие значения берутся в кавычки, текст их не меняется
 
 Ничего не удаляется: чужие данные нам не принадлежат, и «сирота» на доске
 может оказаться файлом, который просто не подтянули из чужой ветки.
@@ -42,8 +44,51 @@ from backend.queue_ops import (add_entry, ensure_plain_section, move_task,
 from backend.stall import apply_blocks_repair, plan_blocks_repair
 from backend.statuses import Pipeline, load_pipeline
 from backend.task_parser import parse_frontmatter
+from backend.yaml_scalar import header_issues, requote
 
 _TASK_ID_RE = re.compile(r"^(TASK-\d+)")
+
+
+def _header(content: str) -> str:
+    """Текст шапки без разделителей `---`; шапки нет — пусто."""
+    end = content.find("\n---", 3) if content.startswith("---") else -1
+    return content[3:end] if end >= 0 else ""
+
+
+def plan_header_repair(tasks_dir: Path) -> list[dict]:
+    """Файлы задач, чью шапку не разберёт YAML: `[{id, file, fields}]`."""
+    plan: list[dict] = []
+    for path in sorted(Path(tasks_dir).glob("TASK-*.md")):
+        m = _TASK_ID_RE.match(path.name)
+        if not m:
+            continue
+        try:
+            fields = header_issues(_header(path.read_text(encoding="utf-8-sig")))
+        except OSError:
+            continue
+        if fields:
+            plan.append({"id": m.group(1), "file": path.name, "fields": fields})
+    return plan
+
+
+def apply_header_repair(tasks_dir: Path) -> dict:
+    """Взять в кавычки значения, ломающие YAML. Возвращает счётчик и осечки."""
+    failed: list[str] = []
+    fixed = 0
+    for item in plan_header_repair(tasks_dir):
+        path = Path(tasks_dir) / item["file"]
+        try:
+            # newline="" — переводы строк файла остаются какими были
+            with open(path, encoding="utf-8", newline="") as f:
+                content = f.read()
+            updated = requote(content)
+            if updated is not None:
+                with open(path, "w", encoding="utf-8", newline="") as f:
+                    f.write(updated)
+                fixed += 1
+        except OSError as e:
+            failed.append(f"{item['id']}: {e}")
+    return {"fixed": fixed, "failed": failed}
 
 
 def visible_columns(board: dict, cfg: dict) -> list[dict]:
@@ -136,7 +181,8 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
     board_path = tasks_dir / cfg.get("board_file", "board.md")
     if not board_path.is_file():
         return {"add": [], "move": [], "lost": [], "relink": [], "retitle": [],
-                "blocks": plan_blocks_repair(tasks_dir)}
+                "blocks": plan_blocks_repair(tasks_dir),
+                "header": plan_header_repair(tasks_dir)}
 
     pipeline = load_pipeline(cfg)
     board = parse_board(board_path, pipeline)
@@ -193,8 +239,11 @@ def plan_repair(tasks_dir: Path, cfg: dict) -> dict:
     # Обратные ссылки блокировок — тоже расхождение двух концов, только оба
     # конца лежат во frontmatter. Чинится той же кнопкой: пользователю неважно,
     # где именно данные разъехались
+    # Шапка, которую не разбирает YAML, — тоже порча данных в файле: доска её
+    # читает, а GitHub и Obsidian нет. Чинится той же кнопкой
     return {"add": add, "move": move, "lost": lost, "relink": relink,
-            "retitle": retitle, "blocks": plan_blocks_repair(tasks_dir)}
+            "retitle": retitle, "blocks": plan_blocks_repair(tasks_dir),
+            "header": plan_header_repair(tasks_dir)}
 
 
 def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
@@ -233,6 +282,9 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
     blocks = apply_blocks_repair(tasks_dir)
     failed.extend(blocks["failed"])
 
+    header = apply_header_repair(tasks_dir)
+    failed.extend(header["failed"])
+
     for item in plan["add"]:
         if item.get("restore"):
             result = move_task(tasks_dir, cfg, item["id"], item["section"],
@@ -254,4 +306,5 @@ def apply_repair(tasks_dir: Path, cfg: dict) -> dict:
             "relinked": len(plan["relink"]),
             "retitled": len(plan["retitle"]),
             "blocks": blocks["fixed"],
+            "headers": header["fixed"],
             "failed": failed}

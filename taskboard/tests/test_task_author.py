@@ -31,7 +31,7 @@ from backend.config import (DEFAULTS, add_assignee, add_author,  # noqa: E402
                             assignees, authors, save_project_config)
 from backend.notes import BOARD_AUTHOR  # noqa: E402
 from backend.scaffold import scaffold_project  # noqa: E402
-from backend.task_parser import parse_task, set_task_author  # noqa: E402
+from backend.task_parser import parse_frontmatter, parse_task, set_task_author  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "templates" / "tasks" / "_TEMPLATE.md"
@@ -208,13 +208,10 @@ class AuthorScriptTest(unittest.TestCase):
             cwd=str(self.tasks.parent), env=env)
 
     def _frontmatter(self) -> dict:
+        # Читаем тем же разбором, что и доска: ник с `@` в шапке стоит в
+        # кавычках — YAML не даёт начинать с него значение без них
         text = next(self.tasks.glob("TASK-*.md")).read_text(encoding="utf-8")
-        out = {}
-        for line in text.split("---")[1].splitlines():
-            if ":" in line:
-                key, _, value = line.partition(":")
-                out[key.strip()] = value.strip()
-        return out
+        return parse_frontmatter(text)[0]
 
     def _known(self) -> list:
         path = self.home / ".taskboard" / "config.json"
