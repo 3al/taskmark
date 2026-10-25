@@ -6,7 +6,8 @@ import re
 from pathlib import Path
 
 from backend.board_parser import parse_board
-from backend.board_repair import _section_for_status, row_matches_file, task_files
+from backend.board_repair import (_section_for_status, plan_header_repair, row_matches_file,
+                                  task_files)
 from backend.config import is_lost_section
 from backend.fs_browse import readable
 from backend.scaffold import (detect_harnesses, environment_issues, harness_choice,
@@ -297,6 +298,14 @@ def validate_project(tasks_dir: Path, cfg: dict) -> dict:
     # Односторонние связи — то же расхождение двух концов, только оба во
     # frontmatter: чинятся той же кнопкой, значит и считаются в repairable
     repairable += len(plan_blocks_repair(tasks_dir))
+    # Шапка, которую доска читает, а GitHub и Obsidian — нет. Одной строкой:
+    # в проекте со старыми задачами их десятки, и россыпь спрятала бы остальное
+    broken = plan_header_repair(tasks_dir)
+    if broken:
+        names = ", ".join(item["id"] for item in broken[:5])
+        more = f" и ещё {len(broken) - 5}" if len(broken) > 5 else ""
+        warnings.append(f"шапка файла не разбирается как YAML: {names}{more}")
+        repairable += len(broken)
 
     report = _report(critical, degraded, warnings, features)
     report["repairable"] = repairable

@@ -11,6 +11,7 @@ from backend.notes import (ASSIGNEE_TEXT, AUTHOR_TEXT, BOARD_AUTHOR, DUE_TEXT,
                            SIZE_TEXT,
                            TITLE_TEXT, TYPE_TEXT, append_note)
 from backend.statuses import is_terminal
+from backend.yaml_scalar import from_yaml, to_yaml
 
 _TASK_FILE_RE = re.compile(r"^TASK-\d+.*\.md$")
 
@@ -31,7 +32,7 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     for line in content[3:end].splitlines():
         if ":" in line:
             key, _, value = line.partition(":")
-            meta[key.strip()] = value.strip()
+            meta[key.strip()] = from_yaml(value)
 
     body = content[end + 4:].lstrip("\n")
     return meta, body
@@ -347,7 +348,7 @@ def set_meta_fields(path: Path, updates: dict[str, str]) -> bool:
 
     header = content[:end]
     for key, value in updates.items():
-        line = f"{key}: {value}"
+        line = f"{key}: {to_yaml(value)}"
         pattern = rf"^{re.escape(key)}:.*$"
         if re.search(pattern, header, flags=re.MULTILINE):
             # Замена функцией: в значении может быть \1 или обратный слэш —
@@ -564,9 +565,10 @@ def set_task_title(tasks_dir: Path, task_id: str, new_title: str,
     # Замена — функцией: в названии может быть \1 или обратный слэш, и как
     # шаблон подстановки re такую строку либо испортит, либо уронит
     if re.search(r"^title:.*$", header, flags=re.MULTILINE):
-        header = re.sub(r"^title:.*$", lambda _m: f"title: {new_title}", header, flags=re.MULTILINE)
+        header = re.sub(r"^title:.*$", lambda _m: f"title: {to_yaml(new_title)}", header,
+                        flags=re.MULTILINE)
     else:
-        header += f"\ntitle: {new_title}"
+        header += f"\ntitle: {to_yaml(new_title)}"
 
     # Имя файла собирается как в create_task.py; название из одних знаков
     # препинания даёт пустой slug — тогда остаётся голый номер задачи

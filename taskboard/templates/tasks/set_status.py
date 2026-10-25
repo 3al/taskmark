@@ -974,6 +974,16 @@ def check_task_file(path: Path) -> list[str]:
     heads = _headings(lines)
     lower = [h.lower() for h in heads]
 
+    # Шапку разбирают и чужие парсеры (GitHub, Obsidian): значение с `: ` без
+    # кавычек для них ошибка, хотя доска и скрипты его читают
+    if lines and lines[0].startswith("---"):
+        end = next((i for i, ln in enumerate(lines[1:], 1) if ln.startswith("---")), None)
+        bad = header_yaml_issues("\n".join(lines[1:end])) if end else []
+        if bad:
+            warnings.append(f"шапка не разбирается как YAML ({', '.join(bad)}): значение "
+                            f"с «: », « #» или служебным символом в начале пишется в "
+                            f"двойных кавычках — чинится кнопкой «Починить данные» на доске")
+
     # «История коммитов» появляется при первом коммите — её отсутствие законно,
     # а вот секция заметок есть в шаблоне всегда: нет её — заголовок снесли
     if NOTES_SECTION.lower() not in lower:
@@ -1478,6 +1488,85 @@ def _one_line(text) -> str:
     return "" if text == EMPTY else text
 
 
+# Шапку задачи читают и чужие парсеры YAML: GitHub, Obsidian, PyYAML. Значение
+# без кавычек для них — «простой скаляр», и `: `, ` #` или служебный символ в
+# начале делают шапку невалидной. Такое значение пишется в двойных кавычках,
+# остальные — как есть: метки вида `telegram:123:45` и обычные заголовки не
+# меняются, а шапки других задач при записи не трогаются. Та же пара функций
+# живёт в бэкенде (`backend/task_parser.py`), их поведение сверяет тест
+_YAML_LEAD = set("-?:,[]{}#&*!|>'\"%@`")
+
+
+def yaml_needs_quotes(value: str) -> bool:
+    """Ломает ли значение YAML, если записать его без кавычек."""
+    value = str(value)
+    if not value or value == EMPTY:
+        return False
+    return (value != value.strip() or value[0] in _YAML_LEAD
+            or ": " in value or value.endswith(":")
+            or " #" in value or "\t" in value)
+
+
+def yaml_value(value) -> str:
+    """Значение поля для записи в шапку: в кавычках, только если без них нельзя."""
+    value = str(value)
+    if not yaml_needs_quotes(value):
+        return value
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+_YAML_ESCAPES = {"\\": "\\", '"': '"', "/": "/", "t": "\t", "n": "\n"}
+
+
+def yaml_unquote(raw: str) -> str:
+    """Значение поля как текст: обрамляющие кавычки сняты, экранирование раскручено.
+
+    Значение без кавычек возвращается как есть — так читаются файлы, записанные
+    до правила. Кавычки снимаются, только если строка — целый скаляр в кавычках:
+    `"Foo" bar "baz"` из старого файла остаётся текстом.
+    """
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
+        inner = raw[1:-1]
+        return inner.replace("''", "'") if "'" not in inner.replace("''", "") else raw
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        out, i, inner = [], 0, raw[1:-1]
+        while i < len(inner):
+            ch = inner[i]
+            if ch == '"':
+                return raw
+            if ch == "\\" and i + 1 < len(inner):
+                nxt = inner[i + 1]
+                out.append(_YAML_ESCAPES.get(nxt, "\\" + nxt))
+                i += 2
+                continue
+            if ch == "\\":
+                return raw
+            out.append(ch)
+            i += 1
+        return "".join(out)
+    return raw
+
+
+def yaml_quoted(raw: str) -> bool:
+    """Значение уже записано скаляром в кавычках."""
+    raw = raw.strip()
+    return len(raw) >= 2 and raw[0] == raw[-1] in "\"'" and yaml_unquote(raw) != raw
+
+
+def header_yaml_issues(header: str) -> list[str]:
+    """Поля шапки, которые чужой парсер YAML не разберёт: `[ключ, …]`."""
+    bad = []
+    for line in header.splitlines():
+        key, sep, value = line.partition(":")
+        if not sep or not key.strip() or key != key.strip():
+            continue
+        value = value.strip()
+        if value and not yaml_quoted(value) and yaml_needs_quotes(value):
+            bad.append(key)
+    return bad
+
+
 def _read_meta(path: Path) -> dict:
     """Frontmatter файла задачи (key: value до закрывающего ---)."""
     content = path.read_text(encoding="utf-8-sig")
@@ -1490,7 +1579,7 @@ def _read_meta(path: Path) -> dict:
     for line in content[3:end].splitlines():
         if ":" in line:
             key, _, value = line.partition(":")
-            meta[key.strip()] = value.strip()
+            meta[key.strip()] = yaml_unquote(value)
     return meta
 
 
@@ -1520,7 +1609,7 @@ def _set_fields(path: Path, updates: dict) -> bool:
 
     header = content[:end]
     for key, value in updates.items():
-        line = f"{key}: {value}"
+        line = f"{key}: {yaml_value(value)}"
         pattern = rf"^{re.escape(key)}:.*$"
         if re.search(pattern, header, flags=re.MULTILINE):
             header = re.sub(pattern, lambda _m, ln=line: ln, header, flags=re.MULTILINE)
