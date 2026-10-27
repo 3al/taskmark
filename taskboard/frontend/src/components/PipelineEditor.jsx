@@ -287,11 +287,17 @@ export default function PipelineEditor({ pipeline, actions, catalog, sources, re
 
   // Рекомендации каталога **материализуются** в конфиг проекта, а не действуют
   // «на лету»: обновление инструмента не должно включать проверки у тех, кто их
-  // не объявлял. Уже объявленные (по id) из подсказок убираем
+  // не объявлял. Уже объявленные из подсказок убираем по тому же правилу, что у
+  // движка (`stage_requirements`): совпало служебное имя или смысл — проверка и
+  // её параметр, имя секции без учёта регистра. Иначе своё требование с другим
+  // `id` оставляло кнопку, и щелчок добавлял на этап второе того же смысла
   const recommendedOn = (status) => {
-    const ids = declaredOn(status.key).map((r) => String(r.id || '').toLowerCase())
+    const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase()
+    const kind = (r) => `${norm(r.check)}\u0000${norm(r.name)}`
+    const declared = declaredOn(status.key)
+    const seen = new Set([...declared.map(kind), ...declared.map((r) => norm(r.id))])
     return (status.recommends || [])
-      .filter((r) => !ids.includes(String(r.id || '').toLowerCase()))
+      .filter((r) => !seen.has(kind(r)) && !seen.has(norm(r.id)))
   }
 
   const addRequirement = (key, req) => {
