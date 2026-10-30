@@ -7,7 +7,7 @@ import { statusLabel, statusStyle } from '../statuses'
 import { TASK_TYPES, taskType } from '../taskTypes'
 import { TASK_SIZES, taskSize } from '../taskSizes'
 import { highlight, rehypeHighlight } from '../highlight'
-import { mdComponents, rehypeNoteMeta, rehypeStatusMove } from '../markdown'
+import { mdComponents, rehypeNoteMeta, rehypeScenarios, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
 import { useListKeys } from '../listKeys'
 import { taskBody, taskCopyText } from '../taskText'
@@ -136,8 +136,8 @@ export default function TaskModal({ taskId, project, query, onOpenTask, onOpenEp
   // перерисовывает всё дерево на каждый рендер модалки
   const rehypePlugins = useMemo(
     () => (query?.trim()
-      ? [rehypeNoteMeta, rehypeStatusMove, rehypeHighlight(query)]
-      : [rehypeNoteMeta, rehypeStatusMove]),
+      ? [rehypeNoteMeta, rehypeStatusMove, rehypeScenarios, rehypeHighlight(query)]
+      : [rehypeNoteMeta, rehypeStatusMove, rehypeScenarios]),
     [query],
   )
   // Оттенок шапки модалки в цвет статуса задачи (применится после загрузки)
