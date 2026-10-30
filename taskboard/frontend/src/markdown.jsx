@@ -112,3 +112,62 @@ export function rehypeStatusMove() {
     visit(tree)
   }
 }
+
+// Сценарий КОГДА/ТОГДА — «#### Сценарий: …» и его список (формат скилла
+// scenarios). Среди остальных критериев он теряется, поэтому при рендере
+// заголовок со списком уезжают в один блок, а ключевые слова строк получают
+// свой класс. Файл задачи не меняется — только отображение.
+const SCENARIO_HEAD = /^Сценарий(:|\s|$)/
+const TRACE_HEAD = /^Трасса$/
+const SCENARIO_KW = /^(КОГДА|ТОГДА|И)$/
+const CHECK_LINE = /^Проверка:/
+const HEADING = /^h[1-6]$/
+
+const isBlank = (node) => node.type === 'text' && !node.value.trim()
+
+// Строки сценария: ведущее **КОГДА/И/ТОГДА** — ключевое слово, *Проверка: …* —
+// служебная строка способа проверки
+function markScenarioList(list) {
+  for (const li of list.children || []) {
+    if (li.type !== 'element' || li.tagName !== 'li') continue
+    const host = li.children?.[0]?.tagName === 'p' ? li.children[0] : li
+    const head = (host.children || []).find((c) => !isBlank(c))
+    if (head?.type !== 'element') continue
+    if (head.tagName === 'strong' && SCENARIO_KW.test(textOf(head).trim())) {
+      head.properties = { ...head.properties, className: ['scenario-kw'] }
+    } else if (head.tagName === 'em' && CHECK_LINE.test(textOf(head).trim())) {
+      li.properties = { ...li.properties, className: ['scenario-check'] }
+    }
+  }
+}
+
+// Сценарий забирает только свои списки: абзац после него — уже общий текст
+// критериев. Трасса тянется до следующего заголовка: у неё бывает вводный абзац
+export function rehypeScenarios() {
+  return (tree) => {
+    const out = []
+    const nodes = tree.children || []
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]
+      const title = node.type === 'element' && node.tagName === 'h4' ? textOf(node).trim() : ''
+      const scenario = SCENARIO_HEAD.test(title)
+      if (!scenario && !TRACE_HEAD.test(title)) { out.push(node); continue }
+
+      const children = [node]
+      let j = i + 1
+      for (; j < nodes.length; j++) {
+        const next = nodes[j]
+        if (isBlank(next)) { children.push(next); continue }
+        if (next.type !== 'element') break
+        if (scenario ? !['ul', 'ol'].includes(next.tagName)
+                     : HEADING.test(next.tagName) || next.tagName === 'hr') break
+        if (scenario) markScenarioList(next)
+        children.push(next)
+      }
+      out.push({ type: 'element', tagName: 'div',
+                 properties: { className: [scenario ? 'md-scenario' : 'md-trace'] }, children })
+      i = j - 1
+    }
+    tree.children = out
+  }
+}

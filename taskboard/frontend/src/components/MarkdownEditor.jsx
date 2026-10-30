@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { mdComponents, rehypeNoteMeta } from '../markdown'
+import { mdComponents, rehypeNoteMeta, rehypeScenarios } from '../markdown'
 import { FORM_FIELD } from '../fields'
 
 // Минималистичный редактор markdown: сырой текст + короткая панель разметки +
@@ -205,7 +205,7 @@ export default function MarkdownEditor({
         // предпросмотр рисовал `код` без подложки, а блок кода распирал форму
         // (горизонтальная прокрутка `pre` — тоже правило `.md-body`)
         <div className="md-body text-sm rounded-lg border border-zinc-700 px-3 py-2">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeNoteMeta]}
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeNoteMeta, rehypeScenarios]}
                          components={mdComponents}>
             {(value || '').trim() || '_(пусто)_'}
           </ReactMarkdown>

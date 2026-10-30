@@ -103,6 +103,17 @@ select option {
 .md-body li.status-move { @apply list-none -ml-4 pl-3 border-l-2 border-zinc-700/70; }
 .md-body .status-chip { @apply font-medium; }
 
+/* Сценарий КОГДА/ТОГДА — блок с полосой слева в indigo: этот тон не занят ни
+   статусами (их оттенки красят заголовки тела), ни акцентами текста (янтарный
+   код на сером). Трасса — та же полоса без подложки: она про проверку, а не про
+   поведение */
+.md-body .md-scenario, .md-body .md-trace { @apply border-l-2 border-indigo-400/50 pl-3 pr-2 py-1 my-3; }
+.md-body .md-scenario { @apply bg-indigo-400/[0.06] rounded-r-md; }
+.md-body .md-scenario > h4, .md-body .md-trace > h4 { @apply mt-1 text-indigo-200/90; }
+.md-body .md-scenario > :last-child, .md-body .md-trace > :last-child { @apply mb-1; }
+.md-body .scenario-kw { @apply text-indigo-300; }
+.md-body li.scenario-check { @apply text-zinc-400; }
+
 /* Совпадения поиска в теле задачи */
 /* Совпадение поиска — зелёным: янтарь занят кодом, голубой — ссылками, и подсветка с ними сливалась */
 .md-body mark, mark.search-hit { @apply bg-emerald-500/30 text-emerald-100 rounded px-0.5; }
