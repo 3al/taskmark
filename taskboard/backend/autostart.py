@@ -20,8 +20,17 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    import winreg
+except ImportError:  # вне Windows реестра нет
+    winreg = None
+
 # Имя записи в автозагрузке. Константа: по нему же запись ищется и удаляется
 ENTRY_NAME = "taskboard.cmd"
+APPROVAL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
+WINDOWS_DISABLED_HINT = (
+    "Автозапуск отключён средствами Windows. Установите галочку и нажмите «Сохранить» или "
+    "разрешите taskboard в Диспетчере задач → Автозагрузка приложений.")
 
 LINUX_HINT = ("Автозапуск на Linux заводится юнитом systemd: положите в "
               "~/.config/systemd/user/taskboard.service запуск "
@@ -124,6 +133,47 @@ def _entry_points_here(root: Path) -> bool:
     return str(root / "taskboard.py") in _entry_text()
 
 
+def _windows_disabled() -> bool:
+    """Отключил ли пользователь запись через настройки Windows.
+
+    StartupApproved хранит состояние отдельно от файла в Startup. DWORD
+    2/6 означает разрешение, 3/7 — отключение; следующие 8 байт — время,
+    по которому нельзя судить о текущем разрешении. Формат не является
+    публичным API Windows: неизвестное состояние показываем как неизвестное,
+    а не обещаем успешный автозапуск.
+    """
+    if winreg is None:
+        raise OSError("реестр Windows недоступен")
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVAL_KEY,
+                            0, winreg.KEY_QUERY_VALUE) as key:
+            data, kind = winreg.QueryValueEx(key, ENTRY_NAME)
+    except FileNotFoundError:
+        return False  # Windows ещё не записывала отдельного решения
+    if kind != winreg.REG_BINARY or not isinstance(data, bytes) or len(data) != 12:
+        raise OSError("неизвестный формат состояния автозапуска Windows")
+    flag = int.from_bytes(data[:4], "little")
+    if flag not in (2, 3, 6, 7):
+        raise OSError(f"неизвестное состояние автозапуска Windows: {flag}")
+    return flag in (3, 7)
+
+
+def _allow_windows_startup() -> None:
+    """Снять только своё отключение и только при явном включении из UI.
+
+    Обновление файла автозагрузки этого не делает: иначе ручной запуск
+    инструмента отменял бы выбор пользователя в Диспетчере задач.
+    """
+    if not _windows_disabled():
+        return
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, APPROVAL_KEY,
+                            0, winreg.KEY_SET_VALUE) as key:
+            winreg.DeleteValue(key, ENTRY_NAME)
+    except FileNotFoundError:
+        pass  # решение уже снято другим процессом
+
+
 def status(root: Path) -> dict:
     """Состояние автозапуска: есть ли кнопка, включён ли он и где запись.
 
@@ -133,10 +183,21 @@ def status(root: Path) -> dict:
     """
     if not supported():
         return {"supported": False, "enabled": False, "path": "", "stale": False,
-                "hint": hint()}
-    enabled = entry_path().is_file()
-    return {"supported": True, "enabled": enabled, "path": str(entry_path()),
-            "stale": enabled and not _entry_points_here(root), "hint": ""}
+                "hint": hint(), "registered": False, "disabled_by_windows": False,
+                "warning": ""}
+    registered = entry_path().is_file()
+    disabled, warning = False, ""
+    if registered:
+        try:
+            disabled = _windows_disabled()
+            if disabled:
+                warning = WINDOWS_DISABLED_HINT
+        except OSError as exc:
+            warning = f"Не удалось проверить разрешение автозапуска Windows: {exc}"
+    return {"supported": True, "enabled": registered and not warning,
+            "registered": registered, "disabled_by_windows": disabled,
+            "warning": warning, "path": str(entry_path()),
+            "stale": registered and not _entry_points_here(root), "hint": ""}
 
 
 def enable(root: Path) -> dict:
@@ -146,9 +207,13 @@ def enable(root: Path) -> dict:
     try:
         startup_dir().mkdir(parents=True, exist_ok=True)
         _write_entry(_script(root))
+        _allow_windows_startup()
     except OSError as exc:
-        return {"ok": False, "error": f"Не удалось записать автозапуск: {exc}"}
-    return {"ok": True, **status(root)}
+        return {"ok": False, "error": f"Не удалось включить автозапуск: {exc}"}
+    state = status(root)
+    if not state["enabled"]:
+        return {"ok": False, "error": state["warning"] or "Не удалось включить автозапуск"}
+    return {"ok": True, **state}
 
 
 def refresh_if_outdated(root: Path) -> bool:
@@ -186,4 +251,4 @@ def disable() -> dict:
         return {"ok": False, "error": f"Не удалось убрать автозапуск: {exc}"}
     return {"ok": True, "supported": supported(), "enabled": False,
             "path": str(entry_path()) if supported() else "", "stale": False,
-            "hint": ""}
+            "hint": "", "registered": False, "disabled_by_windows": False, "warning": ""}

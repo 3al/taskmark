@@ -13,6 +13,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from backend import autostart
@@ -25,9 +26,17 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.startup = Path(self.tmp.name) / "Startup"
+        # Реестр — внешняя зависимость. Изолируем его и для прежних тестов:
+        # включение не должно снимать настоящее системное отключение.
+        self.approval = None
+        self.registry = SimpleNamespace(
+            HKEY_CURRENT_USER=1, KEY_QUERY_VALUE=1, KEY_SET_VALUE=2, REG_BINARY=3,
+            OpenKey=mock.MagicMock(), QueryValueEx=mock.Mock(side_effect=self.query),
+            DeleteValue=mock.Mock(side_effect=self.delete))
         patches = [
             mock.patch.object(autostart, "startup_dir", return_value=self.startup),
             mock.patch.object(autostart, "supported", return_value=True),
+            mock.patch.object(autostart, "winreg", self.registry, create=True),
         ]
         for p in patches:
             p.start()
@@ -35,6 +44,16 @@ class Base(unittest.TestCase):
 
     def entry(self) -> Path:
         return self.startup / autostart.ENTRY_NAME
+
+    def query(self, key, name):
+        if name != "taskboard.cmd" or self.approval is None:
+            raise FileNotFoundError(name)
+        return self.approval, self.registry.REG_BINARY
+
+    def delete(self, key, name):
+        if name != "taskboard.cmd":
+            raise AssertionError("трогает чужую запись")
+        self.approval = None
 
 
 class EnableTest(Base):
@@ -163,6 +182,68 @@ class RefreshTest(Base):
         self.entry().write_bytes(bytes([0xff, 0xfe, 0x00]) + b"chcp")
         self.assertFalse(autostart.refresh_if_outdated(ROOT))
         self.assertFalse(autostart.status(ROOT)["stale"] is None)
+
+
+class WindowsApprovalTest(Base):
+    """Состояние, которое пользователь видит через API, с внешним реестром."""
+
+    def setUp(self):
+        super().setUp()
+        from backend import app
+        self.api = app
+        self.startup.mkdir(parents=True)
+        self.entry().write_text(autostart._script(ROOT), encoding="utf-8", newline="")
+
+    def test_отключение_windows_видно_через_api(self):
+        self.approval = bytes([3]) + bytes(11)
+        state = self.api.api_autostart_status()
+        self.assertTrue(state["registered"])
+        self.assertFalse(state["enabled"])
+        self.assertTrue(state["disabled_by_windows"])
+        self.assertIn("Windows", state["warning"])
+
+    def test_явное_включение_снимает_только_своё_отключение(self):
+        self.approval = bytes([3]) + bytes(11)
+        state = self.api.api_autostart_set(self.api.AutostartIn(enabled=True))
+        self.assertTrue(state["enabled"])
+        self.assertFalse(state["disabled_by_windows"])
+        self.assertEqual(state["warning"], "")
+        self.registry.DeleteValue.assert_called_once()
+        self.assertEqual(self.registry.DeleteValue.call_args.args[1], "taskboard.cmd")
+
+    def test_самопочинка_сохраняет_системное_отключение(self):
+        self.approval = bytes([3]) + bytes(11)
+        self.entry().write_text(f'@echo off\nrem {ROOT / "taskboard.py"}\n', encoding="utf-8")
+        self.assertTrue(autostart.refresh_if_outdated(ROOT))
+        self.assertEqual(self.approval, bytes([3]) + bytes(11))
+        self.registry.DeleteValue.assert_not_called()
+
+    def test_оба_системных_состояния_отключения(self):
+        for flag in (3, 7):
+            with self.subTest(flag=flag):
+                self.approval = bytes([flag]) + bytes(11)
+                self.assertFalse(self.api.api_autostart_status()["enabled"])
+
+    def test_разрешённая_запись_и_отсутствие_метки(self):
+        for flag in (None, 2, 6):
+            with self.subTest(flag=flag):
+                self.approval = None if flag is None else bytes([flag]) + bytes(11)
+                self.assertTrue(self.api.api_autostart_status()["enabled"])
+
+    def test_ошибка_чтения_не_выдаётся_за_включённый_автозапуск(self):
+        self.registry.QueryValueEx.side_effect = PermissionError("нет доступа к реестру")
+        state = self.api.api_autostart_status()
+        self.assertFalse(state["enabled"])
+        self.assertIn("нет доступа", state["warning"])
+
+    def test_ошибка_включения_возвращается_пользователю(self):
+        from fastapi import HTTPException
+        self.approval = bytes([3]) + bytes(11)
+        self.registry.DeleteValue.side_effect = PermissionError("нет доступа к реестру")
+        with self.assertRaises(HTTPException) as caught:
+            self.api.api_autostart_set(self.api.AutostartIn(enabled=True))
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertIn("нет доступа", caught.exception.detail)
 
 
 class UnsupportedPlatformTest(unittest.TestCase):

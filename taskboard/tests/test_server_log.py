@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -78,6 +79,28 @@ class LogFileTest(unittest.TestCase):
         self.start(io.StringIO(), io.StringIO())
 
         self.assertIn("Traceback: падение запроса", self.logged())
+
+    def test_headless_process_failure_reaches_file(self) -> None:
+        """Настоящее необработанное исключение в процессе без консоли."""
+        exe = Path(sys.executable)
+        if sys.platform == "win32":
+            exe = exe.with_name("pythonw.exe")
+        code = "\n".join([
+            "import importlib.util, sys",
+            "from pathlib import Path",
+            f"spec = importlib.util.spec_from_file_location('launcher', {str(self.launcher.ROOT / 'taskboard.py')!r})",
+            "launcher = importlib.util.module_from_spec(spec)",
+            "spec.loader.exec_module(launcher)",
+            f"launcher.UPDATE_DIR = Path({str(self.launcher.UPDATE_DIR)!r})",
+            "sys.stdout = sys.stderr = None",
+            "launcher.ensure_log_stream(8765)",
+            "raise RuntimeError('headless-startup-failed')",
+        ])
+        result = subprocess.run([str(exe), "-c", code], capture_output=True,
+                                timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("RuntimeError: headless-startup-failed", self.logged())
+        self.assertIn("Traceback", self.logged())
 
 
 def handle(method: str, path: str, exc: Exception):
