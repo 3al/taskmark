@@ -175,19 +175,17 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
   // Автозапуск: состояние читается с диска, а не из конфига — запись живёт в
   // папке автозагрузки, и её могли убрать мимо Taskmark
   const [autostart, setAutostart] = useState(null)
+  // null — изменение не запрошено. Отдельный черновик не скрывает реальное
+  // отключение Windows, пока человек не сохранит форму.
+  const [autostartDraft, setAutostartDraft] = useState(null)
 
   useEffect(() => {
     if (tab !== 'tool' && tab !== 'telegram') return
     api.autostart().then(setAutostart).catch(() => { /* не отвечает — не покажем */ })
   }, [tab])
 
-  const toggleAutostart = async (enabled) => {
-    setError(null)
-    try {
-      setAutostart(await api.setAutostart(enabled))
-    } catch (e) {
-      setError(e.message)
-    }
+  const toggleAutostart = (enabled, force = false) => {
+    setAutostartDraft(force || enabled !== !!autostart?.enabled ? enabled : null)
   }
 
   const checkTelegram = async () => {
@@ -378,8 +376,19 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
     setFieldErrors({})
     try {
       const result = await api.saveConfig(updates(), withMoves)
-      setRemovals(null)
       onSaved(result.config)
+      if (autostartDraft !== null) {
+        try {
+          setAutostart(await api.setAutostart(autostartDraft))
+          setAutostartDraft(null)
+        } catch (e) {
+          // Основные поля уже сохранены; окно остаётся открытым и позволяет
+          // повторить применение автозапуска, сохраняя выбранный черновик.
+          setError(`Настройки сохранены, но автозапуск не изменён: ${e.message}`)
+          return
+        }
+      }
+      setRemovals(null)
       // Переименования запускают миграции в проекте — показываем что произошло
       if (result.migrations?.length) {
         setMigrations(result.migrations)
@@ -1122,6 +1131,7 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                       {autostart.supported ? (
                         <button
                           onClick={() => toggleAutostart(true)}
+                          disabled={busy}
                           className="ml-1 text-sky-400 hover:text-sky-300"
                         >
                           Включить автозапуск
@@ -1133,6 +1143,9 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                         >
                           Как включить
                         </button>
+                      )}
+                      {autostartDraft === true && (
+                        <div className="mt-1">Автозапуск включится после «Сохранить».</div>
                       )}
                     </div>
                   )}
@@ -1423,7 +1436,8 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             <input
                               type="checkbox"
                               className="accent-sky-500"
-                              checked={!!autostart.enabled}
+                              checked={autostartDraft ?? !!autostart.enabled}
+                              disabled={busy}
                               onChange={(e) => toggleAutostart(e.target.checked)}
                             />
                             Запускать при входе в систему
@@ -1432,12 +1446,23 @@ export default function SettingsModal({ onClose, onSaved, onOpenHelp, initialTab
                             Пока Taskmark не запущен, фоновое не работает: ни проверка
                             обновлений, ни задачи из чата
                           </div>
+                          {autostartDraft !== null && (
+                            <div className="text-[11px] text-zinc-400 mt-1">
+                              Изменение автозапуска применится после «Сохранить».
+                            </div>
+                          )}
+                          {autostart.warning && (
+                            <div role="status" className="text-[11px] text-amber-400 mt-2">
+                              {autostart.warning}
+                            </div>
+                          )}
                           {autostart.stale && (
                             <div className="text-[11px] text-amber-400 mt-2">
                               Запись автозагрузки ведёт в другую папку — при входе в
                               систему запустится не этот Taskmark
                               <button
-                                onClick={() => toggleAutostart(true)}
+                                onClick={() => toggleAutostart(true, true)}
+                                disabled={busy}
                                 className="ml-1 text-sky-500 hover:text-sky-400"
                               >
                                 Обновить запись
