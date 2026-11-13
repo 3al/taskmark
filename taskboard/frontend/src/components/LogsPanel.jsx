@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api'
 import { roleSegments, segmentSource } from '../brainstormLog'
 import { highlight, rehypeHighlight } from '../highlight'
-import { mdComponents } from '../markdown'
+import { logMarkdownComponents } from '../markdown'
+import { back, visit } from '../helpTrail'
 import CopyButton from './CopyButton'
 import { HEADINGS_WITH_LINE, SearchField, SearchHits, hitTarget, useSearch } from './SearchHits'
-
-const MD_COMPONENTS = { ...mdComponents, ...HEADINGS_WITH_LINE }
 
 const logDateFormat = new Intl.DateTimeFormat('ru-RU', {
   day: '2-digit', month: '2-digit', year: 'numeric',
@@ -41,6 +40,9 @@ export default function LogsPanel({ onClose, initialFile = null }) {
   // Место, к которому прокрутить после загрузки файла: {name, line}
   const [target, setTarget] = useState(null)
   const bodyRef = useRef(null)
+  const [trail, setTrail] = useState([])
+  const restoreRef = useRef(null)
+  const requestRef = useRef(0)
   const { found, terms, phrase } = useSearch(query, api.logsSearch, (e) => setMessage(`Ошибка: ${e}`))
 
   useEffect(() => {
@@ -49,20 +51,51 @@ export default function LogsPanel({ onClose, initialFile = null }) {
       .catch(() => setFiles([]))
   }, [])
 
-  const open = async (name) => {
+  const open = useCallback(async (name) => {
+    const request = ++requestRef.current
     setCurrent(name)
     setContent(null)
     setMessage('Загрузка…')
     try {
       const data = await api.log(name)
+      if (request !== requestRef.current) return
       setContent({ text: data.content, kind: data.kind })
       setMessage('')
     } catch (e) {
+      if (request !== requestRef.current) return
       setMessage(`Ошибка: ${e.message}`)
     }
+  }, [])
+
+  // Тот же стек мест, что в справке: section здесь — имя файла.
+  // Ссылки, список и поиск запоминают высоту до переключения содержимого.
+  const go = useCallback((name, place = null) => {
+    setTarget(place)
+    restoreRef.current = null
+    if (name === current) return
+    setTrail((t) => visit(t, { section: current, scroll: bodyRef.current?.scrollTop || 0 }, name))
+    restoreRef.current = place ? null : 0
+    open(name)
+  }, [current, open])
+
+  const goBack = () => {
+    const { place, trail: rest } = back(trail)
+    if (!place) return
+    restoreRef.current = place.scroll
+    setTarget(null)
+    setTrail(rest)
+    open(place.section)
   }
 
-  useEffect(() => { if (initialFile) open(initialFile) }, [initialFile])
+  const markdownComponents = useMemo(() => ({
+    ...logMarkdownComponents(go, true),
+    ...HEADINGS_WITH_LINE,
+  }), [go])
+
+  useEffect(() => {
+    if (initialFile) open(initialFile)
+    return () => { ++requestRef.current }
+  }, [initialFile, open])
 
   useEffect(() => {
     if (!query.trim()) setTarget(null)
@@ -107,10 +140,13 @@ export default function LogsPanel({ onClose, initialFile = null }) {
     el?.scrollIntoView({ block: el.tagName === 'MARK' ? 'center' : 'start' })
   }, [target, content, current, rehypePlugins, textBody])
 
-  const pick = (group, hit) => {
-    setTarget({ name: group.key, line: hit.line })
-    if (current !== group.key) open(group.key)
-  }
+  useEffect(() => {
+    if (restoreRef.current == null || !content || !bodyRef.current) return
+    bodyRef.current.scrollTop = restoreRef.current
+    restoreRef.current = null
+  }, [content, current])
+
+  const pick = (group, hit) => go(group.key, { name: group.key, line: hit.line })
 
   const groups = found && found.items.map((item) => ({
     key: item.name,
@@ -163,7 +199,7 @@ export default function LogsPanel({ onClose, initialFile = null }) {
               return (
                 <button
                   key={f.name}
-                  onClick={() => { setTarget(null); open(f.name) }}
+                  onClick={() => go(f.name)}
                   title={f.name}
                   className={`w-full overflow-hidden border-l-2 text-left px-4 py-2.5
                     hover:bg-zinc-800 ${active ? 'bg-zinc-800' : ''}
@@ -193,6 +229,14 @@ export default function LogsPanel({ onClose, initialFile = null }) {
 
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <div className="px-4 py-3 border-b border-zinc-800 flex items-center">
+            {trail.length > 0 && (
+              <button onClick={goBack}
+                className="-ml-2 mr-2 px-2 py-0.5 rounded-md text-lg leading-none text-zinc-400
+                  hover:text-zinc-100 hover:bg-zinc-800 transition"
+                title={`Назад: ${trail[trail.length - 1].section}`}>
+                ←
+              </button>
+            )}
             <span className="text-sm text-zinc-400 truncate">{current || 'Выберите файл'}</span>
             {current && content && (
               <CopyButton className="ml-auto" text={content.text} title="Копировать содержимое лога" />
@@ -209,7 +253,7 @@ export default function LogsPanel({ onClose, initialFile = null }) {
               {mdParts.map((part) => (
                 <div key={part.start} className={ROLE_STYLE[part.role]}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
-                    components={MD_COMPONENTS}>
+                    components={markdownComponents}>
                     {segmentSource(part)}
                   </ReactMarkdown>
                 </div>

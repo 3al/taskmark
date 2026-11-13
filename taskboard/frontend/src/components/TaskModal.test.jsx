@@ -9,6 +9,10 @@ const BODY = `## Описание
 
 Текст задачи с **жирным акцентом**.
 
+| Поле | Значение |
+|---|---|
+| Результат | Материал |
+
 ### Критерии приёмки
 
 - **КОГДА-то** обычный пункт критериев, не сценарий
@@ -57,6 +61,12 @@ afterEach(() => {
 })
 
 const open = () => render(<TaskModal taskId="TASK-001" project="p" onClose={() => {}} />)
+
+test('таблица задачи остаётся в общей обёртке горизонтальной прокрутки', async () => {
+  open()
+  const table = await screen.findByRole('table')
+  expect(table.parentElement.classList.contains('md-scroll-x')).toBe(true)
+})
 
 test('сценарий — отдельный блок: заголовок и его строки внутри, соседний текст снаружи', async () => {
   open()
