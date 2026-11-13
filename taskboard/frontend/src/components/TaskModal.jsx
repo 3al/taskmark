@@ -7,7 +7,7 @@ import { statusLabel, statusStyle } from '../statuses'
 import { TASK_TYPES, taskType } from '../taskTypes'
 import { TASK_SIZES, taskSize } from '../taskSizes'
 import { highlight, rehypeHighlight } from '../highlight'
-import { mdComponents, rehypeNoteMeta, rehypeScenarios, rehypeStatusMove } from '../markdown'
+import { logMarkdownComponents, rehypeNoteMeta, rehypeScenarios, rehypeStatusMove } from '../markdown'
 import { INLINE_FIELD } from '../fields'
 import { useListKeys } from '../listKeys'
 import { taskBody, taskCopyText } from '../taskText'
@@ -126,7 +126,8 @@ export function splitSections(body, sections) {
 // onOpenTask — переход к другой задаче (номер блокера кликабелен),
 // onChanged — простой поменялся: доске нужно перечитать карточки
 export default function TaskModal({ taskId, project, query, onOpenTask, onOpenEpic, onOpenSlice, onChanged,
-                                    onCopy, onBack, backTo, onClose, brainstormResult, onOpenLog }) {
+                                    onCopy, onBack, backTo, onClose, brainstormResult, onOpenLog, covered = false }) {
+  const markdownComponents = useMemo(() => logMarkdownComponents(onOpenLog), [onOpenLog])
   const [task, setTask] = useState(null)
   const [error, setError] = useState(null)
   // Чистку тела и сборку копируемого текста держит общий модуль: то же самое
@@ -461,7 +462,7 @@ export default function TaskModal({ taskId, project, query, onOpenTask, onOpenEp
   // фокуса на textarea нет, и нажатие уходит прямо в окно
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || covered) return
       if (editSection) { cancelSection(); return }
       // Открытый список типов Esc тоже забирает: он перекрывает шапку,
       // и закрыть окно вместе с ним значило бы промахнуться мимо задачи
@@ -473,7 +474,7 @@ export default function TaskModal({ taskId, project, query, onOpenTask, onOpenEp
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, editSection, typePicker, epicForm])
+  }, [onClose, editSection, typePicker, epicForm, covered])
 
   return (
     <div
@@ -1107,6 +1108,7 @@ export default function TaskModal({ taskId, project, query, onOpenTask, onOpenEp
                     error={sectionError}
                     preview={sectionPreview}
                     onPreviewChange={setSectionPreview}
+                    onOpenLog={onOpenLog}
                     minRows={10}
                   />
                 </>
@@ -1131,7 +1133,7 @@ export default function TaskModal({ taskId, project, query, onOpenTask, onOpenEp
                     </SectionHeading>
                   )}
                   <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={rehypePlugins}
-                                 components={mdComponents}>
+                                 components={markdownComponents}>
                     {block.text}
                   </ReactMarkdown>
                 </>

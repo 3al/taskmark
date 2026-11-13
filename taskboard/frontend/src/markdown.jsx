@@ -2,14 +2,50 @@
 
 import { statusStyleByLabel } from './statuses'
 
+function MarkdownLink({ node, href, children, ...props }) {
+  const external = /^(?:https?:)?\/\//i.test(href || '')
+  return <a {...props} href={href}
+    target={external ? '_blank' : props.target}
+    rel={external ? 'noopener noreferrer' : props.rel}>{children}</a>
+}
+
 // Широкий блок должен ехать сам, а не тащить за собой текст: обёртка просит
 // ширину по содержимому (окно под неё растёт), а упёршись в свой предел —
 // прокручивается. Объект общий и неизменяемый: новый на каждый рендер
 // заставлял react-markdown пересобирать всё дерево заново
 export const mdComponents = {
+  a: MarkdownLink,
   table: ({ node, ...props }) => (
     <div className="md-scroll-x"><table {...props} /></div>
   ),
+}
+
+// Задача ссылается относительно tasks/, лог — относительно tasks/logs/.
+// Только имена файлов одного уровня: внешние адреса и пути за пределы
+// каталога остаются обычными ссылками, а не запросами к API логов.
+function linkedLog(href, relative) {
+  if (!href || /[:?#\\]/.test(href)) return null
+  let path
+  try { path = decodeURIComponent(href) } catch { return null }
+  if (/[:?#\\\x00-\x1f]/.test(path)) return null
+  const explicit = path.match(/^(?:\.\/|\/)?(?:tasks\/)?logs\/([^/]+)$/)
+  const sibling = relative && path.match(/^(?:\.\/)?([^/]+)$/)
+  const name = (explicit || sibling)?.[1]
+  return name && name !== '.' && name !== '..' ? name : null
+}
+
+export function logMarkdownComponents(onOpenLog, relative = false) {
+  if (!onOpenLog) return mdComponents
+  return {
+    ...mdComponents,
+    a: ({ node, href, children, ...props }) => {
+      const name = linkedLog(href, relative)
+      return <MarkdownLink {...props} href={href} onClick={name ? (event) => {
+        event.preventDefault()
+        onOpenLog(name)
+      } : undefined}>{children}</MarkdownLink>
+    },
+  }
 }
 
 // Метка заметки агента: «2026-07-28 21:05 · Claude Opus 5 · суть».

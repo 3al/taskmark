@@ -1480,6 +1480,7 @@ export default function App() {
           project={projects.active}
           brainstormResult={brainstorms.results[openTask]}
           onOpenLog={openLog}
+          covered={showLogs}
           query={searchText}
           onOpenTask={(id) => pushView({ task: id })}
           onOpenEpic={(key) => pushView({ epic: key })}

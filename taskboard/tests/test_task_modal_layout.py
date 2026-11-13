@@ -9,8 +9,8 @@
 2. таблица прокручивается внутри своей обёртки — значит, когда расти уже некуда,
    едет она одна, а не текст задачи.
 
-Тесты читают исходники: тест-раннера фронтенда в проекте нет, а связка
-«класс в JSX ↔ правило в CSS» рвётся молча.
+Здесь проверяется связка размеров и CSS. Общая обёртка отрисованных таблиц
+задачи и справки проверяется компонентными тестами TaskModal и HelpModal.
 """
 
 from __future__ import annotations
@@ -58,12 +58,6 @@ class WideContentScrollsInsideTest(unittest.TestCase):
         md = (SRC / "markdown.jsx").read_text(encoding="utf-8")
         self.assertRegex(md, r"table:\s*\(", "нет переопределения рендера table")
         self.assertIn(SCROLL_CLASS, md, f"обёртка не помечена классом {SCROLL_CLASS}")
-
-    def test_task_and_help_share_the_same_wrapper(self) -> None:
-        """Справка рендерит те же таблицы — расходиться этим двум окнам незачем."""
-        for name in ("TaskModal.jsx", "HelpModal.jsx"):
-            src = (SRC / "components" / name).read_text(encoding="utf-8")
-            self.assertIn("mdComponents", src, f"{name} рендерит таблицы без общей обёртки")
 
     def test_scroller_class_has_a_rule(self) -> None:
         css = CSS.read_text(encoding="utf-8")

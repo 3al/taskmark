@@ -45,6 +45,13 @@ afterEach(() => {
 const heading = (text) => screen.findByRole('heading', { name: text })
 const scrolledTo = () => scrolled.map(({ el }) => el.textContent)
 
+test('таблицы справки остаются в общей обёртке горизонтальной прокрутки', async () => {
+  render(<HelpModal section="validation" onClose={() => {}} />)
+  await heading('Баннеры проблем')
+  const tables = screen.getAllByRole('table')
+  expect(tables.every((table) => table.parentElement.classList.contains('md-scroll-x'))).toBe(true)
+})
+
 test('кнопка «подробнее» открывает раздел на заголовке подраздела', async () => {
   render(<HelpModal section="agentic#сценарии-до-кода" onClose={() => {}} />)
   const target = await heading('Сценарии до кода')
