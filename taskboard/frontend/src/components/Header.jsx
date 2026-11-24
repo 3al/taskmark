@@ -6,7 +6,7 @@ import { useListKeys } from '../listKeys'
 import { SIZE_KEYS, TASK_SIZES } from '../taskSizes'
 
 // Кастомный дропдаун проектов: нативный select не темизируется (список рендерит ОС)
-function ProjectSelect({ projects, active, onSwitch }) {
+function ProjectSelect({ projects, active, loaded, onSwitch }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -27,6 +27,7 @@ function ProjectSelect({ projects, active, onSwitch }) {
   // Стрелки, Enter и Esc — общие для всех списков интерфейса. Нажатие приходит
   // от кнопки-переключателя: фокус после клика остаётся на ней
   const list = useListKeys({ items: projects, open, onPick: pick, onClose: () => setOpen(false) })
+  const label = loaded ? (active || '— проект не выбран —') : 'Загрузка проектов…'
 
   return (
     <div ref={ref} className="relative" onKeyDown={list.onKeyDown}>
@@ -36,7 +37,7 @@ function ProjectSelect({ projects, active, onSwitch }) {
           flex items-center gap-2 hover:border-zinc-500 focus:outline-none focus:border-sky-500"
         title="Переключить проект"
       >
-        <span className="truncate">{active || '— проект не выбран —'}</span>
+        <span className="truncate">{label}</span>
         <span className={`ml-auto text-zinc-400 text-xs transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
       </button>
       {open && (
@@ -70,7 +71,7 @@ function projectDir(tasksDir) {
 
 // Шапка: переключатель проектов, кнопки действий
 export default function Header({
-  projects, active, canCreate, hasLogs, hasCustomOrder,
+  projects, projectsLoaded, active, canCreate, hasLogs, hasCustomOrder,
   onSwitchProject, onNewTask, onShowLogs, onRefresh, onResetColumns, onOpenSettings,
   onOpenHelp, onOpenUpdate, updateAvailable = false,
   query, onQuery, matches, stalledOnly, onStalledOnly, stalledCount = 0,
@@ -134,7 +135,7 @@ export default function Header({
       <div className="flex flex-col gap-1 w-48 shrink-0">
         <div className="flex items-center gap-1">
           <div className="flex-1 min-w-0">
-            <ProjectSelect projects={projects} active={active} onSwitch={onSwitchProject} />
+            <ProjectSelect projects={projects} active={active} loaded={projectsLoaded} onSwitch={onSwitchProject} />
           </div>
           {active && (confirmingRemove ? (
             <span className="flex items-center gap-1 shrink-0">
