@@ -76,9 +76,10 @@ function writeProjectUrl(name, replace) {
 setTabProject(readProjectUrl())
 
 export default function App() {
-  const [board, setBoard] = useState(null)
+  // undefined — ждём доску для открытого проекта, null — данных доски нет.
+  const [board, setBoard] = useState(undefined)
   const [health, setHealth] = useState(null)
-  const [projects, setProjects] = useState({ active: null, projects: [] })
+  const [projects, setProjects] = useState({ active: null, projects: [], loaded: false })
   const brainstorms = useBrainstorm(null, projects.active)
   const brainstorming = useMemo(() => new Set(brainstorms.items.map((s) => s.task)),
                                 [brainstorms.items])
@@ -337,7 +338,7 @@ export default function App() {
       }
       setHealth(h)
       // `active` здесь — проект вкладки: его показывают шапка и все ключи вида
-      setProjects({ ...p, active: name })
+      setProjects({ ...p, active: name, loaded: true })
       // Тумблер DnD привязан к конфигу: подхватываем сохранённое значение один раз
       if (!configLoaded.current && h?.config) {
         setDndFullBoard(!!h.config.dnd_full_board)
@@ -354,6 +355,7 @@ export default function App() {
     } catch (e) {
       // Проект вкладки сменился, пока шёл запрос: ошибка про прежний
       if (getTabProject() !== asked) return
+      setBoard((current) => current === undefined ? null : current)
       setError(e.message)
     }
   }, [])
@@ -454,7 +456,7 @@ export default function App() {
     setPendingCancel(null)
     setPendingDebt(null)
     setMenuFor(null)
-    setBoard(null)
+    setBoard(undefined)
   }
 
   const switchProject = async (name) => {
@@ -1028,6 +1030,7 @@ export default function App() {
     <div className="h-screen flex flex-col overflow-hidden">
       <Header
         projects={projects.projects}
+        projectsLoaded={projects.loaded}
         active={projects.active}
         canCreate={!!features.create_task}
         hasLogs={!!features.logs}
@@ -1139,7 +1142,11 @@ export default function App() {
           у нижнего края окна пряталась под панелью задач системы */}
       <div className="relative flex-1 min-h-0 flex flex-col">
       <main className="flex-1 overflow-x-auto overflow-y-hidden p-4">
-        {report?.structure === 'unreadable' ? (
+        {board === undefined ? (
+          <div role="status" className="h-full flex items-center justify-center text-zinc-400 text-sm">
+            Загрузка доски…
+          </div>
+        ) : report?.structure === 'unreadable' ? (
           // Читать эту папку нам не дают, значит она не наша: скорее всего
           // проект завёлся сам из рабочей папки запуска (TASK-233). Кнопки
           // «Развернуть структуру» тут быть не должно — это предложение
